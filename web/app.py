@@ -152,6 +152,8 @@ def startup():
     scheduler.start()
     _reschedule(_state["interval_min"])
     logger.info("Scheduler started. Auto-refresh every %d min.", _state["interval_min"])
+    # Run pipeline immediately on startup so data is ready
+    threading.Thread(target=run_pipeline, daemon=True).start()
 
 
 @app.on_event("shutdown")
