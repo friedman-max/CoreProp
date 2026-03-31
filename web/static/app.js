@@ -885,5 +885,8 @@ $("btn-load-fd").addEventListener("click", async () => {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 fetchStatus();
+fetchBets();
 fetchMatched();
+fetchPP();
+fetchFD();
 setInterval(fetchStatus, 10_000);
