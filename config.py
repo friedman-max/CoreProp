@@ -1,7 +1,7 @@
 """
 App-wide configuration. Edit defaults here or override via .env file.
 """
-import osndu
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -42,7 +42,7 @@ FUZZY_THRESHOLD = 88
 
 # Single-sided vig assumption
 SINGLE_SIDE_VIG = 0.070
-ndu
+
 # Server
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))

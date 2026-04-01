@@ -41,6 +41,7 @@ const fmt = {
   pct:   v => v == null ? "—" : (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%",
   prob:  v => v == null ? "—" : (v * 100).toFixed(1) + "%",
   odds:  v => v == null ? "—" : (v > 0 ? "+" : "") + v,
+  trueOdds: v => v == null ? "—" : (v > 0 ? "+" : "") + Number(v).toFixed(2),
   dollar:v => v == null ? "—" : (v >= 0 ? "+$" : "-$") + Math.abs(v).toFixed(2),
   time:  iso => {
     if (!iso) return "—";
@@ -154,7 +155,7 @@ function renderTable() {
       <td>${b.prop_type}</td>
       <td>${b.pp_line}${lineDiff}</td>
       <td class="side-${b.side}">${b.side.toUpperCase()}</td>
-      <td>${fmt.odds(b.true_odds)}</td>
+      <td>${fmt.trueOdds(b.true_odds)}</td>
       <td class="${evClass(b.edge)}">${fmt.pct(b.edge)}</td>
       <td class="${evClass(b.individual_ev_pct)}">${fmt.pct(b.individual_ev_pct)}</td>
       <td style="color:var(--text-muted)">${fdOdds}</td>
@@ -231,7 +232,7 @@ function renderSlipLegs() {
     <div class="slip-leg">
       <div class="slip-leg-name">${b.player_name}</div>
       <div class="slip-leg-detail">${b.prop_type} ${b.side.toUpperCase()} ${b.pp_line} · ${b.league}</div>
-      <div class="slip-leg-prob">True Odds: ${fmt.odds(b.true_odds)} · EV: ${fmt.pct(b.individual_ev_pct)}</div>
+      <div class="slip-leg-prob">True Odds: ${fmt.trueOdds(b.true_odds)} · EV: ${fmt.pct(b.individual_ev_pct)}</div>
     </div>
   `).join("");
 }
@@ -587,7 +588,7 @@ function renderMatchedTable() {
       <td>${l.stat_type}</td>
       <td class="line-value">${l.pp_line}${lineDiff}</td>
       <td class="${sideClass}">${l.side.toUpperCase()}</td>
-      <td class="line-value">${fmt.odds(l.true_odds)}</td>
+      <td class="line-value">${fmt.trueOdds(l.true_odds)}</td>
       <td class="line-value">${fmt.odds(l.odds)}</td>
       <td class="game-time">${gameTime}</td>
     </tr>`;
@@ -849,7 +850,7 @@ function renderFDTable() {
       <td><span class="league-tag league-${l.league}">${l.league}</span></td>
       <td>${l.stat_type}</td>
       <td class="line-value">${l.line_score}</td>
-      <td class="line-value">${fmt.odds(l.true_odds)}</td>
+      <td class="line-value">${fmt.trueOdds(l.true_odds)}</td>
       <td class="line-value">${fmt.odds(l.line_odds)}</td>
       <td class="game-time">${gameTime}</td>
     </tr>`;

@@ -18,19 +18,19 @@ BREAK_EVEN = {
 # Power slip payout multipliers (decimal, e.g. 3x means you get 3x your stake back)
 POWER_PAYOUTS = {
     2: 3.0,
-    3: 5.0,
+    3: 6.0,
     4: 10.0,
     5: 20.0,
-    6: 25.0,
+    6: 40.0,
 }
 
 # Flex payout tiers: {n_picks: {k_correct: decimal_multiplier}}
 # Only tiers that pay out are listed; missing k → 0
 FLEX_PAYOUTS = {
-    3: {2: 1.25, 3: 2.5},
-    4: {3: 1.5,  4: 5.0},
-    5: {4: 2.0,  5: 10.0},
-    6: {4: 0.4,  5: 2.0,  6: 10.0},
+    3: {2: 1.0, 3: 3.0},
+    4: {3: 1.5,  4: 6.0},
+    5: {3: 0.4,  4: 2.0,  5: 10.0},
+    6: {4: 0.4,  5: 2.0,  6: 25.0},
 }
 
 # The most efficient single-leg implied decimal odds (5-Flex / 6-Flex break-even = 54.34%)
