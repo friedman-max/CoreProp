@@ -41,8 +41,8 @@ class PrizePickLine:
 @dataclass
 class MatchedProp:
     pp: PrizePickLine
-    fd: FanDuelProp
     name_score: float    # fuzzy similarity 0-100
+    fd: Optional[FanDuelProp] = None
     dk: Optional[FanDuelProp] = None
 
 
@@ -118,8 +118,8 @@ def match_props(
         fd_candidates = fd_index.get(key, [])
         dk_candidates = dk_index.get(key, [])
         
-        # We only care about props that exist on BOTH books
-        if not fd_candidates or not dk_candidates:
+        # We need at least one book to compare against
+        if not fd_candidates and not dk_candidates:
             continue
 
         norm_pp_name = normalize_name(pp.player_name)
@@ -148,9 +148,9 @@ def match_props(
                 if dk.line == pp.line_score and best_dk.line != pp.line_score:
                     best_dk = dk
 
-        # Only add if we have high-confidence matches on BOTH books
-        if best_fd is not None and best_dk is not None and \
-           best_fd_score >= FUZZY_THRESHOLD and best_dk_score >= FUZZY_THRESHOLD:
-            results.append(MatchedProp(pp=pp, fd=best_fd, dk=best_dk, name_score=best_fd_score))
+        # Return if we have a high-confidence match in AT LEAST ONE of the books
+        if (best_fd is not None and best_fd_score >= FUZZY_THRESHOLD) or \
+           (best_dk is not None and best_dk_score >= FUZZY_THRESHOLD):
+            results.append(MatchedProp(pp=pp, fd=best_fd, dk=best_dk, name_score=max(best_fd_score, best_dk_score)))
 
     return results

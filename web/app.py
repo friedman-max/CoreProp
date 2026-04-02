@@ -164,12 +164,21 @@ def run_pipeline():
         matches = match_props(fd_props, dk_props, pp_lines)
         
         from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
+        from engine.ev_calculator import BetResult
         
+        with _lock:
+            min_ev = _state["min_ev_pct"]
+        bets: list[BetResult] = []
         serialized_matches = []
         for m in matches:
-            # We already filter for both books in the matcher, but we check line equality here
-            # Both books must match the PP line for it to be a clean 'Combined Line' comparison
-            if m.pp.line_score != m.fd.line or m.pp.line_score != m.dk.line:
+            # At least one book must be present. We check line equality for the books that exist.
+            is_valid = True
+            if m.fd and m.pp.line_score != m.fd.line:
+                is_valid = False
+            if m.dk and m.pp.line_score != m.dk.line:
+                is_valid = False
+            
+            if not is_valid:
                 continue
                 
             base = {
@@ -177,15 +186,18 @@ def run_pipeline():
                 "league": m.pp.league,
                 "stat_type": m.pp.stat_type,
                 "pp_line": m.pp.line_score,
-                "fd_line": m.fd.line,
-                "dk_line": m.dk.line,
+                "fd_line": m.fd.line if m.fd else None,
+                "dk_line": m.dk.line if m.dk else None,
                 "start_time": m.pp.start_time,
             }
             
             pp_side = getattr(m.pp, "side", "both")
             
-            # Helper to calculate conservative true odds based on two books
-            def get_combined_true_odds(fd_o, dk_o, fd_u, dk_u, side):
+            # Helper to calculate conservative true odds based on available books
+            def get_combined_true_odds(side):
+                fd_o, fd_u = (m.fd.over_odds, m.fd.under_odds) if m.fd else (None, None)
+                dk_o, dk_u = (m.dk.over_odds, m.dk.under_odds) if m.dk else (None, None)
+
                 if side == "over":
                     o1, o2 = fd_o, dk_o
                     u1, u2 = fd_u, dk_u
@@ -193,64 +205,97 @@ def run_pipeline():
                     o1, o2 = fd_u, dk_u
                     u1, u2 = fd_o, dk_o
 
-                if o1 is None or o2 is None: return None, None
+                # If no book has odds for this side, return None
+                available_odds = [o for o in [o1, o2] if o is not None]
+                if not available_odds: return None, None, None
                 
                 # Best odds is the one that pays out MORE (higher American number)
-                best_odds = max(o1, o2)
+                best_odds = max(available_odds)
                 
-                # True odds based on the book that provided the best_odds (conservative approach)
-                # If we have both sides for that book, use multiplicative devig
-                target_book = "fd" if o1 >= o2 else "dk"
-                
-                if target_book == "fd":
-                    if m.fd.both_sided and fd_o is not None and fd_u is not None:
+                # Use all available books to find the most conservative (lowest) true probability
+                probs = []
+                if m.fd and fd_o is not None:
+                    if m.fd.both_sided and fd_u is not None:
                         t_o, t_u = devig_multiplicative(fd_o, fd_u)
                     else:
                         t_o, t_u = devig_single_sided(fd_o), devig_single_sided(fd_u) if fd_u else None
-                else:
-                    if m.dk.both_sided and dk_o is not None and dk_u is not None:
+                    probs.append(t_o if side == "over" else t_u)
+                
+                if m.dk and dk_o is not None:
+                    if m.dk.both_sided and dk_u is not None:
                         t_o, t_u = devig_multiplicative(dk_o, dk_u)
                     else:
                         t_o, t_u = devig_single_sided(dk_o), devig_single_sided(dk_u) if dk_u else None
-                
-                final_true_prob = t_o if side == "over" else t_u
-                return best_odds, prob_to_american(final_true_prob) if final_true_prob else None
+                    probs.append(t_o if side == "over" else t_u)
+
+                # Filter out Nones
+                probs = [p for p in probs if p is not None]
+                final_true_prob = min(probs) if probs else None
+                return best_odds, final_true_prob, prob_to_american(final_true_prob) if final_true_prob else None
 
             # Process Over side
-            if pp_side in ("both", "over") and m.fd.over_odds is not None and m.dk.over_odds is not None:
-                best, true = get_combined_true_odds(m.fd.over_odds, m.dk.over_odds, m.fd.under_odds, m.dk.under_odds, "over")
+            if pp_side in ("both", "over"):
+                best, prob, true = get_combined_true_odds("over")
                 if best is not None:
                     serialized_matches.append({
                         **base, 
                         "side": "over", 
                         "best_odds": best,
-                        "fd_odds": m.fd.over_odds,
-                        "dk_odds": m.dk.over_odds,
+                        "fd_odds": m.fd.over_odds if (m.fd and m.fd.over_odds is not None) else None,
+                        "dk_odds": m.dk.over_odds if (m.dk and m.dk.over_odds is not None) else None,
                         "true_odds": true
                     })
+                    
+                    # Also create +EV bet if applicable
+                    if prob is not None:
+                        res = BetResult(
+                            bet_id=f"{m.pp.player_id}_{m.pp.stat_type}_over",
+                            player_name=m.pp.player_name,
+                            league=m.pp.league,
+                            prop_type=m.pp.stat_type,
+                            pp_line=m.pp.line_score,
+                            fd_line=base["fd_line"] or base["dk_line"], # represent book line
+                            side="over",
+                            true_prob=prob,
+                            over_odds=m.fd.over_odds if m.fd else m.dk.over_odds,
+                            under_odds=m.fd.under_odds if m.fd else m.dk.under_odds,
+                            both_sided=m.fd.both_sided if m.fd else m.dk.both_sided,
+                            pp_player_id=m.pp.player_id
+                        )
+                        if res.individual_ev_pct >= min_ev:
+                            bets.append(res)
 
             # Process Under side
-            if pp_side in ("both", "under") and m.fd.under_odds is not None and m.dk.under_odds is not None:
-                best, true = get_combined_true_odds(m.fd.over_odds, m.dk.over_odds, m.fd.under_odds, m.dk.under_odds, "under")
+            if pp_side in ("both", "under"):
+                best, prob, true = get_combined_true_odds("under")
                 if best is not None:
                     serialized_matches.append({
                         **base, 
                         "side": "under", 
                         "best_odds": best,
-                        "fd_odds": m.fd.under_odds,
-                        "dk_odds": m.dk.under_odds,
+                        "fd_odds": m.fd.under_odds if (m.fd and m.fd.under_odds is not None) else None,
+                        "dk_odds": m.dk.under_odds if (m.dk and m.dk.under_odds is not None) else None,
                         "true_odds": true
                     })
-
-        bets: list[BetResult] = []
-        with _lock:
-            min_ev = _state["min_ev_pct"]
-
-        for match in matches:
-            if match.pp.line_score != match.fd.line:
-                continue
-            results = evaluate_match(match, min_ev_pct=min_ev)
-            bets.extend(results)
+                    
+                    # Also create +EV bet if applicable
+                    if prob is not None:
+                        res = BetResult(
+                            bet_id=f"{m.pp.player_id}_{m.pp.stat_type}_under",
+                            player_name=m.pp.player_name,
+                            league=m.pp.league,
+                            prop_type=m.pp.stat_type,
+                            pp_line=m.pp.line_score,
+                            fd_line=base["fd_line"] or base["dk_line"],
+                            side="under",
+                            true_prob=prob,
+                            over_odds=m.fd.over_odds if m.fd else m.dk.over_odds,
+                            under_odds=m.fd.under_odds if m.fd else m.dk.under_odds,
+                            both_sided=m.fd.both_sided if m.fd else m.dk.both_sided,
+                            pp_player_id=m.pp.player_id
+                        )
+                        if res.individual_ev_pct >= min_ev:
+                            bets.append(res)
 
         # Deduplicate bets based on bet_id, keeping the one with highest EV
         unique_bets = {}

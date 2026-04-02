@@ -88,9 +88,12 @@ class BetResult:
 
 def _evaluate_same_line(match: MatchedProp) -> list[BetResult]:
     """Both lines match. Evaluate OVER and UNDER independently."""
-    fd = match.fd
+    fd = match.fd or match.dk
     pp = match.pp
     results = []
+
+    if fd is None:
+        return results
 
     if fd.both_sided and fd.over_odds is not None and fd.under_odds is not None:
         true_over, true_under = devig_multiplicative(fd.over_odds, fd.under_odds)
@@ -125,16 +128,23 @@ def _evaluate_same_line(match: MatchedProp) -> list[BetResult]:
     return results
 
 
-def _get_true_prob_for_side(fd, side: str) -> Optional[float]:
-    """De-vig and return true probability for a specific side."""
-    if fd.both_sided and fd.over_odds is not None and fd.under_odds is not None:
-        true_over, true_under = devig_multiplicative(fd.over_odds, fd.under_odds)
-        return true_over if side == "over" else true_under
-    elif side == "over" and fd.over_odds is not None:
-        return devig_single_sided(fd.over_odds)
-    elif side == "under" and fd.under_odds is not None:
-        return devig_single_sided(fd.under_odds)
-    return None
+def _get_true_prob_for_side(match: MatchedProp, side: str) -> Optional[float]:
+    """De-vig and return true probability for a specific side from the best available book."""
+    fd = match.fd
+    dk = match.dk
+    
+    probs = []
+    for book in [fd, dk]:
+        if book is None: continue
+        if book.both_sided and book.over_odds is not None and book.under_odds is not None:
+            t_o, t_u = devig_multiplicative(book.over_odds, book.under_odds)
+            probs.append(t_o if side == "over" else t_u)
+        elif side == "over" and book.over_odds is not None:
+            probs.append(devig_single_sided(book.over_odds))
+        elif side == "under" and book.under_odds is not None:
+            probs.append(devig_single_sided(book.under_odds))
+            
+    return max(probs) if probs else None
 
 
 def evaluate_match(match: MatchedProp, min_ev_pct: float = 0.01) -> list[BetResult]:
@@ -146,19 +156,23 @@ def evaluate_match(match: MatchedProp, min_ev_pct: float = 0.01) -> list[BetResu
       - PP line > FD line → only value on PP UNDER; discard if FD favors OVER
       - PP line == FD line → evaluate both sides
     """
-    fd = match.fd
+    # Prioritize FanDuel if available for line comparison, else use DraftKings
+    # (Since both lines are likely very similar, this works for directional checks)
+    best_book = match.fd or match.dk
     pp = match.pp
     results = []
 
-    if pp.line_score == fd.line:
+    if not best_book:
+        return []
+
+    if pp.line_score == best_book.line:
         candidates = _evaluate_same_line(match)
 
-    elif pp.line_score < fd.line:
+    elif pp.line_score < best_book.line:
         # PP easier line for OVER → value exclusively on PP OVER
-        # Use FanDuel odds for the HARDER line (fd.line) as our probability estimate
-        true_over = _get_true_prob_for_side(fd, "over")
+        # Use available odds for the HARDER line as our probability estimate
+        true_over = _get_true_prob_for_side(match, "over")
         if true_over is None or true_over <= 0.5:
-            # FD doesn't favor the OVER at the higher line → contradiction → discard
             return []
 
         bet_id = f"{pp.player_id}_{pp.stat_type}_over"
@@ -168,22 +182,21 @@ def evaluate_match(match: MatchedProp, min_ev_pct: float = 0.01) -> list[BetResu
             league=pp.league,
             prop_type=pp.stat_type,
             pp_line=pp.line_score,
-            fd_line=fd.line,
+            fd_line=best_book.line,
             side="over",
             true_prob=true_over,
-            over_odds=fd.over_odds,
-            under_odds=fd.under_odds,
-            both_sided=fd.both_sided,
+            over_odds=best_book.over_odds,
+            under_odds=best_book.under_odds,
+            both_sided=best_book.both_sided,
             pp_player_id=pp.player_id,
         )
         candidates = [result]
 
     else:
         # PP harder line for UNDER → value exclusively on PP UNDER
-        # Use FanDuel odds for the EASIER line (fd.line) as probability estimate
-        true_under = _get_true_prob_for_side(fd, "under")
+        # Use available odds for the EASIER line as probability estimate
+        true_under = _get_true_prob_for_side(match, "under")
         if true_under is None or true_under <= 0.5:
-            # FD doesn't favor UNDER at the lower line → contradiction → discard
             return []
 
         bet_id = f"{pp.player_id}_{pp.stat_type}_under"
@@ -193,12 +206,12 @@ def evaluate_match(match: MatchedProp, min_ev_pct: float = 0.01) -> list[BetResu
             league=pp.league,
             prop_type=pp.stat_type,
             pp_line=pp.line_score,
-            fd_line=fd.line,
+            fd_line=best_book.line,
             side="under",
             true_prob=true_under,
-            over_odds=fd.over_odds,
-            under_odds=fd.under_odds,
-            both_sided=fd.both_sided,
+            over_odds=best_book.over_odds,
+            under_odds=best_book.under_odds,
+            both_sided=best_book.both_sided,
             pp_player_id=pp.player_id,
         )
         candidates = [result]

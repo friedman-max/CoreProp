@@ -139,7 +139,7 @@ function renderTable() {
   tbody.innerHTML = sorted.map(b => {
     const checked   = state.selected.has(b.bet_id) ? "checked" : "";
     const rowClass  = state.selected.has(b.bet_id) ? "selected" : "";
-    const lineDiff  = b.pp_line !== b.fd_line
+    const lineDiff = (b.fd_line != null && b.pp_line !== b.fd_line)
       ? `<span class="line-diff"> (FD: ${b.fd_line})</span>` : "";
 
     const fdOdds = b.side === "over"
@@ -585,7 +585,7 @@ function renderMatchedTable() {
       gameTime = d.toLocaleDateString([], { month: "numeric", day: "numeric" }) +
         " " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     }
-    const lineDiff = l.pp_line !== l.fd_line ? `<span class="line-diff"> (FD: ${l.fd_line})</span>` : "";
+    const lineDiff = (l.fd_line != null && l.pp_line !== l.fd_line) ? `<span class="line-diff"> (FD: ${l.fd_line})</span>` : "";
     const sideClass = l.side === "over" ? "side-over" : "side-under";
     
     return `<tr>
