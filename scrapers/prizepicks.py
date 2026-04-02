@@ -118,7 +118,7 @@ def _fetch_league(session: requests.Session, league: str, league_id: int) -> lis
         if page >= total_pages or not projections:
             break
         page += 1
-        time.sleep(3)  # pagination delay
+        time.sleep(3.0)  # Moderate intra-league pagination delay
 
     logger.info("PrizePicks [%s]: %d lines fetched", league, len(lines))
     return lines
@@ -139,6 +139,6 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
             logger.info("Scraping PrizePicks league: %s (ID: %d)", league, league_id)
             lines = _fetch_league(session, league, league_id)
             all_lines.extend(lines)
-            time.sleep(10)  # inter-league delay
+            time.sleep(10.0)  # Significant inter-league delay to avoid 429s
 
     return all_lines
