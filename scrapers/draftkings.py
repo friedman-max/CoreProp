@@ -48,9 +48,11 @@ LEAGUE_CONFIG = {
     "NHL": {
         "id": "42133",
         "subcategories": {
-            "Goals": "4238",
-            "Points": "4240",
-            "Shots": "4242",
+            "Goals": "14495",
+            "Points": "16545",
+            "Assists": "16546",
+            "Shots on Goal": "16544",
+            "Saves": "16550",
         }
     }
 }
@@ -128,7 +130,7 @@ async def _fetch_subcategory(session: requests.AsyncSession, league: str, league
             if not player_name:
                 # Fallback: parse from market name
                 # "Player Name prop type" -> strip known suffixes
-                suffixes = [" Home Runs", " Points", " Rebounds", " Assists", " Three Pointers"]
+                suffixes = [" Home Runs", " Points", " Rebounds", " Assists", " Three Pointers", " Shots on Goal", " Goals", " Saves"]
                 player_name = mkt_name
                 for s in suffixes:
                     if player_name.endswith(s):
@@ -169,6 +171,9 @@ async def _fetch_subcategory(session: requests.AsyncSession, league: str, league
             elif "rbis" in mkt_lower: normalized_type = "RBIs"
             elif "runs" in mkt_lower: normalized_type = "Runs"
             elif "hits+runs+rbis" in mkt_lower: normalized_type = "Hits+Runs+RBIs"
+            elif "shots on goal" in mkt_lower: normalized_type = "Shots on Goal"
+            elif "saves" in mkt_lower: normalized_type = "Saves"
+            elif "goals" in mkt_lower or "goalscorer" in mkt_lower: normalized_type = "Goals"
             
             if not normalized_type:
                 continue
@@ -237,7 +242,7 @@ def scrape_draftkings(active_leagues: dict = None) -> List[DraftKingsProp]:
 if __name__ == "__main__":
     # Test script
     logging.basicConfig(level=logging.INFO)
-    test_leagues = {"NBA": True, "MLB": True}
+    test_leagues = {"NBA": True, "MLB": True, "NHL": True}
     res = scrape_draftkings(test_leagues)
     print(f"Total props: {len(res)}")
     for p in res[:5]:

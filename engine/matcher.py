@@ -105,6 +105,7 @@ def match_props(
     # Alias map: PrizePicks stat names that differ from FanDuel/DraftKings prop names
     _STAT_ALIASES = {
         "goalie saves": "saves",
+        "shots on goal": "shots on goal",
     }
 
     results: list[MatchedProp] = []
