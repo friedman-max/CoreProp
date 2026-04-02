@@ -14,13 +14,11 @@ from engine.matcher import PrizePickLine
 
 logger = logging.getLogger(__name__)
 
-PP_BASE = "https://api.prizepicks.com/projections"
+PP_BASE = "https://partner-api.prizepicks.com/projections"
 PP_HEADERS = {
     "Accept":          "application/json",
     "Referer":         "https://app.prizepicks.com/",
     "Origin":          "https://app.prizepicks.com",
-    "x-device-id":     str(uuid.uuid4()),
-    "x-device-info":   "anonymousId=,name=,os=windows,osVersion=Windows NT 10.0; Win64; x64,platform=web,appVersion=,gameMode=pickem,stateCode=",
 }
 
 
@@ -117,6 +115,7 @@ def _fetch_league(session: requests.Session, league: str, league_id: int) -> lis
         if page >= total_pages or not projections:
             break
         page += 1
+        time.sleep(2.0)  # Moderate intra-league pagination delay
 
     logger.info("PrizePicks [%s]: %d lines fetched", league, len(lines))
     return lines
@@ -127,7 +126,7 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
     leagues = active_leagues if active_leagues is not None else ACTIVE_LEAGUES
     all_lines: list[PrizePickLine] = []
 
-    with requests.Session(impersonate="chrome") as session:
+    with requests.Session(impersonate="chrome124") as session:
         for league, active in leagues.items():
             if not active:
                 continue
@@ -136,6 +135,6 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
                 continue
             lines = _fetch_league(session, league, league_id)
             all_lines.extend(lines)
-            time.sleep(1.5)  # rate-limit buffer between leagues
+            time.sleep(10.0)  # Significant inter-league delay to avoid 429s
 
     return all_lines
