@@ -4,9 +4,10 @@ No authentication required.
 """
 import logging
 import time
+import uuid
 from typing import Optional
 
-import httpx
+from curl_cffi import requests
 
 from config import PRIZEPICKS_LEAGUE_IDS, ACTIVE_LEAGUES
 from engine.matcher import PrizePickLine
@@ -15,28 +16,29 @@ logger = logging.getLogger(__name__)
 
 PP_BASE = "https://api.prizepicks.com/projections"
 PP_HEADERS = {
-    "User-Agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     "Accept":          "application/json",
     "Referer":         "https://app.prizepicks.com/",
     "Origin":          "https://app.prizepicks.com",
+    "x-device-id":     str(uuid.uuid4()),
+    "x-device-info":   "anonymousId=,name=,os=windows,osVersion=Windows NT 10.0; Win64; x64,platform=web,appVersion=,gameMode=pickem,stateCode=",
 }
 
 
-def _fetch_league(client: httpx.Client, league: str, league_id: int) -> list[PrizePickLine]:
+def _fetch_league(session: requests.Session, league: str, league_id: int) -> list[PrizePickLine]:
     """Fetch all projections for a single league."""
     lines: list[PrizePickLine] = []
     page = 1
 
     while True:
         try:
-            resp = client.get(
+            resp = session.get(
                 PP_BASE,
                 params={"league_id": league_id, "per_page": 250, "page": page},
                 headers=PP_HEADERS,
                 timeout=20,
             )
             resp.raise_for_status()
-        except httpx.HTTPError as e:
+        except Exception as e:
             logger.error("PrizePicks HTTP error for %s page %d: %s", league, page, e)
             break
 
@@ -125,14 +127,14 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
     leagues = active_leagues if active_leagues is not None else ACTIVE_LEAGUES
     all_lines: list[PrizePickLine] = []
 
-    with httpx.Client() as client:
+    with requests.Session(impersonate="chrome") as session:
         for league, active in leagues.items():
             if not active:
                 continue
             league_id = PRIZEPICKS_LEAGUE_IDS.get(league)
             if league_id is None:
                 continue
-            lines = _fetch_league(client, league, league_id)
+            lines = _fetch_league(session, league, league_id)
             all_lines.extend(lines)
             time.sleep(1.5)  # rate-limit buffer between leagues
 

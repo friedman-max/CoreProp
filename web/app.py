@@ -161,6 +161,8 @@ def run_pipeline():
             min_ev = _state["min_ev_pct"]
 
         for match in matches:
+            if match.pp.line_score != match.fd.line:
+                continue
             results = evaluate_match(match, min_ev_pct=min_ev)
             bets.extend(results)
 

@@ -38,7 +38,7 @@ PRIZEPICKS_LEAGUE_IDS = {
 }
 
 # Fuzzy match threshold (0-100)
-FUZZY_THRESHOLD = 88
+FUZZY_THRESHOLD = 91
 
 # Single-sided vig assumption
 SINGLE_SIDE_VIG = 0.070
