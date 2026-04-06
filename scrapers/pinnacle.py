@@ -45,6 +45,7 @@ _PROP_TYPE_MAP = {
     "rebs+asts":       "Rebs+Asts",
     "double+double":   "Double-Double",
     "triple+double":   "Triple-Double",
+    "first basket scorer": "First Basket",
     # Baseball
     "home runs":       "Home Runs",
     "total bases":     "Total Bases",
@@ -53,12 +54,14 @@ _PROP_TYPE_MAP = {
     "runs":            "Runs",
     "total strikeouts":"Pitcher Strikeouts",
     "pitching outs":   "Pitching Outs",
-    "earned runs":     "Earned Runs",
+    "earned runs":     "Earned Runs Allowed",
     "hits allowed":    "Hits Allowed",
+    "walks":           "Walks",
     # Hockey
     "goals":           "Goals",
     "shots on goal":   "Shots on Goal",
     "saves":           "Saves",
+    "power play points": "Power Play Points",
 }
 
 _DESC_RE = re.compile(r"^(.+?)\s*\(([^)]+)\)")
@@ -126,9 +129,10 @@ async def _scrape_league(session: requests.AsyncSession, league: str) -> List[Pi
 
         over_pid = under_pid = None
         for p in item.get("participants", []):
-            if p.get("name") == "Over":
+            p_name = p.get("name", "")
+            if p_name in ["Over", "Yes"]:
                 over_pid = p.get("id")
-            elif p.get("name") == "Under":
+            elif p_name in ["Under", "No"]:
                 under_pid = p.get("id")
 
         prop_lookup[item["id"]] = {

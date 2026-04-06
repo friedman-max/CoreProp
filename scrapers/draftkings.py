@@ -40,6 +40,8 @@ LEAGUE_CONFIG = {
             "Pts+Asts":         "16481",
             "Pts+Rebs":         "16482",
             "Pts+Rebs+Asts":    "16483",
+            "Double-Double":    "13762",
+            "Triple-Double":    "13759",
         }
     },
     "MLB": {
@@ -61,6 +63,9 @@ LEAGUE_CONFIG = {
             # ── Pitcher props ──
             "Pitcher Strikeouts":   "17323",
             "Pitching Outs":        "17413",
+            "Earned Runs Allowed":  "17412",
+            "Hits Allowed":         "9886",
+            "Walks Allowed":        "15219",
         }
     },
     "NHL": {
@@ -71,6 +76,8 @@ LEAGUE_CONFIG = {
             "Assists":          "16546",
             "Shots on Goal":    "16544",
             "Saves":            "16550",
+            "Power Play Points": "1317",
+            "60 Mins Props":    "1191",
         }
     },
     "NCAAB": {
@@ -121,6 +128,13 @@ SUBCAT_TO_PROP_TYPE = {
     "Goals":            "Goals",
     "Shots on Goal":    "Shots on Goal",
     "Saves":            "Saves",
+    "Double-Double":    "Double-Double",
+    "Triple-Double":    "Triple-Double",
+    "Earned Runs Allowed": "Earned Runs Allowed",
+    "Hits Allowed":     "Hits Allowed",
+    "Walks Allowed":    "Walks Allowed",
+    "Power Play Points": "Power Play Points",
+    "60 Mins Props":    "1st Period Goals",
 }
 
 
@@ -157,6 +171,7 @@ def _extract_player_name(market_name: str, participants: list, prop_type: Option
         " Three Pointers Made", " Three Pointers",
         " Rebounds", " Assists", " Points",
         " Shots on Goal", " Saves", " Goals",
+        " (Double-Double)", " (Points + Rebounds)",
     ]
     for suffix in _SUFFIXES:
         if market_name.endswith(suffix):

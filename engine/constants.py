@@ -77,6 +77,9 @@ PROP_TYPE_MAP = {
     "free throws made":              "Free Throws Made",
     "free throws attempted":         "Free Throws Attempted",
     "personal fouls":                "Personal Fouls",
+    "double-double":                 "Double-Double",
+    "triple-double":                 "Triple-Double",
+    "first basket":                  "First Basket",
 
     # ── Baseball (MLB) ──
     # PrizePicks: Pitcher Strikeouts, Hits, Total Bases, Runs, RBIs, Walks,
@@ -105,6 +108,7 @@ PROP_TYPE_MAP = {
     "hits+runs+rbis":                "Hits+Runs+RBIs",
     "runs + rbis":                   "Runs+RBIs",
     "runs+rbis":                     "Runs+RBIs",
+    "hitter strikeouts":             "Hitter Strikeouts",
 
     # ── Hockey (NHL) ──
     # PrizePicks: Shots on Goal, Goals, Saves, Points, Assists, Time On Ice,
@@ -124,4 +128,6 @@ PROP_TYPE_MAP = {
     "player total goals":            "Goals",
     "player total assists":          "Assists",
     "player total points":           "Points",
+    "power play points":             "Power Play Points",
+    "1st period goals":              "1st Period Goals",
 }

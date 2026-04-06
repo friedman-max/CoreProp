@@ -74,6 +74,10 @@ def _normalize_prop_type(raw: str) -> Optional[str]:
     if "total assists" in raw_norm or "player total assists" in raw_norm or "assist" in raw_norm: return "Assists"
     if "time on ice" in raw_norm: return "Time On Ice"
     if "points" in raw_norm and league == "NHL": return "Points"
+    if "double double" in raw_norm: return "Double-Double"
+    if "triple double" in raw_norm: return "Triple-Double"
+    if "first basket" in raw_norm: return "First Basket"
+    if "power play points" in raw_norm: return "Power Play Points"
 
     return None
 
@@ -145,6 +149,8 @@ _MULTI_RUNNER_MAP = {
     "goals":              "Goals",
     "points-assists":     "Pts+Asts",
     "points":             "Points",
+    "double double":      "Double-Double",
+    "first basket":       "First Basket",
 }
 
 def _parse_multi_runner_market(mkt_name: str) -> Optional[tuple[str, float]]:
@@ -382,6 +388,7 @@ LEAGUE_TABS = {
         "player-points", "player-rebounds", "player-assists",
         "player-threes", "player-props", "player-combos",
         "player-defense", "alternative-handicaps",
+        "player-performance-doubles", "first-basket",
     ],
     "NCAAB": [
         "player-points", "player-rebounds", "player-assists",
@@ -390,6 +397,7 @@ LEAGUE_TABS = {
     "NHL": [
         "shots", "goalies", "goals", "points-assists",
         "player-props", "alternative-handicaps",
+        "power-play-points",
     ],
     "MLB": [
         "pitcher-props", "batter-props", "player-props", 
@@ -478,3 +486,34 @@ async def _scrape_all_leagues(active_leagues: dict | None = None) -> list[FanDue
 def scrape_fanduel(active_leagues: dict | None = None) -> list[FanDuelProp]:
     """Synchronous entry point — runs the async httpx scraper."""
     return asyncio.run(_scrape_all_leagues(active_leagues))
+
+
+if __name__ == "__main__":
+    # Test script
+    logging.basicConfig(level=logging.INFO)
+    test_leagues = {"NBA": True, "MLB": True, "NHL": True, "NCAAB": True}
+    res = scrape_fanduel(test_leagues)
+
+    # Group by league and prop type for summary
+    from collections import Counter
+    by_league: dict[str, Counter] = {}
+    for p in res:
+        by_league.setdefault(p.league, Counter())[p.prop_type] += 1
+
+    print(f"\nTotal props: {len(res)}")
+    for league in sorted(by_league):
+        print(f"\n{league}:")
+        for prop_type, count in by_league[league].most_common():
+            print(f"  {prop_type}: {count}")
+
+    # Show a few examples per prop type
+    print("\n--- Sample props ---")
+    shown_types = set()
+    for p in res:
+        key = (p.league, p.prop_type)
+        if key not in shown_types:
+            shown_types.add(key)
+            print(
+                f"  {p.league} | {p.player_name} | {p.prop_type} | "
+                f"Line: {p.line} | Over: {p.over_odds} | Under: {p.under_odds}"
+            )
