@@ -318,7 +318,6 @@ th.sortable-pp.active.asc::after { content: ' ↑'; }
   cursor: pointer; flex-shrink: 0; line-height: 1; padding: 4px;
 }
 .slip-banner-close:hover { color: var(--text); }
-<<<<<<< HEAD
 .pagination-controls {
   margin-left: auto;
 }
@@ -336,7 +335,7 @@ th.sortable-pp.active.asc::after { content: ' ↑'; }
 .btn-sm {
   padding: 4px 8px;
   font-size: 11px;
-=======
+}
 
 /* ── Already-in-backtest row highlighting ───────────────────────────────── */
 tr.in-backtest {
@@ -360,5 +359,4 @@ tr.in-backtest.selected {
   border-radius: 3px;
   vertical-align: middle;
   line-height: 1.5;
->>>>>>> 9b94ec6bc86cc282a44b6b1721f60fe4a89f38e3
 }
