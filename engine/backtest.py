@@ -69,6 +69,9 @@ class BacktestLogger:
         self._csv_path = csv_path or CSV_PATH
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._init_csv()
+        # Rebuild used_bets from today's CSV rows so server restarts don't
+        # lose dedup memory and re-log the same legs in a new slip.
+        self._rebuild_used_bets()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -80,6 +83,36 @@ class BacktestLogger:
             with open(self._csv_path, "w", newline="", encoding="utf-8") as f:
                 csv.DictWriter(f, fieldnames=CSV_COLUMNS).writeheader()
             logger.info("Created backtest CSV at %s", self._csv_path)
+
+    def _rebuild_used_bets(self) -> None:
+        """
+        Read today's rows from the CSV and repopulate used_bets.
+        Called on startup so server restarts don't lose dedup memory.
+        """
+        today_str = date.today().isoformat()  # "YYYY-MM-DD"
+        if not self._csv_path.exists():
+            return
+        try:
+            with open(self._csv_path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                count = 0
+                for row in reader:
+                    # timestamp column is like "2026-04-06T10:27:02"
+                    if row.get("timestamp", "").startswith(today_str):
+                        key = (
+                            row.get("player", "").lower(),
+                            row.get("prop", "").lower(),
+                            row.get("side", ""),
+                        )
+                        self.used_bets.add(key)
+                        count += 1
+            if count:
+                logger.info(
+                    "Backtest: rebuilt %d used-bet keys from today's CSV on startup",
+                    count,
+                )
+        except Exception as exc:
+            logger.warning("Backtest: could not rebuild used_bets from CSV: %s", exc)
 
     def _midnight_reset(self) -> None:
         """Automatically reset the used-bets pool when the calendar date changes."""
@@ -118,6 +151,10 @@ class BacktestLogger:
             return 0 < minutes_to_start <= URGENCY_MINUTES
         except Exception:
             return False
+
+    def used_bet_keys(self) -> set[tuple]:
+        """Return the current set of (player_lower, prop_lower, side) tuples used today."""
+        return set(self.used_bets)
 
     @classmethod
     def _score(cls, bet: dict) -> float:
