@@ -55,7 +55,7 @@ Then open:
 
 ## Configuration
 
-Create a `.env` file in the project root (optional). Defaults are defined in `config.py`.
+Create a `.env` file in the project root (optional). Start by copying `.env.example` to `.env`, then adjust values as needed. Defaults are defined in `config.py`.
 
 ```env
 # Scraping behavior

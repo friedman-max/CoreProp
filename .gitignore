@@ -12,6 +12,7 @@ ENV/
 # Environment variables and local config
 .env
 .env.*
+!.env.example
 *.local
 
 # Tool caches
