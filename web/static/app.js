@@ -28,10 +28,11 @@ const lastRefreshEl   = $("last-refresh");
 const nextRefreshEl   = $("next-refresh");
 const selectedCountEl = $("selected-count");
 const btnRefresh      = $("btn-refresh");
-const btnBuildSlip    = $("btn-build-slip");
-const btnCalculate    = $("btn-calculate");
-const btnAutoBuild    = $("btn-auto-build");
-const btnClearSel     = $("btn-clear-selection");
+const btnBuildSlip       = $("btn-build-slip");
+const btnAddToBacktest   = $("btn-add-to-backtest");
+const btnCalculate       = $("btn-calculate");
+const btnAutoBuild       = $("btn-auto-build");
+const btnClearSel        = $("btn-clear-selection");
 const slipLegsEl      = $("slip-legs");
 const slipResultsEl   = $("slip-results");
 const bankrollInput   = $("bankroll-input");
@@ -201,8 +202,9 @@ function updateSelectionUI() {
   const n = state.selected.size;
   selectedCountEl.textContent = `${n} selected`;
   const valid = n >= 2 && n <= 6;
-  btnBuildSlip.disabled  = !valid;
-  btnCalculate.disabled  = !valid;
+  btnBuildSlip.disabled      = !valid;
+  btnCalculate.disabled      = !valid;
+  btnAddToBacktest.disabled  = !valid;
 }
 
 $("chk-all").addEventListener("change", e => {
@@ -220,6 +222,52 @@ btnClearSel.addEventListener("click", () => {
   state.selected.clear();
   renderTable();
   resetSlipPanel();
+});
+
+// ── Add to Backtest ────────────────────────────────────────────────────────
+btnAddToBacktest.addEventListener("click", async () => {
+  const betMap = Object.fromEntries(state.allBets.map(b => [b.bet_id, b]));
+  const selected = [...state.selected].map(id => betMap[id]).filter(Boolean);
+  if (selected.length < 2 || selected.length > 6) return;
+
+  btnAddToBacktest.disabled = true;
+  btnAddToBacktest.textContent = "Logging...";
+
+  try {
+    const resp = await fetch("/api/backtest/add-slip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bet_ids: selected.map(b => b.bet_id) }),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      alert("Failed to log slip: " + (data.detail || "Unknown error"));
+    } else {
+      // Flash the button green briefly
+      btnAddToBacktest.textContent = "✓ Logged!";
+      btnAddToBacktest.style.background = "var(--green)";
+      btnAddToBacktest.style.color = "#000";
+
+      // Show notification banner with the new slip
+      if (data.slip) {
+        lastSeenSlipId = data.slip.slip_id;
+        playBeep();
+        showSlipNotification(data.slip);
+      }
+
+      setTimeout(() => {
+        btnAddToBacktest.textContent = "+ Add to Backtest";
+        btnAddToBacktest.style.background = "";
+        btnAddToBacktest.style.color = "";
+        btnAddToBacktest.disabled = (state.selected.size < 2 || state.selected.size > 6);
+      }, 2500);
+    }
+  } catch (e) {
+    alert("Error logging slip: " + e.message);
+    btnAddToBacktest.textContent = "+ Add to Backtest";
+    btnAddToBacktest.disabled = (state.selected.size < 2 || state.selected.size > 6);
+  }
 });
 
 // ── Slip panel ─────────────────────────────────────────────────────────────
@@ -486,6 +534,8 @@ document.querySelectorAll(".tab").forEach(tab => {
     $("dk-filters").classList.add("hidden");
     $("pin-view").classList.add("hidden");
     $("pin-filters").classList.add("hidden");
+    $("backtest-view").classList.add("hidden");
+    $("backtest-filters").classList.add("hidden");
 
     if (target === "ev") {
       $("ev-view").classList.remove("hidden");
@@ -505,6 +555,10 @@ document.querySelectorAll(".tab").forEach(tab => {
     } else if (target === "pin") {
       $("pin-view").classList.remove("hidden");
       $("pin-filters").classList.remove("hidden");
+    } else if (target === "backtest") {
+      $("backtest-view").classList.remove("hidden");
+      $("backtest-filters").classList.remove("hidden");
+      fetchBacktest();
     }
   });
 });
@@ -1180,6 +1234,124 @@ $("btn-load-pin").addEventListener("click", async () => {
     btn.textContent = "Load Pinnacle Lines";
   }
 });
+
+// ── Backtest Dashboard ────────────────────────────────────────────────────
+
+let btSlips = [];   // raw slip objects from API
+
+async function fetchBacktest() {
+  try {
+    const resp = await fetch("/api/backtest/slips");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    btSlips = data.slips || [];
+    renderBacktest();
+  } catch (e) { console.error("Backtest fetch error:", e); }
+}
+
+function renderBacktest() {
+  const filterResult = $("bt-filter-result").value;
+  const filterLeague = $("bt-filter-league").value.toUpperCase();
+
+  // Flatten all legs for the table, applying filters
+  let allLegs = [];
+  for (const slip of btSlips) {
+    for (const leg of (slip.legs || [])) {
+      const row = { ...leg, slip_id: slip.slip_id, timestamp: slip.timestamp,
+                     slip_type: slip.slip_type, n_legs: slip.n_legs,
+                     proj_slip_ev_pct: slip.proj_slip_ev_pct };
+      if (filterResult && (leg.result || "pending") !== filterResult) continue;
+      if (filterLeague && (leg.league || "").toUpperCase() !== filterLeague) continue;
+      allLegs.push(row);
+    }
+  }
+
+  // Summary stats
+  const totalSlips = btSlips.length;
+  const checked = allLegs.filter(l => l.result === "hit" || l.result === "miss");
+  const hits = checked.filter(l => l.result === "hit").length;
+  const pending = allLegs.filter(l => !l.result || l.result === "pending").length;
+  const hitRate = checked.length > 0 ? ((hits / checked.length) * 100).toFixed(1) + "%" : "—";
+  const evVals = btSlips.map(s => parseFloat(s.proj_slip_ev_pct) || 0);
+  const avgEv = evVals.length > 0 ? ((evVals.reduce((a, b) => a + b, 0) / evVals.length) * 100).toFixed(1) + "%" : "—";
+
+  $("bt-total-slips").textContent = totalSlips;
+  $("bt-legs-checked").textContent = checked.length;
+  $("bt-hit-rate").textContent = hitRate;
+  $("bt-hit-rate").className = "bt-card-value" + (checked.length > 0 && hits / checked.length >= 0.5 ? " positive" : checked.length > 0 ? " negative" : "");
+  $("bt-pending").textContent = pending;
+  $("bt-avg-ev").textContent = avgEv;
+  $("bt-avg-ev").className = "bt-card-value" + (evVals.length > 0 && evVals.reduce((a, b) => a + b, 0) / evVals.length > 0 ? " positive" : "");
+
+  // Table
+  const tbody = $("bt-tbody");
+  if (allLegs.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="16" class="empty-msg">No backtest data yet. Slips will appear here as they are logged.</td></tr>`;
+    return;
+  }
+
+  let prevSlipId = null;
+  tbody.innerHTML = allLegs.map(l => {
+    const isFirst = l.slip_id !== prevSlipId;
+    prevSlipId = l.slip_id;
+    const evPct = l.proj_slip_ev_pct != null ? (parseFloat(l.proj_slip_ev_pct) * 100).toFixed(1) + "%" : "";
+    const indEv = l.ind_ev_pct != null ? (parseFloat(l.ind_ev_pct) * 100).toFixed(1) + "%" : "";
+    const trueP = l.true_prob != null ? (parseFloat(l.true_prob) * 100).toFixed(1) + "%" : "";
+    const resultCls = l.result === "hit" ? "result-hit" : l.result === "miss" ? "result-miss" : "result-pending";
+    const resultText = l.result || "pending";
+    const gameTime = l.game_start ? new Date(l.game_start).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
+    const ts = l.timestamp ? new Date(l.timestamp).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
+    return `<tr class="${isFirst ? "slip-first" : ""}">
+      <td><code>${l.slip_id || ""}</code></td>
+      <td>${ts}</td>
+      <td>${l.slip_type || ""}</td>
+      <td>${l.n_legs || ""}</td>
+      <td class="ev-high">${isFirst ? evPct : ""}</td>
+      <td><strong>${l.player || ""}</strong></td>
+      <td><span class="league-tag league-${(l.league || "").toUpperCase()}">${l.league || ""}</span></td>
+      <td>${l.prop || ""}</td>
+      <td class="line-value">${l.line || ""}</td>
+      <td class="${l.side === "over" ? "side-over" : "side-under"}">${(l.side || "").toUpperCase()}</td>
+      <td>${trueP}</td>
+      <td class="ev-medium">${indEv}</td>
+      <td>${l.urgency === "HIGH" ? '<span style="color:var(--yellow);font-weight:700;">HIGH</span>' : "NORMAL"}</td>
+      <td class="game-time">${gameTime}</td>
+      <td><span class="${resultCls}">${resultText.toUpperCase()}</span></td>
+      <td>${l.stat_actual || "—"}</td>
+    </tr>`;
+  }).join("");
+}
+
+// Filter events
+$("bt-filter-result").addEventListener("change", renderBacktest);
+$("bt-filter-league").addEventListener("change", renderBacktest);
+
+// Download CSV
+$("btn-bt-download").addEventListener("click", () => {
+  window.open("/api/backtest/download-csv", "_blank");
+});
+
+// Check results manually
+$("btn-bt-check-results").addEventListener("click", async () => {
+  const btn = $("btn-bt-check-results");
+  btn.disabled = true;
+  btn.textContent = "Checking...";
+  try {
+    await fetch("/api/backtest/check-results", { method: "POST" });
+    // Wait a few seconds then refresh
+    setTimeout(async () => {
+      await fetchBacktest();
+      btn.disabled = false;
+      btn.textContent = "Check Results (ESPN)";
+    }, 5000);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "Check Results (ESPN)";
+  }
+});
+
+// Refresh button
+$("btn-bt-refresh").addEventListener("click", fetchBacktest);
 
 // ── Slip Notification ──────────────────────────────────────────────────────
 

@@ -1060,6 +1060,162 @@ def get_backtest_slips():
     return {"slips": all_slips[:50], "total": len(all_slips)}
 
 
+class BacktestAddSlipRequest(BaseModel):
+    bet_ids: list[str]
+
+
+@app.post("/api/backtest/add-slip")
+def add_slip_to_backtest(req: BacktestAddSlipRequest):
+    """
+    Manually log a slip from the currently selected +EV bets.
+    bet_ids must refer to bets currently in _state['bet_map'].
+    """
+    if not req.bet_ids or len(req.bet_ids) < 2 or len(req.bet_ids) > 6:
+        raise HTTPException(status_code=400, detail="Slip must have 2-6 legs.")
+
+    with _lock:
+        bet_map      = _state["bet_map"]
+        serialized   = _state["bets"]
+
+    # Build a lookup of full serialized dicts (includes start_time)
+    ser_map = {d["bet_id"]: d for d in serialized}
+
+    backtest_bets = []
+    missing = []
+    for bid in req.bet_ids:
+        d = ser_map.get(bid)
+        b = bet_map.get(bid)
+        if d is None or b is None:
+            missing.append(bid)
+            continue
+        backtest_bets.append({
+            "player_name":       d.get("player_name", ""),
+            "league":            d.get("league", ""),
+            "prop_type":         d.get("prop_type", ""),
+            "pp_line":           d.get("pp_line"),
+            "side":              d.get("side", "over"),
+            "true_prob":         d.get("true_prob"),
+            "individual_ev_pct": d.get("individual_ev_pct"),
+            "start_time":        d.get("start_time", ""),
+        })
+
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Bet IDs not found: {missing}")
+
+    # Force the slip through — bypass the "enough bets" / dedup gate by
+    # calling try_log_slip with only these bets (already in correct format)
+    new_slip = _backtest.try_log_slip(backtest_bets)
+    if new_slip is None:
+        # try_log_slip may reject due to EV or already-used bets;
+        # for manual adds we force-log it anyway
+        import uuid, csv as _csv
+        from datetime import datetime as _dt
+        from engine.backtest import CSV_PATH, CSV_COLUMNS, URGENCY_MINUTES
+        from engine.ev_calculator import power_slip_ev
+        from engine.constants import BREAK_EVEN
+
+        true_probs = [float(b.get("true_prob") or 0) for b in backtest_bets]
+        k = len(backtest_bets)
+        try:
+            from engine.ev_calculator import power_slip_ev, flex_slip_ev
+            power_ev = power_slip_ev(true_probs)
+            flex_ev  = flex_slip_ev(true_probs)
+            best_ev   = max(power_ev, flex_ev) if flex_ev is not None else power_ev
+            best_type = "Power" if power_ev >= (flex_ev or -999) else "Flex"
+        except Exception:
+            best_ev, best_type = 0.0, "Power"
+
+        slip_id   = str(uuid.uuid4())[:8].upper()
+        timestamp = _dt.now().isoformat(timespec="seconds")
+        proj_ev   = round(best_ev, 4)
+
+        from datetime import timezone, timedelta
+        def _is_urgent(gs_str):
+            if not gs_str: return False
+            try:
+                gs = _dt.fromisoformat(gs_str.replace("Z", "+00:00"))
+                now = _dt.now(tz=timezone.utc)
+                mins = (gs - now).total_seconds() / 60
+                return 0 < mins <= URGENCY_MINUTES
+            except Exception:
+                return False
+
+        rows = []
+        for i, b in enumerate(backtest_bets, start=1):
+            rows.append({
+                "slip_id":          slip_id,
+                "timestamp":        timestamp,
+                "slip_type":        best_type,
+                "n_legs":           k,
+                "proj_slip_ev_pct": proj_ev,
+                "leg_num":          i,
+                "player":           b.get("player_name", ""),
+                "league":           b.get("league", ""),
+                "prop":             b.get("prop_type", ""),
+                "line":             b.get("pp_line", ""),
+                "side":             b.get("side", ""),
+                "true_prob":        round(float(b.get("true_prob") or 0), 4),
+                "ind_ev_pct":       round(float(b.get("individual_ev_pct") or 0), 4),
+                "urgency":          "HIGH" if _is_urgent(b.get("start_time")) else "NORMAL",
+                "game_start":       b.get("start_time", ""),
+                "result":           "pending",
+                "stat_actual":      "",
+            })
+
+        try:
+            with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
+                _csv.DictWriter(f, fieldnames=CSV_COLUMNS).writerows(rows)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"CSV write failed: {exc}")
+
+        # Mark legs as used
+        for b in backtest_bets:
+            key = (b.get("player_name","").lower(), b.get("prop_type","").lower(), b.get("side",""))
+            _backtest.used_bets.add(key)
+
+        new_slip = {
+            "slip_id":          slip_id,
+            "timestamp":        timestamp,
+            "slip_type":        best_type,
+            "n_legs":           k,
+            "proj_slip_ev_pct": proj_ev,
+            "legs": [
+                {
+                    "player":     r["player"],
+                    "league":     r["league"],
+                    "prop":       r["prop"],
+                    "line":       r["line"],
+                    "side":       r["side"],
+                    "true_prob":  r["true_prob"],
+                    "ind_ev_pct": r["ind_ev_pct"],
+                    "urgency":    r["urgency"],
+                    "game_start": r["game_start"],
+                }
+                for r in rows
+            ],
+        }
+
+    with _lock:
+        _state["latest_slip"] = new_slip
+
+    logger.info("Manual backtest slip logged: %s (%d legs)", new_slip["slip_id"], new_slip["n_legs"])
+    return {"slip": new_slip}
+
+
+@app.get("/api/backtest/download-csv")
+def download_backtest_csv():
+    """Download the backtest CSV file directly."""
+    from engine.backtest import CSV_PATH
+    if not CSV_PATH.exists():
+        raise HTTPException(status_code=404, detail="No backtest CSV file yet.")
+    return FileResponse(
+        str(CSV_PATH),
+        media_type="text/csv",
+        filename="backtest.csv",
+        headers={"Content-Disposition": "attachment; filename=backtest.csv"},
+    )
+
+
 @app.post("/api/backtest/check-results")
 def trigger_result_check():
     """Manually trigger ESPN result checking for pending backtest rows."""

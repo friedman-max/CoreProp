@@ -38,6 +38,7 @@
     <button class="tab" data-tab="fd">FanDuel Lines</button>
     <button class="tab" data-tab="dk">DraftKings Lines</button>
     <button class="tab" data-tab="pin">Pinnacle Lines</button>
+    <button class="tab" data-tab="backtest">Backtest</button>
   </div>
 
   <!-- ── Filters bar (EV tab) ── -->
@@ -168,6 +169,7 @@
         <div class="table-actions">
           <span id="selected-count">0 selected</span>
           <button class="btn btn-accent" id="btn-build-slip" disabled>Build Slip</button>
+          <button class="btn btn-secondary" id="btn-add-to-backtest" disabled title="Log selected bets as a slip in the backtest CSV">+ Add to Backtest</button>
           <button class="btn btn-secondary" id="btn-clear-selection">Clear</button>
         </div>
       </div>
@@ -378,6 +380,89 @@
         </table>
       </div>
     </div>
+  </div>
+
+  <!-- ── Backtest view ── -->
+  <div class="backtest-view hidden" id="backtest-view">
+    <!-- Summary cards -->
+    <div class="bt-summary" id="bt-summary">
+      <div class="bt-card">
+        <div class="bt-card-label">Total Slips</div>
+        <div class="bt-card-value" id="bt-total-slips">0</div>
+      </div>
+      <div class="bt-card">
+        <div class="bt-card-label">Legs Checked</div>
+        <div class="bt-card-value" id="bt-legs-checked">0</div>
+      </div>
+      <div class="bt-card">
+        <div class="bt-card-label">Leg Hit Rate</div>
+        <div class="bt-card-value" id="bt-hit-rate">—</div>
+      </div>
+      <div class="bt-card">
+        <div class="bt-card-label">Pending</div>
+        <div class="bt-card-value" id="bt-pending">0</div>
+      </div>
+      <div class="bt-card">
+        <div class="bt-card-label">Avg Slip EV</div>
+        <div class="bt-card-value" id="bt-avg-ev">—</div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="bt-actions">
+      <button class="btn btn-primary" id="btn-bt-refresh">Refresh</button>
+      <button class="btn btn-secondary" id="btn-bt-download">Download CSV</button>
+      <button class="btn btn-secondary" id="btn-bt-check-results">Check Results (ESPN)</button>
+    </div>
+
+    <!-- Slips table -->
+    <div class="table-section" style="flex:1;">
+      <div class="table-wrapper">
+        <table id="bt-table">
+          <thead>
+            <tr>
+              <th>Slip ID</th>
+              <th>Time</th>
+              <th>Type</th>
+              <th>Legs</th>
+              <th>Proj EV%</th>
+              <th>Player</th>
+              <th>League</th>
+              <th>Prop</th>
+              <th>Line</th>
+              <th>Side</th>
+              <th>True Prob</th>
+              <th>Ind EV%</th>
+              <th>Urgency</th>
+              <th>Game Start</th>
+              <th>Result</th>
+              <th>Actual</th>
+            </tr>
+          </thead>
+          <tbody id="bt-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="filters-bar hidden" id="backtest-filters">
+    <label>Filter result:
+      <select id="bt-filter-result">
+        <option value="">All</option>
+        <option value="pending">Pending</option>
+        <option value="hit">Hit</option>
+        <option value="miss">Miss</option>
+      </select>
+    </label>
+    <label>Filter league:
+      <select id="bt-filter-league">
+        <option value="">All</option>
+        <option value="NBA">NBA</option>
+        <option value="MLB">MLB</option>
+        <option value="NHL">NHL</option>
+        <option value="NCAAB">NCAAB</option>
+      </select>
+    </label>
   </div>
 
   <!-- ── Settings modal ── -->
