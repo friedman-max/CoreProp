@@ -1,0 +1,345 @@
+"""
+ESPN unofficial API result checker for CoreProp backtests.
+
+Reads pending rows from data/backtest.csv, fetches ESPN box scores,
+and marks each bet as "hit" or "miss" with the actual stat value.
+Covers NBA, NCAAB, MLB, NHL.
+"""
+import csv
+import logging
+import pathlib
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+
+import requests as _requests
+from rapidfuzz import fuzz
+
+logger = logging.getLogger(__name__)
+
+DATA_DIR = pathlib.Path(__file__).parent.parent / "data"
+CSV_PATH  = DATA_DIR / "backtest.csv"
+
+# ESPN scoreboard (for game IDs by date)
+ESPN_SCOREBOARD = {
+    "NBA":   "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
+    "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard",
+    "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard",
+    "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
+}
+
+# ESPN event summary (for box scores)
+ESPN_SUMMARY = {
+    "NBA":   "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary",
+    "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/summary",
+    "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary",
+    "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary",
+}
+
+# Conservative estimate of how long after game_start a result can be fetched
+GAME_DURATION_MINUTES = {
+    "NBA":   180,   # 3 h
+    "NCAAB": 150,   # 2.5 h
+    "MLB":   225,   # 3.75 h
+    "NHL":   180,   # 3 h
+}
+
+FUZZY_THRESHOLD = 78   # lower than main app; ESPN display names can differ slightly
+
+
+class ESPNResultsChecker:
+    """Checks ESPN box scores and back-fills result + stat_actual in the backtest CSV."""
+
+    def __init__(self):
+        self._session = _requests.Session()
+        self._session.headers["User-Agent"] = "Mozilla/5.0"
+        # (league, date_str) → {player_name_lower: stats_dict}
+        self._cache: dict[tuple, dict] = {}
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def check_pending_results(self, csv_path: pathlib.Path = CSV_PATH) -> int:
+        """
+        Read the backtest CSV, find rows where result == 'pending' and the
+        game has had time to finish, then fetch ESPN and update the rows.
+        Returns the number of rows updated.
+        """
+        if not csv_path.exists():
+            return 0
+
+        try:
+            with open(csv_path, "r", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+        except Exception as exc:
+            logger.error("ResultsChecker: cannot read CSV: %s", exc)
+            return 0
+
+        if not rows:
+            return 0
+
+        now_utc = datetime.now(timezone.utc)
+        updated = 0
+        changed = False
+
+        for row in rows:
+            if row.get("result") != "pending":
+                continue
+
+            game_start_str = row.get("game_start", "")
+            league = row.get("league", "").upper()
+            if not game_start_str or league not in ESPN_SCOREBOARD:
+                continue
+
+            # Parse game start
+            try:
+                gs = datetime.fromisoformat(game_start_str.replace("Z", "+00:00"))
+                if gs.tzinfo is None:
+                    gs = gs.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+
+            # Only attempt after the game is estimated to have finished
+            duration   = GAME_DURATION_MINUTES.get(league, 180)
+            likely_end = gs + timedelta(minutes=duration)
+            if now_utc < likely_end:
+                continue
+
+            date_str    = gs.strftime("%Y%m%d")
+            player_name = row.get("player", "")
+            prop_type   = row.get("prop", "")
+            side        = row.get("side", "over")
+            try:
+                line = float(row.get("line") or 0)
+            except ValueError:
+                continue
+
+            player_stats = self._get_player_stats(league, date_str, player_name)
+            if player_stats is None:
+                logger.debug(
+                    "ResultsChecker: no ESPN stats for %s (%s %s)",
+                    player_name, league, date_str,
+                )
+                continue
+
+            actual = self._compute_stat(player_stats, prop_type, league)
+            if actual is None:
+                logger.debug(
+                    "ResultsChecker: cannot compute '%s' for %s", prop_type, player_name
+                )
+                continue
+
+            result = "hit" if (actual > line if side == "over" else actual < line) else "miss"
+            row["result"]      = result
+            row["stat_actual"] = actual
+            updated += 1
+            changed = True
+            logger.debug(
+                "ResultsChecker: %s %s %s %s %.1f  actual=%.1f  →  %s",
+                league, player_name, prop_type, side, line, actual, result,
+            )
+
+        if changed:
+            self._write_csv(csv_path, rows)
+
+        if updated:
+            logger.info("ResultsChecker: updated %d pending rows", updated)
+        return updated
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _get_player_stats(
+        self, league: str, date_str: str, player_name: str
+    ) -> Optional[dict]:
+        cache_key = (league, date_str)
+        if cache_key not in self._cache:
+            self._cache[cache_key] = self._fetch_all_stats(league, date_str)
+
+        stats_by_player = self._cache.get(cache_key, {})
+        if not stats_by_player:
+            return None
+
+        name_lower  = player_name.lower()
+        best_score  = 0
+        best_stats  = None
+        for known_name, stats in stats_by_player.items():
+            score = fuzz.token_sort_ratio(name_lower, known_name)
+            if score > best_score:
+                best_score = score
+                best_stats = stats
+
+        return best_stats if best_score >= FUZZY_THRESHOLD else None
+
+    def _fetch_all_stats(self, league: str, date_str: str) -> dict:
+        """Fetch and aggregate all player stats for a league + date from ESPN."""
+        scoreboard_url = ESPN_SCOREBOARD.get(league)
+        summary_url    = ESPN_SUMMARY.get(league)
+        if not scoreboard_url or not summary_url:
+            return {}
+
+        try:
+            r = self._session.get(scoreboard_url, params={"dates": date_str}, timeout=15)
+            r.raise_for_status()
+            events = r.json().get("events", [])
+        except Exception as exc:
+            logger.warning(
+                "ResultsChecker: scoreboard error %s/%s: %s", league, date_str, exc
+            )
+            return {}
+
+        all_stats: dict = {}
+        for event in events:
+            event_id = event.get("id")
+            if not event_id:
+                continue
+            try:
+                r2 = self._session.get(summary_url, params={"event": event_id}, timeout=15)
+                r2.raise_for_status()
+                summary = r2.json()
+            except Exception as exc:
+                logger.warning(
+                    "ResultsChecker: summary error event %s: %s", event_id, exc
+                )
+                continue
+
+            all_stats.update(self._parse_box_score(summary))
+
+        return all_stats
+
+    @staticmethod
+    def _parse_box_score(summary: dict) -> dict:
+        """
+        Parse ESPN summary JSON → {player_name_lower: {stat_name: raw_value}}.
+        ESPN returns stats as parallel arrays: names[] and athletes[].stats[].
+        """
+        result: dict = {}
+        for section in summary.get("boxscore", {}).get("players", []):
+            for stat_block in section.get("statistics", []):
+                names      = [n.lower() for n in stat_block.get("names", [])]
+                for entry in stat_block.get("athletes", []):
+                    display = entry.get("athlete", {}).get("displayName", "").lower()
+                    raw     = entry.get("stats", [])
+                    if not display or not raw:
+                        continue
+                    stat_dict = {
+                        names[i]: raw[i]
+                        for i in range(min(len(names), len(raw)))
+                    }
+                    if display in result:
+                        result[display].update(stat_dict)
+                    else:
+                        result[display] = stat_dict
+        return result
+
+    @staticmethod
+    def _compute_stat(
+        stats: dict, prop_type: str, league: str
+    ) -> Optional[float]:
+        """Convert raw ESPN stat dict to a float for the given prop type."""
+
+        def _num(key) -> Optional[float]:
+            val = stats.get(key)
+            if val is None:
+                return None
+            try:
+                # Handle "made-attempted" format like "8-18" or "2-6"
+                return float(str(val).split("-")[0])
+            except Exception:
+                return None
+
+        # ── Basketball ──────────────────────────────────────────
+        if prop_type == "Points":
+            return _num("pts")
+        if prop_type == "Rebounds":
+            return _num("reb")
+        if prop_type in ("Assists",) and league != "NHL":
+            return _num("ast")
+        if prop_type == "3-PT Made":
+            return _num("3pt")   # ESPN: "3pt": "2-6"
+        if prop_type == "Pts+Rebs+Asts":
+            p, r, a = _num("pts"), _num("reb"), _num("ast")
+            return None if None in (p, r, a) else p + r + a
+        if prop_type == "Pts+Rebs":
+            p, r = _num("pts"), _num("reb")
+            return None if None in (p, r) else p + r
+        if prop_type == "Pts+Asts":
+            p, a = _num("pts"), _num("ast")
+            return None if None in (p, a) else p + a
+        if prop_type == "Steals":
+            return _num("stl")
+        if prop_type == "Blocked Shots":
+            return _num("blk")
+
+        # ── MLB ─────────────────────────────────────────────────
+        if prop_type == "Pitcher Strikeouts":
+            return _num("so")
+        if prop_type == "Hits":
+            return _num("h")
+        if prop_type == "Home Runs":
+            return _num("hr")
+        if prop_type == "RBIs":
+            return _num("rbi")
+        if prop_type == "Runs":
+            return _num("r")
+        if prop_type == "Stolen Bases":
+            return _num("sb")
+        if prop_type == "Total Bases":
+            h  = _num("h")
+            hr = _num("hr")
+            d2 = _num("2b")
+            d3 = _num("3b")
+            if h is None or hr is None:
+                return None
+            singles = h - (d2 or 0) - (d3 or 0) - hr
+            return singles + 2 * (d2 or 0) + 3 * (d3 or 0) + 4 * hr
+        if prop_type == "Hits+Runs+RBIs":
+            h, r, rbi = _num("h"), _num("r"), _num("rbi")
+            return None if None in (h, r, rbi) else h + r + rbi
+        if prop_type == "Runs+RBIs":
+            r, rbi = _num("r"), _num("rbi")
+            return None if None in (r, rbi) else r + rbi
+        if prop_type == "Pitching Outs":
+            # ESPN stores IP like "6.1" — convert to outs
+            ip = stats.get("ip")
+            if ip is None:
+                return None
+            try:
+                whole, frac = str(ip).split(".") if "." in str(ip) else (str(ip), "0")
+                return float(whole) * 3 + float(frac)
+            except Exception:
+                return None
+
+        # ── NHL ─────────────────────────────────────────────────
+        if prop_type == "Goals" or (prop_type == "Goals" and league == "NHL"):
+            return _num("g")
+        if prop_type == "Assists" and league == "NHL":
+            return _num("a")
+        if prop_type == "Points" and league == "NHL":
+            g, a = _num("g"), _num("a")
+            return None if None in (g, a) else g + a
+        if prop_type == "Shots on Goal":
+            return _num("sog") or _num("shots") or _num("s")
+        if prop_type == "Saves":
+            return _num("sv") or _num("saves")
+
+        return None
+
+    @staticmethod
+    def _write_csv(csv_path: pathlib.Path, rows: list[dict]) -> None:
+        """Atomically rewrite the CSV (write to .tmp then rename)."""
+        if not rows:
+            return
+        fieldnames = list(rows[0].keys())
+        tmp = csv_path.with_suffix(".tmp")
+        try:
+            with open(tmp, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=fieldnames)
+                w.writeheader()
+                w.writerows(rows)
+            tmp.replace(csv_path)
+        except Exception as exc:
+            logger.error("ResultsChecker: CSV write failed: %s", exc)
+            if tmp.exists():
+                tmp.unlink()

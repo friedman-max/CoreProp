@@ -9,12 +9,14 @@ Endpoints:
   GET  /api/config      - Current runtime config
   POST /api/config      - Update config (interval, min_ev, leagues)
 """
+import csv
 import logging
 import threading
 from datetime import datetime, timedelta
 from typing import Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,6 +25,8 @@ from pydantic import BaseModel
 import config as cfg
 from engine.ev_calculator import BetResult, calculate_slip, evaluate_match
 from engine.matcher import match_props
+from engine.backtest import BacktestLogger
+from engine.results_checker import ESPNResultsChecker
 from scrapers.fanduel import scrape_fanduel
 from scrapers.prizepicks import scrape_prizepicks
 from scrapers.draftkings import scrape_draftkings
@@ -32,6 +36,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="CoreProp")
+
+# Backtest / results-checker singletons
+_backtest         = BacktestLogger()
+_results_checker  = ESPNResultsChecker()
 
 # If a scraper returns 0 results but previous had at least this many,
 # reuse the previous data instead of wiping the state.
@@ -67,6 +75,8 @@ _state = {
     "_prev_fd_raw":  [],        # list[FanDuelProp]
     "_prev_dk_raw":  [],        # list[FanDuelProp]
     "_prev_pin_raw": [],        # list[FanDuelProp]
+    # Backtest: latest logged slip (for frontend notification)
+    "latest_slip":   None,
 }
 
 scheduler = BackgroundScheduler()
@@ -348,9 +358,10 @@ def run_pipeline():
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
                             bet_book_odds[bet_id] = {
-                                "fd_odds": m.fd.over_odds if m.fd else None,
-                                "dk_odds": m.dk.over_odds if m.dk else None,
-                                "pin_odds": m.pin.over_odds if m.pin else None,
+                                "fd_odds":    m.fd.over_odds if m.fd else None,
+                                "dk_odds":    m.dk.over_odds if m.dk else None,
+                                "pin_odds":   m.pin.over_odds if m.pin else None,
+                                "start_time": base.get("start_time", ""),
                             }
 
             # Process Under side
@@ -387,9 +398,10 @@ def run_pipeline():
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
                             bet_book_odds[bet_id] = {
-                                "fd_odds": m.fd.under_odds if m.fd else None,
-                                "dk_odds": m.dk.under_odds if m.dk else None,
-                                "pin_odds": m.pin.under_odds if m.pin else None,
+                                "fd_odds":    m.fd.under_odds if m.fd else None,
+                                "dk_odds":    m.dk.under_odds if m.dk else None,
+                                "pin_odds":   m.pin.under_odds if m.pin else None,
+                                "start_time": base.get("start_time", ""),
                             }
 
         # Deduplicate bets based on bet_id, keeping the one with highest EV
@@ -409,6 +421,7 @@ def run_pipeline():
             d["fd_odds_book"] = extras.get("fd_odds")
             d["dk_odds_book"] = extras.get("dk_odds")
             d["pin_odds_book"] = extras.get("pin_odds")
+            d["start_time"]   = extras.get("start_time", "")
             serialized_bets.append(d)
 
         with _lock:
@@ -428,6 +441,41 @@ def run_pipeline():
             _state["_prev_dk_raw"]  = dk_props
             _state["_prev_pin_raw"] = pin_props
         logger.info("Pipeline complete: %d +EV bets found.", len(bets))
+
+        # ── Backtest: try to log a new slip from the freshly computed bets ──
+        if len(serialized_bets) >= 3:
+            try:
+                # Build the bet dicts expected by BacktestLogger
+                backtest_bets = []
+                for d in serialized_bets:
+                    backtest_bets.append({
+                        "player_name":      d.get("player_name", ""),
+                        "league":           d.get("league", ""),
+                        "prop_type":        d.get("prop_type", ""),
+                        "pp_line":          d.get("pp_line"),
+                        "side":             d.get("side", "over"),
+                        "true_prob":        d.get("true_prob"),
+                        "individual_ev_pct": d.get("individual_ev_pct"),
+                        "start_time":       d.get("start_time", ""),
+                    })
+                new_slip = _backtest.try_log_slip(backtest_bets)
+                if new_slip:
+                    with _lock:
+                        _state["latest_slip"] = new_slip
+                    logger.info("Backtest: new slip logged — %s", new_slip.get("slip_id"))
+            except Exception as bt_exc:
+                logger.warning("Backtest try_log_slip error: %s", bt_exc)
+
+        # ── Results checker: back-fill any pending rows non-blocking ──
+        def _check_results_bg():
+            try:
+                updated = _results_checker.check_pending_results()
+                if updated:
+                    logger.info("ResultsChecker: %d rows updated in background", updated)
+            except Exception as rc_exc:
+                logger.warning("ResultsChecker background error: %s", rc_exc)
+
+        threading.Thread(target=_check_results_bg, daemon=True).start()
 
     except Exception as e:
         logger.exception("Pipeline error: %s", e)
@@ -461,6 +509,13 @@ def _reschedule(interval_min: int):
 def startup():
     scheduler.start()
     _reschedule(_state["interval_min"])
+    # Midnight reset: clear used-bets pool every day at 00:00
+    scheduler.add_job(
+        _backtest.reset_daily,
+        trigger=CronTrigger(hour=0, minute=0),
+        id="midnight_reset",
+        replace_existing=True,
+    )
     logger.info("Scheduler started. Auto-refresh every %d min.", _state["interval_min"])
     # Run pipeline immediately on startup so data is ready
     threading.Thread(target=run_pipeline, daemon=True).start()
@@ -944,3 +999,76 @@ def _run_pin_scrape():
         with _lock:
             _state["is_scraping_pin"] = False
 
+
+# ---------------------------------------------------------------------------
+# Backtest endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/backtest/latest-slip")
+def get_latest_slip():
+    """Return the most recently logged slip (for frontend polling / notification)."""
+    with _lock:
+        return {"slip": _state.get("latest_slip")}
+
+
+@app.get("/api/backtest/slips")
+def get_backtest_slips():
+    """Return the last 50 logged slips from the backtest CSV."""
+    import pathlib
+    from engine.backtest import CSV_PATH
+
+    if not CSV_PATH.exists():
+        return {"slips": [], "total": 0}
+
+    try:
+        with open(CSV_PATH, "r", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Cannot read backtest CSV: {exc}")
+
+    # Group rows by slip_id to build slip summaries
+    slips_by_id: dict = {}
+    for row in rows:
+        sid = row.get("slip_id", "")
+        if sid not in slips_by_id:
+            slips_by_id[sid] = {
+                "slip_id":          sid,
+                "timestamp":        row.get("timestamp"),
+                "slip_type":        row.get("slip_type"),
+                "n_legs":           row.get("n_legs"),
+                "proj_slip_ev_pct": row.get("proj_slip_ev_pct"),
+                "legs":             [],
+            }
+        slips_by_id[sid]["legs"].append({
+            "leg_num":    row.get("leg_num"),
+            "player":     row.get("player"),
+            "league":     row.get("league"),
+            "prop":       row.get("prop"),
+            "line":       row.get("line"),
+            "side":       row.get("side"),
+            "true_prob":  row.get("true_prob"),
+            "ind_ev_pct": row.get("ind_ev_pct"),
+            "urgency":    row.get("urgency"),
+            "game_start": row.get("game_start"),
+            "result":     row.get("result"),
+            "stat_actual":row.get("stat_actual"),
+        })
+
+    # Sort by timestamp descending, return last 50
+    all_slips = list(slips_by_id.values())
+    all_slips.sort(key=lambda s: s.get("timestamp") or "", reverse=True)
+    return {"slips": all_slips[:50], "total": len(all_slips)}
+
+
+@app.post("/api/backtest/check-results")
+def trigger_result_check():
+    """Manually trigger ESPN result checking for pending backtest rows."""
+    def _run():
+        try:
+            updated = _results_checker.check_pending_results()
+            logger.info("Manual result check: %d rows updated", updated)
+        except Exception as exc:
+            logger.error("Manual result check error: %s", exc)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "result check started"}

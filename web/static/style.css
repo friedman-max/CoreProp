@@ -253,3 +253,33 @@ th.sortable-pp.active.asc::after { content: ' ↑'; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Slip notification banner ── */
+.slip-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 500;
+  background: linear-gradient(135deg, #1a2a1a, #0d1f0d);
+  border-bottom: 2px solid var(--green);
+  padding: 12px 20px;
+  display: flex; align-items: flex-start; gap: 16px;
+  box-shadow: 0 4px 20px rgba(34,197,94,0.25);
+  animation: slideDown 0.3s ease;
+}
+@keyframes slideDown { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+.slip-banner.hidden { display: none !important; }
+.slip-banner-icon { font-size: 24px; flex-shrink: 0; margin-top: 2px; }
+.slip-banner-body { flex: 1; }
+.slip-banner-title {
+  font-size: 15px; font-weight: 700; color: var(--green); margin-bottom: 6px;
+}
+.slip-banner-legs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.slip-banner-leg {
+  background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3);
+  border-radius: 4px; padding: 3px 8px; font-size: 11px; color: var(--text);
+}
+.slip-banner-leg .urgency-high { color: var(--yellow); font-weight: 700; }
+.slip-banner-meta { font-size: 11px; color: var(--text-muted); }
+.slip-banner-close {
+  background: none; border: none; color: var(--text-muted); font-size: 20px;
+  cursor: pointer; flex-shrink: 0; line-height: 1; padding: 4px;
+}
+.slip-banner-close:hover { color: var(--text); }

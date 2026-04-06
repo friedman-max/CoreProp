@@ -1181,6 +1181,85 @@ $("btn-load-pin").addEventListener("click", async () => {
   }
 });
 
+// ── Slip Notification ──────────────────────────────────────────────────────
+
+let lastSeenSlipId = null;
+
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const freqs = [880, 1100, 1320];
+    freqs.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.12 + 0.18);
+      osc.start(ctx.currentTime + i * 0.12);
+      osc.stop(ctx.currentTime + i * 0.12 + 0.2);
+    });
+  } catch (e) { /* audio not available */ }
+}
+
+function showSlipNotification(slip) {
+  const banner = document.getElementById("slip-banner");
+  if (!banner) return;
+
+  const evPct = slip.proj_slip_ev_pct != null
+    ? (slip.proj_slip_ev_pct * 100).toFixed(1)
+    : "?";
+
+  // Find earliest game start for countdown
+  const starts = (slip.legs || [])
+    .map(l => l.game_start ? new Date(l.game_start) : null)
+    .filter(Boolean);
+  const earliest = starts.length ? new Date(Math.min(...starts)) : null;
+  let countdownStr = "";
+  if (earliest) {
+    const minsLeft = Math.round((earliest - Date.now()) / 60000);
+    if (minsLeft > 0) countdownStr = ` · First game in ${minsLeft}m`;
+  }
+
+  const legsHtml = (slip.legs || []).map(l => {
+    const urgTag = l.urgency === "HIGH"
+      ? ' <span class="urgency-high">⚡HIGH</span>' : "";
+    return `<span class="slip-banner-leg">${l.player} ${l.prop} ${l.side.toUpperCase()} ${l.line}${urgTag}</span>`;
+  }).join("");
+
+  banner.innerHTML = `
+    <div class="slip-banner-icon">🎯</div>
+    <div class="slip-banner-body">
+      <div class="slip-banner-title">
+        New Slip: ${slip.n_legs}-Leg ${slip.slip_type} &nbsp;|&nbsp; EV: +${evPct}%${countdownStr}
+      </div>
+      <div class="slip-banner-legs">${legsHtml}</div>
+      <div class="slip-banner-meta">Slip ID: ${slip.slip_id} &nbsp;·&nbsp; ${slip.timestamp || ""}</div>
+    </div>
+    <button class="slip-banner-close" onclick="document.getElementById('slip-banner').classList.add('hidden')">✕</button>
+  `;
+  banner.classList.remove("hidden");
+
+  // Auto-dismiss after 60 seconds
+  setTimeout(() => banner.classList.add("hidden"), 60_000);
+}
+
+async function pollLatestSlip() {
+  try {
+    const resp = await fetch("/api/backtest/latest-slip");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const slip = data.slip;
+    if (slip && slip.slip_id && slip.slip_id !== lastSeenSlipId) {
+      lastSeenSlipId = slip.slip_id;
+      playBeep();
+      showSlipNotification(slip);
+    }
+  } catch (e) { /* silent */ }
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 fetchStatus();
 fetchBets();
@@ -1190,3 +1269,5 @@ fetchFD();
 fetchDK();
 fetchPin();
 setInterval(fetchStatus, 10_000);
+setInterval(pollLatestSlip, 10_000);
+pollLatestSlip();  // check immediately on load
