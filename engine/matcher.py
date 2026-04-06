@@ -45,6 +45,7 @@ class MatchedProp:
     name_score: float    # fuzzy similarity 0-100
     fd: Optional[FanDuelProp] = None
     dk: Optional[FanDuelProp] = None
+    pin: Optional[FanDuelProp] = None
 
 
 # ---------------------------------------------------------------------------
@@ -87,23 +88,32 @@ def match_props(
     fd_props: list[FanDuelProp],
     dk_props: list[FanDuelProp],
     pp_lines: list[PrizePickLine],
+    pin_props: list[FanDuelProp] | None = None,
 ) -> list[MatchedProp]:
     """
-    For each PrizePicks line, find the best matching FanDuel and DraftKings prop.
-    Only returns matches where BOTH books provide a line for that prop.
+    For each PrizePicks line, find the best matching FanDuel, DraftKings,
+    and Pinnacle prop.
+    Only returns matches where at least one book provides a line for that prop.
     """
-    # Build lookup: (league, prop_type_lower) → list of FanDuelProp for FD and DK
+    pin_props = pin_props or []
+
+    # Build lookup: (league, prop_type_lower) → list of props per book
     fd_index: dict[tuple, list[FanDuelProp]] = {}
     for fd in fd_props:
         key = (fd.league.upper(), fd.prop_type.lower())
         fd_index.setdefault(key, []).append(fd)
-        
+
     dk_index: dict[tuple, list[FanDuelProp]] = {}
     for dk in dk_props:
         key = (dk.league.upper(), dk.prop_type.lower())
         dk_index.setdefault(key, []).append(dk)
 
-    # Alias map: PrizePicks stat names that differ from FanDuel/DraftKings prop names
+    pin_index: dict[tuple, list[FanDuelProp]] = {}
+    for pin in pin_props:
+        key = (pin.league.upper(), pin.prop_type.lower())
+        pin_index.setdefault(key, []).append(pin)
+
+    # Alias map: PrizePicks stat names that differ from book prop names
     _STAT_ALIASES = {
         "goalie saves": "saves",
         "shots on goal": "shots on goal",
@@ -115,43 +125,47 @@ def match_props(
         stat_key = pp.stat_type.lower()
         stat_key = _STAT_ALIASES.get(stat_key, stat_key)
         key = (pp.league.upper(), stat_key)
-        
+
         fd_candidates = fd_index.get(key, [])
         dk_candidates = dk_index.get(key, [])
-        
+        pin_candidates = pin_index.get(key, [])
+
         # We need at least one book to compare against
-        if not fd_candidates and not dk_candidates:
+        if not fd_candidates and not dk_candidates and not pin_candidates:
             continue
 
         norm_pp_name = normalize_name(pp.player_name)
-        
-        # Match FanDuel
-        best_fd = None
-        best_fd_score = 0.0
-        for fd in fd_candidates:
-            score = fuzz.token_sort_ratio(norm_pp_name, normalize_name(fd.player_name))
-            if score > best_fd_score:
-                best_fd_score = score
-                best_fd = fd
-            elif score == best_fd_score and score >= FUZZY_THRESHOLD and best_fd is not None:
-                if fd.line == pp.line_score and best_fd.line != pp.line_score:
-                    best_fd = fd
-                    
-        # Match DraftKings
-        best_dk = None
-        best_dk_score = 0.0
-        for dk in dk_candidates:
-            score = fuzz.token_sort_ratio(norm_pp_name, normalize_name(dk.player_name))
-            if score > best_dk_score:
-                best_dk_score = score
-                best_dk = dk
-            elif score == best_dk_score and score >= FUZZY_THRESHOLD and best_dk is not None:
-                if dk.line == pp.line_score and best_dk.line != pp.line_score:
-                    best_dk = dk
+
+        def _best_match(candidates):
+            best = None
+            best_score = 0.0
+            for c in candidates:
+                score = fuzz.token_sort_ratio(norm_pp_name, normalize_name(c.player_name))
+                if score > best_score:
+                    best_score = score
+                    best = c
+                elif score == best_score and score >= FUZZY_THRESHOLD and best is not None:
+                    if c.line == pp.line_score and best.line != pp.line_score:
+                        best = c
+            return best, best_score
+
+        best_fd, best_fd_score = _best_match(fd_candidates)
+        best_dk, best_dk_score = _best_match(dk_candidates)
+        best_pin, best_pin_score = _best_match(pin_candidates)
 
         # Return if we have a high-confidence match in AT LEAST ONE of the books
-        if (best_fd is not None and best_fd_score >= FUZZY_THRESHOLD) or \
-           (best_dk is not None and best_dk_score >= FUZZY_THRESHOLD):
-            results.append(MatchedProp(pp=pp, fd=best_fd, dk=best_dk, name_score=max(best_fd_score, best_dk_score)))
+        scores = []
+        if best_fd is not None: scores.append(best_fd_score)
+        if best_dk is not None: scores.append(best_dk_score)
+        if best_pin is not None: scores.append(best_pin_score)
+
+        if scores and max(scores) >= FUZZY_THRESHOLD:
+            results.append(MatchedProp(
+                pp=pp,
+                fd=best_fd,
+                dk=best_dk,
+                pin=best_pin,
+                name_score=max(scores),
+            ))
 
     return results

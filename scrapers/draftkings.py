@@ -72,6 +72,18 @@ LEAGUE_CONFIG = {
             "Shots on Goal":    "16544",
             "Saves":            "16550",
         }
+    },
+    "NCAAB": {
+        "id": "92483",
+        "subcategories": {
+            "Points": "16477",
+            "Rebounds": "16479",
+            "Assists": "16478",
+            "Three Pointers": "16480",
+            "Pts+Asts": "16481",
+            "Pts+Rebs": "16482",
+            "Pts+Rebs+Asts": "16483",
+        }
     }
 }
 
@@ -165,6 +177,7 @@ async def _fetch_subcategory(
         "https://sportsbook-nash.draftkings.com/sites/US-SB/api/sportscontent/"
         "controldata/league/leagueSubcategory/v1/markets"
     )
+
 
     params = {
         "isBatchable": "false",
@@ -277,6 +290,7 @@ async def _fetch_subcategory(
                 )
             )
 
+
     except Exception as e:
         logger.error("DraftKings [%s/%s] error: %s", league, subcat_name, e)
 
@@ -339,7 +353,7 @@ def scrape_draftkings(active_leagues: dict = None) -> List[DraftKingsProp]:
 if __name__ == "__main__":
     # Test script
     logging.basicConfig(level=logging.INFO)
-    test_leagues = {"NBA": True, "MLB": True, "NHL": True}
+    test_leagues = {"NBA": True, "MLB": True, "NHL": True, "NCAAB": True}
     res = scrape_draftkings(test_leagues)
 
     # Group by league and prop type for summary

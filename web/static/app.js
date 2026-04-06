@@ -142,11 +142,15 @@ function renderTable() {
     const lineDiff = (b.fd_line != null && b.pp_line !== b.fd_line)
       ? `<span class="line-diff"> (FD: ${b.fd_line})</span>` : "";
 
-    const fdOdds = b.side === "over"
-      ? fmt.odds(b.over_odds)
-      : b.side === "under"
-        ? fmt.odds(b.under_odds)
-        : `${fmt.odds(b.over_odds)} / ${fmt.odds(b.under_odds)}`;
+    // Build book odds display with source tags
+    const bookOddsEntries = [
+      { label: "FD", odds: b.fd_odds_book },
+      { label: "DK", odds: b.dk_odds_book },
+      { label: "PIN", odds: b.pin_odds_book },
+    ].filter(e => e.odds != null);
+    const bookOddsHtml = bookOddsEntries.length > 0
+      ? bookOddsEntries.map(e => `${fmt.odds(e.odds)} <span class="book-tag book-${e.label.toLowerCase()}">${e.label}</span>`).join(" ")
+      : "—";
 
     return `<tr class="${rowClass}" data-id="${b.bet_id}">
       <td><input type="checkbox" class="row-chk" data-id="${b.bet_id}" ${checked} /></td>
@@ -158,7 +162,7 @@ function renderTable() {
       <td>${fmt.trueOdds(b.true_odds)}</td>
       <td class="${evClass(b.edge)}">${fmt.pct(b.edge)}</td>
       <td class="${evClass(b.individual_ev_pct)}">${fmt.pct(b.individual_ev_pct)}</td>
-      <td style="color:var(--text-muted)">${fdOdds}</td>
+      <td style="color:var(--text-muted)">${bookOddsHtml}</td>
     </tr>`;
   }).join("");
 
@@ -387,6 +391,7 @@ async function fetchStatus() {
       await fetchPP();
       await fetchFD();
       await fetchDK();
+      await fetchPin();
     }
     state.isScrapingPrev = data.is_scraping;
 
@@ -479,6 +484,8 @@ document.querySelectorAll(".tab").forEach(tab => {
     $("fd-filters").classList.add("hidden");
     $("dk-view").classList.add("hidden");
     $("dk-filters").classList.add("hidden");
+    $("pin-view").classList.add("hidden");
+    $("pin-filters").classList.add("hidden");
 
     if (target === "ev") {
       $("ev-view").classList.remove("hidden");
@@ -495,6 +502,9 @@ document.querySelectorAll(".tab").forEach(tab => {
     } else if (target === "dk") {
       $("dk-view").classList.remove("hidden");
       $("dk-filters").classList.remove("hidden");
+    } else if (target === "pin") {
+      $("pin-view").classList.remove("hidden");
+      $("pin-filters").classList.remove("hidden");
     }
   });
 });
@@ -572,7 +582,7 @@ function renderMatchedTable() {
   matchedTotalBadge.textContent = `${sorted.length} lines`;
 
   if (sorted.length === 0) {
-    matchedTbody.innerHTML = `<tr><td colspan="10" class="empty-msg">
+    matchedTbody.innerHTML = `<tr><td colspan="11" class="empty-msg">
       ${matchedState.allLines.length === 0 ? 'Click "Refresh Now" to load bets.' : "No lines match current filters."}
     </td></tr>`;
     return;
@@ -598,6 +608,7 @@ function renderMatchedTable() {
       <td class="line-value">${fmt.odds(l.best_odds)}</td>
       <td class="line-value">${fmt.odds(l.fd_odds)}</td>
       <td class="line-value">${fmt.odds(l.dk_odds)}</td>
+      <td class="line-value">${fmt.odds(l.pin_odds)}</td>
       <td class="game-time">${gameTime}</td>
     </tr>`;
   }).join("");
@@ -644,6 +655,17 @@ async function fetchDK() {
     applyDKFilters();
   } catch (e) {
     console.error("Failed to fetch DraftKings lines:", e);
+  }
+}
+
+async function fetchPin() {
+  try {
+    const resp = await fetch("/api/pinnacle");
+    const data = await resp.json();
+    pinState.allLines = data.lines || [];
+    applyPinFilters();
+  } catch (e) {
+    console.error("Failed to fetch Pinnacle lines:", e);
   }
 }
 
@@ -1034,6 +1056,131 @@ $("btn-load-dk").addEventListener("click", async () => {
   }
 });
 
+// ── Pinnacle Lines ──────────────────────────────────────────────────────
+const pinState = {
+  allLines:      [],
+  filteredLines: [],
+  sortCol:       "player_name",
+  sortDir:       "asc",
+};
+
+const pinTbody       = $("pin-tbody");
+const pinTotalBadge  = $("pin-total-badge");
+const pinStatusLabel = $("pin-status-label");
+
+function applyPinFilters() {
+  const league = $("pin-filter-league").value.toUpperCase();
+  const stat   = $("pin-filter-stat").value.toLowerCase().trim();
+  const player = $("pin-filter-player").value.toLowerCase().trim();
+
+  pinState.filteredLines = pinState.allLines.filter(l => {
+    if (league && l.league !== league) return false;
+    if (stat && !l.stat_type.toLowerCase().includes(stat)) return false;
+    if (player && !l.player_name.toLowerCase().includes(player)) return false;
+    return true;
+  });
+
+  renderPinTable();
+}
+
+["pin-filter-league", "pin-filter-stat", "pin-filter-player"].forEach(id => {
+  $(id).addEventListener("input", applyPinFilters);
+  $(id).addEventListener("change", applyPinFilters);
+});
+
+$("btn-clear-pin-filters").addEventListener("click", () => {
+  $("pin-filter-league").value = "";
+  $("pin-filter-stat").value   = "";
+  $("pin-filter-player").value = "";
+  applyPinFilters();
+});
+
+// Sorting
+document.querySelectorAll("th.sortable-pin").forEach(th => {
+  th.addEventListener("click", () => {
+    const col = th.dataset.col;
+    if (pinState.sortCol === col) {
+      pinState.sortDir = pinState.sortDir === "desc" ? "asc" : "desc";
+    } else {
+      pinState.sortCol = col;
+      pinState.sortDir = col === "line_score" ? "desc" : "asc";
+    }
+    document.querySelectorAll("th.sortable-pin").forEach(t => {
+      t.classList.remove("active", "asc", "desc");
+    });
+    th.classList.add("active", pinState.sortDir);
+    renderPinTable();
+  });
+});
+
+function sortPinLines(lines) {
+  return [...lines].sort((a, b) => {
+    let va = a[pinState.sortCol] ?? "";
+    let vb = b[pinState.sortCol] ?? "";
+    if (typeof va === "string") va = va.toLowerCase();
+    if (typeof vb === "string") vb = vb.toLowerCase();
+    if (va < vb) return pinState.sortDir === "asc" ? -1 : 1;
+    if (va > vb) return pinState.sortDir === "asc" ? 1 : -1;
+    return 0;
+  });
+}
+
+function renderPinTable() {
+  const sorted = sortPinLines(pinState.filteredLines);
+  pinTotalBadge.textContent = `${sorted.length} lines`;
+
+  if (sorted.length === 0) {
+    pinTbody.innerHTML = `<tr><td colspan="6" class="empty-msg">
+      ${pinState.allLines.length === 0 ? 'Click "Load Pinnacle Lines" to fetch data.' : "No lines match current filters."}
+    </td></tr>`;
+    return;
+  }
+
+  pinTbody.innerHTML = sorted.map(l => {
+    return `<tr>
+      <td>${l.player_name}</td>
+      <td><span class="league-tag league-${l.league}">${l.league}</span></td>
+      <td>${l.stat_type}</td>
+      <td class="line-value">${l.line_score}</td>
+      <td class="line-value">${fmt.trueOdds(l.true_odds)}</td>
+      <td class="line-value">${fmt.odds(l.line_odds)}</td>
+    </tr>`;
+  }).join("");
+}
+
+// Load button
+$("btn-load-pin").addEventListener("click", async () => {
+  const btn = $("btn-load-pin");
+  btn.disabled = true;
+  btn.textContent = "Loading...";
+  pinStatusLabel.textContent = "Fetching Pinnacle...";
+
+  try {
+    // Trigger scrape
+    await fetch("/api/pinnacle/refresh", { method: "POST" });
+
+    // Poll until done
+    let done = false;
+    while (!done) {
+      await new Promise(r => setTimeout(r, 2000));
+      const resp = await fetch("/api/pinnacle");
+      const data = await resp.json();
+      if (!data.is_scraping) {
+        pinState.allLines = data.lines || [];
+        done = true;
+      }
+    }
+
+    pinStatusLabel.textContent = `Loaded at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    applyPinFilters();
+  } catch (e) {
+    pinStatusLabel.textContent = "Error: " + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Load Pinnacle Lines";
+  }
+});
+
 // ── Init ───────────────────────────────────────────────────────────────────
 fetchStatus();
 fetchBets();
@@ -1041,4 +1188,5 @@ fetchMatched();
 fetchPP();
 fetchFD();
 fetchDK();
+fetchPin();
 setInterval(fetchStatus, 10_000);

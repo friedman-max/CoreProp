@@ -26,11 +26,16 @@ from engine.matcher import match_props
 from scrapers.fanduel import scrape_fanduel
 from scrapers.prizepicks import scrape_prizepicks
 from scrapers.draftkings import scrape_draftkings
+from scrapers.pinnacle import scrape_pinnacle
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="CoreProp")
+
+# If a scraper returns 0 results but previous had at least this many,
+# reuse the previous data instead of wiping the state.
+_MIN_LINES_FOR_FALLBACK = 5
 
 # ---------------------------------------------------------------------------
 # In-memory state
@@ -45,16 +50,23 @@ _state = {
     "pp_lines":      [],        # list[dict] — raw PrizePicks lines
     "fd_lines":      [],        # list[dict] — raw FanDuel lines
     "dk_lines":      [],        # list[dict] — raw DraftKings lines
+    "pin_lines":     [],        # list[dict] — raw Pinnacle lines
     "last_refresh":  None,      # datetime | None
     "next_refresh":  None,      # datetime | None
     "is_scraping":   False,
     "is_scraping_pp": False,
     "is_scraping_fd": False,
     "is_scraping_dk": False,
+    "is_scraping_pin": False,
     "scrape_errors": {},        # league -> error str | None
     "interval_min":  1,
     "min_ev_pct":    -10.0,
     "active_leagues": dict(cfg.ACTIVE_LEAGUES),
+    # Raw prop objects from last successful scrape (for fallback)
+    "_prev_pp_raw":  [],        # list[PrizePickLine]
+    "_prev_fd_raw":  [],        # list[FanDuelProp]
+    "_prev_dk_raw":  [],        # list[FanDuelProp]
+    "_prev_pin_raw": [],        # list[FanDuelProp]
 }
 
 scheduler = BackgroundScheduler()
@@ -73,17 +85,42 @@ def run_pipeline():
         errors = {}
 
     try:
-        # Read runtime league config (UI-togglable)
+        # Read runtime league config and snapshot previous raw data for fallback
         with _lock:
             leagues = dict(_state["active_leagues"])
+            prev_pp_raw = list(_state["_prev_pp_raw"])
+            prev_fd_raw = list(_state["_prev_fd_raw"])
+            prev_dk_raw = list(_state["_prev_dk_raw"])
+            prev_pin_raw = list(_state["_prev_pin_raw"])
 
         logger.info("Pipeline: scraping PrizePicks...")
         pp_lines = scrape_prizepicks(active_leagues=leagues)
+        if len(pp_lines) == 0 and len(prev_pp_raw) >= _MIN_LINES_FOR_FALLBACK:
+            logger.warning("PrizePicks returned 0 lines, reusing %d cached lines", len(prev_pp_raw))
+            pp_lines = prev_pp_raw
+            errors["prizepicks"] = "Empty response — using cached data"
+
         logger.info("Pipeline: scraping FanDuel...")
         fd_props = scrape_fanduel(active_leagues=leagues)
+        if len(fd_props) == 0 and len(prev_fd_raw) >= _MIN_LINES_FOR_FALLBACK:
+            logger.warning("FanDuel returned 0 props, reusing %d cached props", len(prev_fd_raw))
+            fd_props = prev_fd_raw
+            errors["fanduel"] = "Empty response — using cached data"
+
         logger.info("Pipeline: scraping DraftKings...")
         dk_props = scrape_draftkings(active_leagues=leagues)
-        
+        if len(dk_props) == 0 and len(prev_dk_raw) >= _MIN_LINES_FOR_FALLBACK:
+            logger.warning("DraftKings returned 0 props, reusing %d cached props", len(prev_dk_raw))
+            dk_props = prev_dk_raw
+            errors["draftkings"] = "Empty response — using cached data"
+
+        logger.info("Pipeline: scraping Pinnacle...")
+        pin_props = scrape_pinnacle(active_leagues=leagues)
+        if len(pin_props) == 0 and len(prev_pin_raw) >= _MIN_LINES_FOR_FALLBACK:
+            logger.warning("Pinnacle returned 0 props, reusing %d cached props", len(prev_pin_raw))
+            pin_props = prev_pin_raw
+            errors["pinnacle"] = "Empty response — using cached data"
+
         serialized_pp = [
             {
                 "league": l.league,
@@ -160,8 +197,40 @@ def run_pipeline():
                     "start_time": getattr(p, "start_time", None),
                 })
 
-        logger.info("Pipeline: matching %d PP lines vs %d FD and %d DK props...", len(pp_lines), len(fd_props), len(dk_props))
-        matches = match_props(fd_props, dk_props, pp_lines)
+        serialized_pin = []
+        for p in pin_props:
+            true_over, true_under = None, None
+            if p.both_sided and p.over_odds is not None and p.under_odds is not None:
+                true_over, true_under = devig_multiplicative(p.over_odds, p.under_odds)
+            else:
+                if p.over_odds is not None:
+                    true_over = devig_single_sided(p.over_odds)
+                if p.under_odds is not None:
+                    true_under = devig_single_sided(p.under_odds)
+
+            if p.over_odds is not None:
+                serialized_pin.append({
+                    "league": p.league,
+                    "player_name": p.player_name,
+                    "stat_type": p.prop_type + " (O)",
+                    "line_score": p.line,
+                    "line_odds": p.over_odds,
+                    "true_odds": prob_to_american(true_over) if true_over else None,
+                    "start_time": None,
+                })
+            if p.under_odds is not None:
+                serialized_pin.append({
+                    "league": p.league,
+                    "player_name": p.player_name,
+                    "stat_type": p.prop_type + " (U)",
+                    "line_score": p.line,
+                    "line_odds": p.under_odds,
+                    "true_odds": prob_to_american(true_under) if true_under else None,
+                    "start_time": None,
+                })
+
+        logger.info("Pipeline: matching %d PP lines vs %d FD, %d DK, %d Pinnacle props...", len(pp_lines), len(fd_props), len(dk_props), len(pin_props))
+        matches = match_props(fd_props, dk_props, pp_lines, pin_props)
         
         from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
         from engine.ev_calculator import BetResult
@@ -169,6 +238,7 @@ def run_pipeline():
         with _lock:
             min_ev = _state["min_ev_pct"]
         bets: list[BetResult] = []
+        bet_book_odds: dict[str, dict] = {}  # bet_id -> {fd_odds, dk_odds, pin_odds}
         serialized_matches = []
         for m in matches:
             # At least one book must be present. We check line equality for the books that exist.
@@ -177,10 +247,12 @@ def run_pipeline():
                 is_valid = False
             if m.dk and m.pp.line_score != m.dk.line:
                 is_valid = False
-            
+            if m.pin and m.pp.line_score != m.pin.line:
+                is_valid = False
+
             if not is_valid:
                 continue
-                
+
             base = {
                 "player_name": m.pp.player_name,
                 "league": m.pp.league,
@@ -188,44 +260,44 @@ def run_pipeline():
                 "pp_line": m.pp.line_score,
                 "fd_line": m.fd.line if m.fd else None,
                 "dk_line": m.dk.line if m.dk else None,
+                "pin_line": m.pin.line if m.pin else None,
                 "start_time": m.pp.start_time,
             }
-            
+
             pp_side = getattr(m.pp, "side", "both")
-            
+
             # Helper to calculate conservative true odds based on available books
             def get_combined_true_odds(side):
                 fd_o, fd_u = (m.fd.over_odds, m.fd.under_odds) if m.fd else (None, None)
                 dk_o, dk_u = (m.dk.over_odds, m.dk.under_odds) if m.dk else (None, None)
+                pin_o, pin_u = (m.pin.over_odds, m.pin.under_odds) if m.pin else (None, None)
 
                 if side == "over":
-                    o1, o2 = fd_o, dk_o
-                    u1, u2 = fd_u, dk_u
+                    odds_list = [fd_o, dk_o, pin_o]
                 else:
-                    o1, o2 = fd_u, dk_u
-                    u1, u2 = fd_o, dk_o
+                    odds_list = [fd_u, dk_u, pin_u]
 
                 # If no book has odds for this side, return None
-                available_odds = [o for o in [o1, o2] if o is not None]
+                available_odds = [o for o in odds_list if o is not None]
                 if not available_odds: return None, None, None
-                
+
                 # Best odds is the one that pays out MORE (higher American number)
                 best_odds = max(available_odds)
-                
+
                 # Use all available books to find the most conservative (lowest) true probability
                 probs = []
-                if m.fd and fd_o is not None:
-                    if m.fd.both_sided and fd_u is not None:
-                        t_o, t_u = devig_multiplicative(fd_o, fd_u)
+                for book, b_o, b_u in [(m.fd, fd_o, fd_u), (m.dk, dk_o, dk_u), (m.pin, pin_o, pin_u)]:
+                    if not book:
+                        continue
+                    if side == "over" and b_o is None:
+                        continue
+                    if side == "under" and b_u is None:
+                        continue
+                    if book.both_sided and b_o is not None and b_u is not None:
+                        t_o, t_u = devig_multiplicative(b_o, b_u)
                     else:
-                        t_o, t_u = devig_single_sided(fd_o), devig_single_sided(fd_u) if fd_u else None
-                    probs.append(t_o if side == "over" else t_u)
-                
-                if m.dk and dk_o is not None:
-                    if m.dk.both_sided and dk_u is not None:
-                        t_o, t_u = devig_multiplicative(dk_o, dk_u)
-                    else:
-                        t_o, t_u = devig_single_sided(dk_o), devig_single_sided(dk_u) if dk_u else None
+                        t_o = devig_single_sided(b_o) if b_o is not None else None
+                        t_u = devig_single_sided(b_u) if b_u is not None else None
                     probs.append(t_o if side == "over" else t_u)
 
                 # Filter out Nones
@@ -233,69 +305,92 @@ def run_pipeline():
                 final_true_prob = min(probs) if probs else None
                 return best_odds, final_true_prob, prob_to_american(final_true_prob) if final_true_prob else None
 
+            # Pick the first available book for BetResult fields
+            def _first_book():
+                for bk in [m.pin, m.fd, m.dk]:
+                    if bk:
+                        return bk
+                return None
+
+            first_bk = _first_book()
+
             # Process Over side
             if pp_side in ("both", "over"):
                 best, prob, true = get_combined_true_odds("over")
                 if best is not None:
                     serialized_matches.append({
-                        **base, 
-                        "side": "over", 
+                        **base,
+                        "side": "over",
                         "best_odds": best,
                         "fd_odds": m.fd.over_odds if (m.fd and m.fd.over_odds is not None) else None,
                         "dk_odds": m.dk.over_odds if (m.dk and m.dk.over_odds is not None) else None,
+                        "pin_odds": m.pin.over_odds if (m.pin and m.pin.over_odds is not None) else None,
                         "true_odds": true
                     })
-                    
+
                     # Also create +EV bet if applicable
-                    if prob is not None:
+                    if prob is not None and first_bk:
+                        bet_id = f"{m.pp.player_id}_{m.pp.stat_type}_over"
                         res = BetResult(
-                            bet_id=f"{m.pp.player_id}_{m.pp.stat_type}_over",
+                            bet_id=bet_id,
                             player_name=m.pp.player_name,
                             league=m.pp.league,
                             prop_type=m.pp.stat_type,
                             pp_line=m.pp.line_score,
-                            fd_line=base["fd_line"] or base["dk_line"], # represent book line
+                            fd_line=base["fd_line"] or base["dk_line"] or base["pin_line"],
                             side="over",
                             true_prob=prob,
-                            over_odds=m.fd.over_odds if m.fd else m.dk.over_odds,
-                            under_odds=m.fd.under_odds if m.fd else m.dk.under_odds,
-                            both_sided=m.fd.both_sided if m.fd else m.dk.both_sided,
+                            over_odds=first_bk.over_odds,
+                            under_odds=first_bk.under_odds,
+                            both_sided=first_bk.both_sided,
                             pp_player_id=m.pp.player_id
                         )
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
+                            bet_book_odds[bet_id] = {
+                                "fd_odds": m.fd.over_odds if m.fd else None,
+                                "dk_odds": m.dk.over_odds if m.dk else None,
+                                "pin_odds": m.pin.over_odds if m.pin else None,
+                            }
 
             # Process Under side
             if pp_side in ("both", "under"):
                 best, prob, true = get_combined_true_odds("under")
                 if best is not None:
                     serialized_matches.append({
-                        **base, 
-                        "side": "under", 
+                        **base,
+                        "side": "under",
                         "best_odds": best,
                         "fd_odds": m.fd.under_odds if (m.fd and m.fd.under_odds is not None) else None,
                         "dk_odds": m.dk.under_odds if (m.dk and m.dk.under_odds is not None) else None,
+                        "pin_odds": m.pin.under_odds if (m.pin and m.pin.under_odds is not None) else None,
                         "true_odds": true
                     })
-                    
+
                     # Also create +EV bet if applicable
-                    if prob is not None:
+                    if prob is not None and first_bk:
+                        bet_id = f"{m.pp.player_id}_{m.pp.stat_type}_under"
                         res = BetResult(
-                            bet_id=f"{m.pp.player_id}_{m.pp.stat_type}_under",
+                            bet_id=bet_id,
                             player_name=m.pp.player_name,
                             league=m.pp.league,
                             prop_type=m.pp.stat_type,
                             pp_line=m.pp.line_score,
-                            fd_line=base["fd_line"] or base["dk_line"],
+                            fd_line=base["fd_line"] or base["dk_line"] or base["pin_line"],
                             side="under",
                             true_prob=prob,
-                            over_odds=m.fd.over_odds if m.fd else m.dk.over_odds,
-                            under_odds=m.fd.under_odds if m.fd else m.dk.under_odds,
-                            both_sided=m.fd.both_sided if m.fd else m.dk.both_sided,
+                            over_odds=first_bk.over_odds,
+                            under_odds=first_bk.under_odds,
+                            both_sided=first_bk.both_sided,
                             pp_player_id=m.pp.player_id
                         )
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
+                            bet_book_odds[bet_id] = {
+                                "fd_odds": m.fd.under_odds if m.fd else None,
+                                "dk_odds": m.dk.under_odds if m.dk else None,
+                                "pin_odds": m.pin.under_odds if m.pin else None,
+                            }
 
         # Deduplicate bets based on bet_id, keeping the one with highest EV
         unique_bets = {}
@@ -307,16 +402,31 @@ def run_pipeline():
         # Sort by individual EV% descending
         bets.sort(key=lambda b: b.individual_ev_pct, reverse=True)
 
+        serialized_bets = []
+        for b in bets:
+            d = b.to_dict()
+            extras = bet_book_odds.get(b.bet_id, {})
+            d["fd_odds_book"] = extras.get("fd_odds")
+            d["dk_odds_book"] = extras.get("dk_odds")
+            d["pin_odds_book"] = extras.get("pin_odds")
+            serialized_bets.append(d)
+
         with _lock:
-            _state["bets"]         = [b.to_dict() for b in bets]
+            _state["bets"]         = serialized_bets
             _state["bet_map"]      = {b.bet_id: b for b in bets}
             _state["matches"]      = serialized_matches
             _state["pp_lines"]     = serialized_pp
             _state["fd_lines"]     = serialized_fd
             _state["dk_lines"]     = serialized_dk
+            _state["pin_lines"]    = serialized_pin
             _state["last_refresh"] = datetime.now()
             _state["next_refresh"] = datetime.now() + timedelta(minutes=_state["interval_min"])
             _state["scrape_errors"] = errors
+            # Persist raw objects for fallback on next cycle
+            _state["_prev_pp_raw"]  = pp_lines
+            _state["_prev_fd_raw"]  = fd_props
+            _state["_prev_dk_raw"]  = dk_props
+            _state["_prev_pin_raw"] = pin_props
         logger.info("Pipeline complete: %d +EV bets found.", len(bets))
 
     except Exception as e:
@@ -562,9 +672,13 @@ def _run_pp_scrape():
     try:
         with _lock:
             leagues = dict(_state["active_leagues"])
+            prev_pp_raw = list(_state["_prev_pp_raw"])
 
         logger.info("PrizePicks-only scrape starting...")
         pp_lines = scrape_prizepicks(active_leagues=leagues)
+        if len(pp_lines) == 0 and len(prev_pp_raw) >= _MIN_LINES_FOR_FALLBACK:
+            logger.warning("PrizePicks returned 0 lines, reusing %d cached lines", len(prev_pp_raw))
+            pp_lines = prev_pp_raw
         serialized = [
             {
                 "league": l.league,
@@ -577,6 +691,7 @@ def _run_pp_scrape():
         ]
         with _lock:
             _state["pp_lines"] = serialized
+            _state["_prev_pp_raw"] = pp_lines
         logger.info("PrizePicks-only scrape complete: %d lines.", len(serialized))
     except Exception as e:
         logger.exception("PrizePicks scrape error: %s", e)
@@ -616,9 +731,13 @@ def _run_fd_scrape():
     try:
         with _lock:
             leagues = dict(_state["active_leagues"])
+            prev_fd_raw = list(_state["_prev_fd_raw"])
 
         logger.info("FanDuel scrape starting...")
         fd_props = scrape_fanduel(active_leagues=leagues)
+        if len(fd_props) == 0 and len(prev_fd_raw) >= _MIN_LINES_FOR_FALLBACK:
+            logger.warning("FanDuel returned 0 props, reusing %d cached props", len(prev_fd_raw))
+            fd_props = prev_fd_raw
         from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
         serialized = []
         for p in fd_props:
@@ -653,6 +772,7 @@ def _run_fd_scrape():
                 })
         with _lock:
             _state["fd_lines"] = serialized
+            _state["_prev_fd_raw"] = fd_props
         logger.info("FanDuel scrape complete: %d lines.", len(serialized))
     except Exception as e:
         logger.exception("FanDuel scrape error: %s", e)
@@ -693,9 +813,13 @@ def _run_dk_scrape():
     try:
         with _lock:
             leagues = dict(_state["active_leagues"])
+            prev_dk_raw = list(_state["_prev_dk_raw"])
 
         logger.info("DraftKings scrape starting...")
         dk_props = scrape_draftkings(active_leagues=leagues)
+        if len(dk_props) == 0 and len(prev_dk_raw) >= _MIN_LINES_FOR_FALLBACK:
+            logger.warning("DraftKings returned 0 props, reusing %d cached props", len(prev_dk_raw))
+            dk_props = prev_dk_raw
         from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
         serialized = []
         for p in dk_props:
@@ -730,10 +854,93 @@ def _run_dk_scrape():
                 })
         with _lock:
             _state["dk_lines"] = serialized
+            _state["_prev_dk_raw"] = dk_props
         logger.info("DraftKings scrape complete: %d lines.", len(serialized))
     except Exception as e:
         logger.exception("DraftKings scrape error: %s", e)
     finally:
         with _lock:
             _state["is_scraping_dk"] = False
+
+
+# ---------------------------------------------------------------------------
+# Pinnacle-only endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/pinnacle")
+def get_pinnacle():
+    with _lock:
+        return {
+            "lines": _state["pin_lines"],
+            "total": len(_state["pin_lines"]),
+            "is_scraping": _state["is_scraping_pin"],
+        }
+
+
+@app.post("/api/pinnacle/refresh")
+def refresh_pinnacle():
+    with _lock:
+        if _state["is_scraping_pin"]:
+            raise HTTPException(status_code=409, detail="Pinnacle scrape already in progress.")
+    threading.Thread(target=_run_pin_scrape, daemon=True).start()
+    return {"status": "pinnacle refresh started"}
+
+
+def _run_pin_scrape():
+    with _lock:
+        if _state["is_scraping_pin"]:
+            return
+        _state["is_scraping_pin"] = True
+
+    try:
+        with _lock:
+            leagues = dict(_state["active_leagues"])
+            prev_pin_raw = list(_state["_prev_pin_raw"])
+
+        logger.info("Pinnacle scrape starting...")
+        pin_props = scrape_pinnacle(active_leagues=leagues)
+        if len(pin_props) == 0 and len(prev_pin_raw) >= _MIN_LINES_FOR_FALLBACK:
+            logger.warning("Pinnacle returned 0 props, reusing %d cached props", len(prev_pin_raw))
+            pin_props = prev_pin_raw
+        from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
+        serialized = []
+        for p in pin_props:
+            true_over, true_under = None, None
+            if p.both_sided and p.over_odds is not None and p.under_odds is not None:
+                true_over, true_under = devig_multiplicative(p.over_odds, p.under_odds)
+            else:
+                if p.over_odds is not None:
+                    true_over = devig_single_sided(p.over_odds)
+                if p.under_odds is not None:
+                    true_under = devig_single_sided(p.under_odds)
+
+            if p.over_odds is not None:
+                serialized.append({
+                    "league": p.league,
+                    "player_name": p.player_name,
+                    "stat_type": p.prop_type + " (O)",
+                    "line_score": p.line,
+                    "line_odds": p.over_odds,
+                    "true_odds": prob_to_american(true_over) if true_over else None,
+                    "start_time": None,
+                })
+            if p.under_odds is not None:
+                serialized.append({
+                    "league": p.league,
+                    "player_name": p.player_name,
+                    "stat_type": p.prop_type + " (U)",
+                    "line_score": p.line,
+                    "line_odds": p.under_odds,
+                    "true_odds": prob_to_american(true_under) if true_under else None,
+                    "start_time": None,
+                })
+        with _lock:
+            _state["pin_lines"] = serialized
+            _state["_prev_pin_raw"] = pin_props
+        logger.info("Pinnacle scrape complete: %d lines.", len(serialized))
+    except Exception as e:
+        logger.exception("Pinnacle scrape error: %s", e)
+    finally:
+        with _lock:
+            _state["is_scraping_pin"] = False
 
