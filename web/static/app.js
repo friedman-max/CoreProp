@@ -7,6 +7,14 @@
  * - Slip builder: select 2-6 bets → POST /api/slip → show Power/Flex EV%
  */
 
+const POWER_PAYOUTS = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 40.0 };
+const FLEX_PAYOUTS = {
+  3: { 2: 1.0, 3: 3.0 },
+  4: { 3: 1.5, 4: 6.0 },
+  5: { 3: 0.4, 4: 2.0, 5: 10.0 },
+  6: { 4: 0.4, 5: 2.0, 6: 25.0 }
+};
+
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
   allBets:       [],          // raw bet objects from API
@@ -1439,6 +1447,32 @@ function renderBacktest() {
   const evVals = btSlips.map(s => parseFloat(s.proj_slip_ev_pct) || 0);
   const avgEv = evVals.length > 0 ? ((evVals.reduce((a, b) => a + b, 0) / evVals.length) * 100).toFixed(1) + "%" : "—";
 
+  // Payout Ratio calculation
+  let totalEarnings = 0;
+  let resolvedSlips = 0;
+  for (const slip of btSlips) {
+    const legs = slip.legs || [];
+    if (legs.length === 0) continue;
+    
+    // A slip is resolved if all legs have hit/miss result
+    const isResolved = legs.every(l => l.result === "hit" || l.result === "miss");
+    if (!isResolved) continue;
+
+    resolvedSlips++;
+    const n = parseInt(slip.n_legs);
+    const nHits = legs.filter(l => l.result === "hit").length;
+    const type = (slip.slip_type || "").toLowerCase();
+
+    let payout = 0;
+    if (type === "power") {
+      if (nHits === n) payout = POWER_PAYOUTS[n] || 0;
+    } else if (type === "flex") {
+      payout = (FLEX_PAYOUTS[n] && FLEX_PAYOUTS[n][nHits]) || 0;
+    }
+    totalEarnings += payout;
+  }
+  const payoutRatio = resolvedSlips > 0 ? (totalEarnings / resolvedSlips).toFixed(2) + "x" : "—";
+
   $("bt-total-slips").textContent = totalSlips;
   $("bt-legs-checked").textContent = checked.length;
   $("bt-hit-rate").textContent = hitRate;
@@ -1446,6 +1480,8 @@ function renderBacktest() {
   $("bt-pending").textContent = pending;
   $("bt-avg-ev").textContent = avgEv;
   $("bt-avg-ev").className = "bt-card-value" + (evVals.length > 0 && evVals.reduce((a, b) => a + b, 0) / evVals.length > 0 ? " positive" : "");
+  $("bt-payout-ratio").textContent = payoutRatio;
+  $("bt-payout-ratio").className = "bt-card-value" + (resolvedSlips > 0 && totalEarnings / resolvedSlips >= 1.0 ? " positive" : resolvedSlips > 0 ? " negative" : "");
 
   // Table
   const tbody = $("bt-tbody");
