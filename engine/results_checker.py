@@ -134,7 +134,10 @@ class ESPNResultsChecker:
                 )
                 continue
 
-            result = "hit" if (actual > line if side == "over" else actual < line) else "miss"
+            if actual == line:
+                result = "push"
+            else:
+                result = "hit" if (actual > line if side == "over" else actual < line) else "miss"
             row["result"]      = result
             row["stat_actual"] = actual
             updated += 1

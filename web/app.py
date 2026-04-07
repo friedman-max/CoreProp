@@ -1108,18 +1108,31 @@ def get_backtest_slips():
         slip_type = (slip.get("slip_type") or "").lower()
         results = [l.get("result", "pending") for l in legs]
 
-        # A slip is "completed" when all legs have a result
-        completed = all(r in ("hit", "miss") for r in results)
+        # A slip is "completed" when all legs have a result (hit, miss, or push)
+        completed = all(r in ("hit", "miss", "push") for r in results)
         slip["completed"] = completed
 
         if completed:
-            hits = sum(1 for r in results if r == "hit")
-            if slip_type == "power":
-                payout = POWER_PAYOUTS.get(n_legs, 0) if hits == n_legs else 0
+            # Revert logic: slips downgrade if there are pushes
+            effective_results = [r for r in results if r != "push"]
+            n_eff = len(effective_results)
+            hits_eff = sum(1 for r in effective_results if r == "hit")
+
+            if n_eff < 2:
+                # If a slip reverts to 1 or 0 effective legs, it's typically voided/refunded (1x)
+                payout = 1.0 if (n_eff == 0 or (n_eff == 1 and hits_eff == 1)) else 0
+            elif slip_type == "power":
+                # Power: All effective legs must hit
+                payout = POWER_PAYOUTS.get(n_eff, 0) if hits_eff == n_eff else 0
             else:  # flex
-                payout = FLEX_PAYOUTS.get(n_legs, {}).get(hits, 0)
+                if n_eff == 2:
+                    # 3-leg flex with 1 push reverts to 2-leg power
+                    payout = POWER_PAYOUTS.get(2, 0) if hits_eff == 2 else 0
+                else:
+                    payout = FLEX_PAYOUTS.get(n_eff, {}).get(hits_eff, 0)
+
             slip["payout"] = payout
-            slip["hits"] = hits
+            slip["hits"] = hits_eff
         else:
             slip["payout"] = None
             slip["hits"] = None
