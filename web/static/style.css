@@ -20,7 +20,7 @@
   --font:        'Inter', system-ui, -apple-system, sans-serif;
 }
 
-html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5; }
+html, body { height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5; }
 
 /* ── Header ── */
 header {
@@ -91,7 +91,7 @@ header {
 /* ── Main layout ── */
 .main-layout {
   display: grid; grid-template-columns: 1fr 300px;
-  gap: 0; height: calc(100vh - 102px); overflow: hidden;
+  gap: 0; flex: 1; min-height: 0; overflow: hidden;
 }
 
 /* ── Table section ── */
@@ -180,7 +180,7 @@ tbody tr.selected { background: rgba(99, 102, 241, 0.08); }
 
 /* ── PrizePicks view ── */
 .pp-view {
-  height: calc(100vh - 102px); overflow: hidden;
+  flex: 1; min-height: 0; overflow: hidden;
   display: flex; flex-direction: column;
 }
 .pp-view .table-section { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -251,7 +251,7 @@ th.sortable-pp.active.asc::after { content: ' ↑'; }
 
 /* ── Backtest view ── */
 .backtest-view {
-  height: calc(100vh - 102px); overflow: hidden;
+  flex: 1; min-height: 0; overflow: hidden;
   display: flex; flex-direction: column;
 }
 .bt-summary {
