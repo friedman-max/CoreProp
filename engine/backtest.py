@@ -39,9 +39,9 @@ def _normalize(s: str) -> str:
     s = unidecode.unidecode(s).lower().strip()
     return s
 
-def _make_key(player: str) -> str:
-    """Build a unique signature for a player to ensure deduplication."""
-    return _normalize(player)
+def _make_key(player: str, prop: str, side: str) -> tuple[str, str, str]:
+    """Build a unique signature for a bet leg."""
+    return (_normalize(player), _normalize(prop), _normalize(side))
 
 
 class BacktestLogger:
@@ -57,7 +57,7 @@ class BacktestLogger:
     """
 
     def __init__(self, csv_path: Optional[pathlib.Path] = None):
-        self.used_players: set[str] = set()
+        self.used_bets: set[tuple[str, str, str]] = set()
         self.last_reset_date: date = date.today()
         self._csv_path = csv_path or CSV_PATH
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -89,9 +89,13 @@ class BacktestLogger:
                             is_recent = True
                             break
                     if is_recent:
-                        self.used_players.add(_make_key(row.get("player", "")))
-            if self.used_players:
-                logger.info("Backtest: rebuilt %d used-player keys", len(self.used_players))
+                        self.used_bets.add(_make_key(
+                            row.get("player", ""),
+                            row.get("prop", ""),
+                            row.get("side", "")
+                        ))
+            if self.used_bets:
+                logger.info("Backtest: rebuilt %d used-bet keys", len(self.used_bets))
         except Exception as exc:
             logger.warning("Backtest: could not rebuild used_players from CSV: %s", exc)
 
@@ -99,17 +103,17 @@ class BacktestLogger:
         today = date.today()
         if self.last_reset_date != today:
             if self.last_reset_date is not None:
-                logger.info("Midnight reset: clearing %d used-player keys", len(self.used_players))
-            self.used_players = set()
+                logger.info("Midnight reset: clearing %d used-bet keys", len(self.used_bets))
+            self.used_bets = set()
             self.last_reset_date = today
 
     def reset_daily(self) -> None:
-        logger.info("Daily reset: clearing %d used-player keys", len(self.used_players))
-        self.used_players = set()
+        logger.info("Daily reset: clearing %d used-bet keys", len(self.used_bets))
+        self.used_bets = set()
         self.last_reset_date = date.today()
 
-    def used_player_keys(self) -> set[str]:
-        return set(self.used_players)
+    def used_bet_keys(self) -> set[tuple[str, str, str]]:
+        return set(self.used_bets)
 
     def try_log_slip(self, bets: list[dict]) -> Optional[dict]:
         """Build and log the best available 6-leg power slip with unique players."""
@@ -125,8 +129,12 @@ class BacktestLogger:
         seen_in_this_slip = set()
         
         for bet in pool:
-            p_key = _make_key(bet.get("player_name", ""))
-            if p_key in self.used_players or p_key in seen_in_this_slip:
+            p_key = _make_key(
+                bet.get("player_name", ""),
+                bet.get("prop_type", ""),
+                bet.get("side", "")
+            )
+            if p_key in self.used_bets or p_key in seen_in_this_slip:
                 continue
             best_legs.append(bet)
             seen_in_this_slip.add(p_key)
@@ -153,8 +161,12 @@ class BacktestLogger:
 
         rows = []
         for i, bet in enumerate(best_legs, start=1):
-            p_key = _make_key(bet.get("player_name", ""))
-            self.used_players.add(p_key)
+            p_key = _make_key(
+                bet.get("player_name", ""),
+                bet.get("prop_type", ""),
+                bet.get("side", "")
+            )
+            self.used_bets.add(p_key)
             rows.append({
                 "slip_id":          slip_id,
                 "timestamp":        timestamp,
