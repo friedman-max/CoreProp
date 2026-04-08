@@ -14,7 +14,7 @@ from engine.constants import (
     POWER_PAYOUTS,
     FLEX_PAYOUTS,
 )
-from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
+from engine.devig import devig_power, devig_single_sided, prob_to_american
 from engine.matcher import MatchedProp
 
 
@@ -96,7 +96,7 @@ def _evaluate_same_line(match: MatchedProp) -> list[BetResult]:
         return results
 
     if fd.both_sided and fd.over_odds is not None and fd.under_odds is not None:
-        true_over, true_under = devig_multiplicative(fd.over_odds, fd.under_odds)
+        true_over, true_under = devig_power(fd.over_odds, fd.under_odds)
         sides = [("over", true_over), ("under", true_under)]
     elif fd.over_odds is not None:
         true_over = devig_single_sided(fd.over_odds)
@@ -137,7 +137,7 @@ def _get_true_prob_for_side(match: MatchedProp, side: str) -> Optional[float]:
     for book in [fd, dk]:
         if book is None: continue
         if book.both_sided and book.over_odds is not None and book.under_odds is not None:
-            t_o, t_u = devig_multiplicative(book.over_odds, book.under_odds)
+            t_o, t_u = devig_power(book.over_odds, book.under_odds)
             probs.append(t_o if side == "over" else t_u)
         elif side == "over" and book.over_odds is not None:
             probs.append(devig_single_sided(book.over_odds))

@@ -153,12 +153,12 @@ def run_pipeline():
                     "start_time": l.start_time,
                 })
 
-        from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
+        from engine.devig import devig_power, devig_single_sided, prob_to_american
         serialized_fd = []
         for p in fd_props:
             true_over, true_under = None, None
             if p.both_sided and p.over_odds is not None and p.under_odds is not None:
-                true_over, true_under = devig_multiplicative(p.over_odds, p.under_odds)
+                true_over, true_under = devig_power(p.over_odds, p.under_odds)
             else:
                 if p.over_odds is not None:
                     true_over = devig_single_sided(p.over_odds)
@@ -192,7 +192,7 @@ def run_pipeline():
         for p in dk_props:
             true_over, true_under = None, None
             if p.both_sided and p.over_odds is not None and p.under_odds is not None:
-                true_over, true_under = devig_multiplicative(p.over_odds, p.under_odds)
+                true_over, true_under = devig_power(p.over_odds, p.under_odds)
             else:
                 if p.over_odds is not None:
                     true_over = devig_single_sided(p.over_odds)
@@ -226,7 +226,7 @@ def run_pipeline():
         for p in pin_props:
             true_over, true_under = None, None
             if p.both_sided and p.over_odds is not None and p.under_odds is not None:
-                true_over, true_under = devig_multiplicative(p.over_odds, p.under_odds)
+                true_over, true_under = devig_power(p.over_odds, p.under_odds)
             else:
                 if p.over_odds is not None:
                     true_over = devig_single_sided(p.over_odds)
@@ -259,8 +259,9 @@ def run_pipeline():
         logger.info("Pipeline: matching %d PP lines vs %d FD, %d DK, %d Pinnacle props...", len(pp_lines), len(fd_props), len(dk_props), len(pin_props))
         matches = match_props(fd_props, dk_props, pp_lines, pin_props)
         
-        from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
+        from engine.devig import prob_to_american
         from engine.ev_calculator import BetResult
+        from engine.consensus import compute_true_probability, books_from_match
         
         with _lock:
             min_ev = _state["min_ev_pct"]
@@ -293,43 +294,33 @@ def run_pipeline():
 
             pp_side = getattr(m.pp, "side", "both")
 
-            # Helper to calculate conservative true odds based on available books
+            # Build book odds list for the consensus engine
+            match_books = books_from_match(m.fd, m.dk, m.pin)
+
             def get_combined_true_odds(side):
-                fd_o, fd_u = (m.fd.over_odds, m.fd.under_odds) if m.fd else (None, None)
-                dk_o, dk_u = (m.dk.over_odds, m.dk.under_odds) if m.dk else (None, None)
-                pin_o, pin_u = (m.pin.over_odds, m.pin.under_odds) if m.pin else (None, None)
+                """Compute consensus true probability via the VWAP engine."""
+                consensus_prob, worst_case_prob, meta = compute_true_probability(match_books, side)
+
+                if consensus_prob is None:
+                    return None, None, None
+
+                # Find the best raw odds for display
+                fd_o = m.fd.over_odds if m.fd else None
+                fd_u = m.fd.under_odds if m.fd else None
+                dk_o = m.dk.over_odds if m.dk else None
+                dk_u = m.dk.under_odds if m.dk else None
+                pin_o = m.pin.over_odds if m.pin else None
+                pin_u = m.pin.under_odds if m.pin else None
 
                 if side == "over":
-                    odds_list = [fd_o, dk_o, pin_o]
+                    odds_list = [o for o in [fd_o, dk_o, pin_o] if o is not None]
                 else:
-                    odds_list = [fd_u, dk_u, pin_u]
+                    odds_list = [o for o in [fd_u, dk_u, pin_u] if o is not None]
 
-                # If no book has odds for this side, return None
-                available_odds = [o for o in odds_list if o is not None]
-                if not available_odds: return None, None, None
+                best_odds = max(odds_list) if odds_list else None
 
-                # Best odds is the one that pays out MORE (higher American number)
-                best_odds = max(available_odds)
-
-                # Use all available books to find the most conservative (lowest) true probability
-                probs = []
-                for book, b_o, b_u in [(m.fd, fd_o, fd_u), (m.dk, dk_o, dk_u), (m.pin, pin_o, pin_u)]:
-                    if not book:
-                        continue
-                    if side == "over" and b_o is None:
-                        continue
-                    if side == "under" and b_u is None:
-                        continue
-                    if book.both_sided and b_o is not None and b_u is not None:
-                        t_o, t_u = devig_multiplicative(b_o, b_u)
-                    else:
-                        t_o = devig_single_sided(b_o) if b_o is not None else None
-                        t_u = devig_single_sided(b_u) if b_u is not None else None
-                    probs.append(t_o if side == "over" else t_u)
-
-                # Filter out Nones
-                probs = [p for p in probs if p is not None]
-                final_true_prob = min(probs) if probs else None
+                # Use worst-case probability for EV decisions (most conservative)
+                final_true_prob = worst_case_prob
                 return best_odds, final_true_prob, prob_to_american(final_true_prob) if final_true_prob else None
 
             # Pick the first available book for BetResult fields
@@ -831,12 +822,12 @@ def _run_fd_scrape():
         if len(fd_props) == 0 and len(prev_fd_raw) >= _MIN_LINES_FOR_FALLBACK:
             logger.warning("FanDuel returned 0 props, reusing %d cached props", len(prev_fd_raw))
             fd_props = prev_fd_raw
-        from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
+        from engine.devig import devig_power, devig_single_sided, prob_to_american
         serialized = []
         for p in fd_props:
             true_over, true_under = None, None
             if p.both_sided and p.over_odds is not None and p.under_odds is not None:
-                true_over, true_under = devig_multiplicative(p.over_odds, p.under_odds)
+                true_over, true_under = devig_power(p.over_odds, p.under_odds)
             else:
                 if p.over_odds is not None:
                     true_over = devig_single_sided(p.over_odds)
@@ -915,12 +906,12 @@ def _run_dk_scrape():
         if len(dk_props) == 0 and len(prev_dk_raw) >= _MIN_LINES_FOR_FALLBACK:
             logger.warning("DraftKings returned 0 props, reusing %d cached props", len(prev_dk_raw))
             dk_props = prev_dk_raw
-        from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
+        from engine.devig import devig_power, devig_single_sided, prob_to_american
         serialized = []
         for p in dk_props:
             true_over, true_under = None, None
             if p.both_sided and p.over_odds is not None and p.under_odds is not None:
-                true_over, true_under = devig_multiplicative(p.over_odds, p.under_odds)
+                true_over, true_under = devig_power(p.over_odds, p.under_odds)
             else:
                 if p.over_odds is not None:
                     true_over = devig_single_sided(p.over_odds)
@@ -999,12 +990,12 @@ def _run_pin_scrape():
         if len(pin_props) == 0 and len(prev_pin_raw) >= _MIN_LINES_FOR_FALLBACK:
             logger.warning("Pinnacle returned 0 props, reusing %d cached props", len(prev_pin_raw))
             pin_props = prev_pin_raw
-        from engine.devig import devig_multiplicative, devig_single_sided, prob_to_american
+        from engine.devig import devig_power, devig_single_sided, prob_to_american
         serialized = []
         for p in pin_props:
             true_over, true_under = None, None
             if p.both_sided and p.over_odds is not None and p.under_odds is not None:
-                true_over, true_under = devig_multiplicative(p.over_odds, p.under_odds)
+                true_over, true_under = devig_power(p.over_odds, p.under_odds)
             else:
                 if p.over_odds is not None:
                     true_over = devig_single_sided(p.over_odds)
@@ -1042,6 +1033,17 @@ def _run_pin_scrape():
     finally:
         with _lock:
             _state["is_scraping_pin"] = False
+
+
+# ---------------------------------------------------------------------------
+# Calibration metrics endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/calibration")
+def get_calibration():
+    """Return Brier Score, Log-Loss, and calibration buckets from resolved backtest data."""
+    from engine.calibration import evaluate_calibration
+    return evaluate_calibration()
 
 
 # ---------------------------------------------------------------------------
