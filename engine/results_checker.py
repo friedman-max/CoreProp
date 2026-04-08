@@ -68,6 +68,11 @@ class ESPNResultsChecker:
         game has had time to finish, then fetch ESPN and update the rows.
         Returns the number of rows updated.
         """
+        # Always clear caches so we get fresh ESPN data (stale cache was
+        # the #1 cause of permanently-stuck 'pending' rows)
+        self._cache.clear()
+        self._gamelog_cache.clear()
+
         if not csv_path.exists():
             return 0
 
@@ -130,9 +135,24 @@ class ESPNResultsChecker:
                     actual = self._compute_stat(gl_stats, prop_type, league)
 
             if actual is None:
-                logger.debug(
-                    "ResultsChecker: cannot compute '%s' for %s", prop_type, player_name
-                )
+                # If the game ended over 6 hours ago and we still can't find
+                # the player, they almost certainly didn't play (DNP/injury).
+                hours_since_end = (now_utc - likely_end).total_seconds() / 3600
+                if hours_since_end >= 6:
+                    row["result"] = "dnp"
+                    row["stat_actual"] = ""
+                    updated += 1
+                    changed = True
+                    logger.info(
+                        "ResultsChecker: marking %s as DNP (game ended %.0fh ago, "
+                        "no stats found for '%s')",
+                        player_name, hours_since_end, prop_type,
+                    )
+                else:
+                    logger.debug(
+                        "ResultsChecker: cannot compute '%s' for %s (game ended %.1fh ago, will retry)",
+                        prop_type, player_name, hours_since_end,
+                    )
                 continue
 
             if actual == line:
