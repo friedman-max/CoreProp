@@ -1625,6 +1625,7 @@ $("btn-bt-refresh").addEventListener("click", fetchBacktest);
 // ── Slip Notification ──────────────────────────────────────────────────────
 
 let lastSeenSlipId = null;
+let isInitializingLatestSlip = true;
 
 function playBeep() {
   try {
@@ -1694,10 +1695,19 @@ async function pollLatestSlip() {
     const data = await resp.json();
     const slip = data.slip;
     if (slip && slip.slip_id && slip.slip_id !== lastSeenSlipId) {
+      const prevId = lastSeenSlipId;
       lastSeenSlipId = slip.slip_id;
+
+      // Don't show notification on the very first poll (page refresh)
+      if (isInitializingLatestSlip) {
+        isInitializingLatestSlip = false;
+        return;
+      }
+
       playBeep();
       showSlipNotification(slip);
     }
+    isInitializingLatestSlip = false; // ensure we clear this even if no slip found
   } catch (e) { /* silent */ }
 }
 
