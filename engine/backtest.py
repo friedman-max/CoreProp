@@ -10,8 +10,9 @@ import csv
 import logging
 import pathlib
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import Optional
+import unidecode
 
 from engine.constants import BREAK_EVEN
 from engine.ev_calculator import power_slip_ev, flex_slip_ev
@@ -31,6 +32,34 @@ CSV_COLUMNS = [
 
 # Hard floor: legs with individual EV below this are never included
 MIN_LEG_EV_PCT = -0.01   # -1%
+
+def _normalize(s: str) -> str:
+    """Standardize strings: unidecode, lowercase, and strip whitespace."""
+    if not s:
+        return ""
+    # Normalize unicode (e.g. Dončić -> Doncic), lower, and strip
+    s = unidecode.unidecode(s).lower().strip()
+    return s
+
+def _make_key(player: str, prop: str, side: str) -> tuple:
+    """Build a unique signature for a bet leg."""
+    # Map common aliases for prop types to ensure consistency
+    PROP_MAP = {
+        "pts": "points",
+        "rebs": "rebounds",
+        "asts": "assists",
+        "stls": "steals",
+        "blks": "blocked shots",
+        "3pt made": "3-pt made",
+        "3pm": "3-pt made",
+        "hits+runs+rbis": "hits+runs+rbis",
+        "hrr": "hits+runs+rbis",
+    }
+    p = _normalize(player)
+    pr = _normalize(prop)
+    pr = PROP_MAP.get(pr, pr)
+    s = _normalize(side)
+    return (p, pr, s)
 
 
 class BacktestLogger:
@@ -77,7 +106,11 @@ class BacktestLogger:
         Read today's rows from the CSV and repopulate used_bets.
         Called on startup so server restarts don't lose dedup memory.
         """
-        today_str = date.today().isoformat()  # "YYYY-MM-DD"
+        today = date.today()
+        yesterday = today - timedelta(days=1)
+        # Search for today and yesterday to handle timezone rollovers gracefully
+        target_dates = [today.isoformat(), yesterday.isoformat()]
+        
         if not self._csv_path.exists():
             return
         try:
@@ -85,18 +118,25 @@ class BacktestLogger:
                 reader = csv.DictReader(f)
                 count = 0
                 for row in reader:
-                    # timestamp column is like "2026-04-06T10:27:02"
-                    if row.get("timestamp", "").startswith(today_str):
-                        key = (
-                            row.get("player", "").lower(),
-                            row.get("prop", "").lower(),
+                    ts = row.get("timestamp", "")
+                    # Check if the row belongs to the current "active" window (past 24h)
+                    is_recent = False
+                    for d in target_dates:
+                        if ts.startswith(d):
+                            is_recent = True
+                            break
+                    
+                    if is_recent:
+                        key = _make_key(
+                            row.get("player", ""),
+                            row.get("prop", ""),
                             row.get("side", ""),
                         )
                         self.used_bets.add(key)
                         count += 1
             if count:
                 logger.info(
-                    "Backtest: rebuilt %d used-bet keys from today's CSV on startup",
+                    "Backtest: rebuilt %d used-bet keys from recent CSV rows on startup",
                     count,
                 )
         except Exception as exc:
@@ -144,9 +184,9 @@ class BacktestLogger:
         # ── 1. Remove already-used (player, prop, side) combos ──────────────
         available = [
             b for b in bets
-            if (
-                b.get("player_name", "").lower(),
-                b.get("prop_type", "").lower(),
+            if _make_key(
+                b.get("player_name", ""),
+                b.get("prop_type", ""),
                 b.get("side", ""),
             ) not in self.used_bets
         ]
@@ -226,9 +266,9 @@ class BacktestLogger:
 
         # ── 5. Mark legs as used ─────────────────────────────────────────────
         for bet in best_legs:
-            self.used_bets.add((
-                bet.get("player_name", "").lower(),
-                bet.get("prop_type", "").lower(),
+            self.used_bets.add(_make_key(
+                bet.get("player_name", ""),
+                bet.get("prop_type", ""),
                 bet.get("side", ""),
             ))
 
