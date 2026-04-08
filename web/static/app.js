@@ -1688,8 +1688,8 @@ function showSlipNotification(slip) {
   `;
   banner.classList.remove("hidden");
 
-  // Auto-dismiss after 60 seconds
-  setTimeout(() => banner.classList.add("hidden"), 60_000);
+  // Auto-dismiss after 5 seconds
+  setTimeout(() => banner.classList.add("hidden"), 5000);
 }
 
 async function pollLatestSlip() {
@@ -1707,9 +1707,25 @@ async function pollLatestSlip() {
         isInitializingLatestSlip = false;
         return;
       }
+      // Check if the slip is fresh (less than 15 seconds old)
+      // This prevents stale banners when a backgrounded tab wakes up
+      let isFresh = true;
+      if (slip.timestamp) {
+        const slipDate = new Date(slip.timestamp);
+        // Add "Z" if the timestamp doesn't have timezone, to treat it as local or UTC appropriately.
+        // Actually, Python isoformat without tz is local time, so Date parsing might be slightly off
+        // depending on browser timezone handling without a 'Z'. 
+        // A safer way is checking difference:
+        const diffMs = Math.abs(Date.now() - slipDate.getTime());
+        if (diffMs > 15000) {
+          isFresh = false;
+        }
+      }
 
-      playBeep();
-      showSlipNotification(slip);
+      if (isFresh) {
+        playBeep();
+        showSlipNotification(slip);
+      }
     }
     isInitializingLatestSlip = false; // ensure we clear this even if no slip found
   } catch (e) { /* silent */ }
