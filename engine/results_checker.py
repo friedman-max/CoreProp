@@ -8,6 +8,7 @@ Covers NBA, NCAAB, MLB, NHL.
 import csv
 import logging
 import pathlib
+import unidecode
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -43,7 +44,7 @@ GAME_DURATION_MINUTES = {
     "NHL":   180,   # 3 h
 }
 
-FUZZY_THRESHOLD = 78   # lower than main app; ESPN display names can differ slightly
+FUZZY_THRESHOLD = 80   # Strict threshold for name matching
 
 
 class ESPNResultsChecker:
@@ -169,16 +170,27 @@ class ESPNResultsChecker:
         if not stats_by_player:
             return None
 
-        name_lower  = player_name.lower()
+        def _norm(n): return unidecode.unidecode(n).lower().strip()
+        name_lower = _norm(player_name)
+        
         best_score  = 0
         best_stats  = None
+        best_display = None
+
         for known_name, stats in stats_by_player.items():
-            score = fuzz.token_sort_ratio(name_lower, known_name)
+            score = fuzz.token_sort_ratio(name_lower, _norm(known_name))
             if score > best_score:
                 best_score = score
                 best_stats = stats
+                best_display = known_name
 
-        return best_stats if best_score >= FUZZY_THRESHOLD else None
+        if best_score >= FUZZY_THRESHOLD:
+            logger.debug(
+                "ResultsChecker: matched '%s' to ESPN '%s' (score %d)",
+                player_name, best_display, best_score
+            )
+            return best_stats
+        return None
 
     def _fetch_all_stats(self, league: str, date_str: str) -> dict:
         """Fetch and aggregate all player stats for a league + date from ESPN."""
@@ -220,9 +232,6 @@ class ESPNResultsChecker:
     def _parse_box_score(summary: dict) -> dict:
         """
         Parse ESPN summary JSON → {player_name_lower: {stat_name: raw_value}}.
-        ESPN returns stats as parallel arrays: names[] and athletes[].stats[].
-        Note: NBA/MLB populate `names`; NHL only populates `keys`.
-        We fall back to `keys` when `names` is empty.
         """
         result: dict = {}
         for section in summary.get("boxscore", {}).get("players", []):
@@ -231,7 +240,7 @@ class ESPNResultsChecker:
                 if not field_names:
                     field_names = [k.lower() for k in stat_block.get("keys", [])]
                 for entry in stat_block.get("athletes", []):
-                    display = entry.get("athlete", {}).get("displayName", "").lower()
+                    display = entry.get("athlete", {}).get("displayName", "")
                     raw     = entry.get("stats", [])
                     if not display or not raw:
                         continue
@@ -239,10 +248,11 @@ class ESPNResultsChecker:
                         field_names[i]: raw[i]
                         for i in range(min(len(field_names), len(raw)))
                     }
-                    if display in result:
-                        result[display].update(stat_dict)
+                    display_lower = display.lower()
+                    if display_lower in result:
+                        result[display_lower].update(stat_dict)
                     else:
-                        result[display] = stat_dict
+                        result[display_lower] = stat_dict
         return result
 
     @staticmethod
@@ -251,123 +261,127 @@ class ESPNResultsChecker:
     ) -> Optional[float]:
         """Convert raw ESPN stat dict to a float for the given prop type."""
 
-        def _num(key) -> Optional[float]:
-            val = stats.get(key)
-            if val is None:
-                return None
-            try:
-                # Handle "made-attempted" format like "8-18" or "2-6"
-                return float(str(val).split("-")[0])
-            except Exception:
-                return None
+        def _num(*keys) -> Optional[float]:
+            """Try each key alias in order until a non-None value is found."""
+            for key in keys:
+                val = stats.get(key.lower())
+                if val is not None:
+                    try:
+                        if isinstance(val, (int, float)):
+                            return float(val)
+                        sval = str(val).strip()
+                        if not sval or sval == "--":
+                            return 0.0
+                        return float(sval.split("-")[0])
+                    except (ValueError, IndexError):
+                        continue
+            return None
 
         # ── Basketball ──────────────────────────────────────────
+        pts = _num("pts", "points")
+        reb = _num("reb", "rebounds", "totreb", "trb")
+        # Fallback for Reb: sum OREB + DREB if total is missing or 0 but components exist
+        if (reb is None or reb == 0) and league != "NHL":
+            oreb = _num("oreb", "offensiverebounds")
+            dreb = _num("dreb", "defensiverebounds")
+            if oreb is not None and dreb is not None:
+                reb = oreb + dreb
+
+        ast = _num("ast", "assists")
+        stl = _num("stl", "steals")
+        blk = _num("blk", "blocks", "blockedshots")
+        to  = _num("to", "turnovers")
+        pm3 = _num("3pt", "3pm", "threepointfieldgoalsmade")
+
         if prop_type == "Points":
-            return _num("pts")
+            return pts
         if prop_type == "Rebounds":
-            return _num("reb")
-        if prop_type in ("Assists",) and league != "NHL":
-            return _num("ast")
+            return reb
+        if prop_type == "Assists" and league != "NHL":
+            return ast
         if prop_type == "3-PT Made":
-            return _num("3pt")   # ESPN: "3pt": "2-6"
+            return pm3
         if prop_type == "Pts+Rebs+Asts":
-            p, r, a = _num("pts"), _num("reb"), _num("ast")
-            return None if None in (p, r, a) else p + r + a
+            return None if any(v is None for v in (pts, reb, ast)) else pts + reb + ast
         if prop_type == "Pts+Rebs":
-            p, r = _num("pts"), _num("reb")
-            return None if None in (p, r) else p + r
+            return None if any(v is None for v in (pts, reb)) else pts + reb
         if prop_type == "Pts+Asts":
-            p, a = _num("pts"), _num("ast")
-            return None if None in (p, a) else p + a
+            return None if any(v is None for v in (pts, ast)) else pts + ast
         if prop_type == "Rebs+Asts":
-            r, a = _num("reb"), _num("ast")
-            return None if None in (r, a) else r + a
+            return None if any(v is None for v in (reb, ast)) else reb + ast
         if prop_type == "Steals":
-            return _num("stl")
+            return stl
         if prop_type == "Blocked Shots" and league != "NHL":
-            return _num("blk")
+            return blk
         if prop_type == "Blks+Stls":
-            b, s = _num("blk"), _num("stl")
-            return None if None in (b, s) else b + s
+            return None if any(v is None for v in (blk, stl)) else blk + stl
         if prop_type == "Turnovers":
-            return _num("to")
+            return to
 
         # ── MLB ─────────────────────────────────────────────────
+        h   = _num("h", "hits")
+        k   = _num("k", "strikeouts", "so")
+        r   = _num("r", "runs")
+        rbi = _num("rbi", "rbis")
+        bb  = _num("bb", "walks")
+        hr  = _num("hr", "homeruns")
+        sb  = _num("sb", "stolenbases")
+        d2  = _num("2b", "doubles")
+        d3  = _num("3b", "triples")
+
         if prop_type == "Pitcher Strikeouts":
-            # ESPN box uses "k" (from names[]) or "strikeouts" (from keys[])
-            return _num("k") or _num("strikeouts") or _num("so")
-        if prop_type == "Hits Allowed":
-            # Pitcher stat block: "h" = hits allowed; "hits" from keys[]
-            return _num("h") or _num("hits")
-        if prop_type == "Hits":
-            return _num("h") or _num("hits")
+            return k
+        if prop_type in ("Hits Allowed", "Hits"):
+            return h
         if prop_type == "Home Runs":
-            return _num("hr") or _num("homeruns")
+            return hr
         if prop_type == "RBIs":
-            return _num("rbi") or _num("rbis")
+            return rbi
         if prop_type == "Runs":
-            return _num("r") or _num("runs")
+            return r
         if prop_type == "Stolen Bases":
-            return _num("sb") or _num("stolenbases")
+            return sb
         if prop_type == "Total Bases":
-            h  = _num("h") or _num("hits")
-            hr = _num("hr") or _num("homeruns")
-            d2 = _num("2b") or _num("doubles")
-            d3 = _num("3b") or _num("triples")
-            if h is None or hr is None:
-                return None
+            if h is None or hr is None: return None
             singles = h - (d2 or 0) - (d3 or 0) - hr
-            return singles + 2 * (d2 or 0) + 3 * (d3 or 0) + 4 * hr
+            return singles + 2*(d2 or 0) + 3*(d3 or 0) + 4*hr
         if prop_type == "Hits+Runs+RBIs":
-            h   = _num("h") or _num("hits")
-            r   = _num("r") or _num("runs")
-            rbi = _num("rbi") or _num("rbis")
-            return None if None in (h, r, rbi) else h + r + rbi
+            return None if any(v is None for v in (h, r, rbi)) else h + r + rbi
         if prop_type == "Runs+RBIs":
-            r   = _num("r") or _num("runs")
-            rbi = _num("rbi") or _num("rbis")
-            return None if None in (r, rbi) else r + rbi
+            return None if any(v is None for v in (r, rbi)) else r + rbi
         if prop_type == "Singles":
-            h, d2, d3, hr = _num("h"), _num("2b"), _num("3b"), _num("hr")
-            return None if None in (h, d2, d3, hr) else h - (d2 or 0) - (d3 or 0) - hr
+            return None if any(v is None for v in (h, d2, d3, hr)) else h - (d2 or 0) - (d3 or 0) - hr
         if prop_type == "Doubles":
-            return _num("2b")
+            return d2
         if prop_type == "Triples":
-            return _num("3b")
-        if prop_type == "Walks" or prop_type == "Walks Allowed":
-            return _num("bb")
+            return d3
+        if prop_type in ("Walks", "Walks Allowed"):
+            return bb
         if prop_type == "Earned Runs Allowed":
-            return _num("er")
-        if prop_type == "Hits Allowed":
-            return _num("h")
+            return _num("er", "earnedruns")
         if prop_type == "Pitching Outs":
-            # ESPN stores IP as "6.1" (names) or via keys: "fullinnings.partinnings"
             ip = stats.get("ip") or stats.get("fullinnings.partinnings")
-            if ip is None:
-                return None
+            if ip is None: return None
             try:
                 whole, frac = str(ip).split(".") if "." in str(ip) else (str(ip), "0")
                 return float(whole) * 3 + float(frac)
-            except Exception:
-                return None
+            except Exception: return None
 
         # ── NHL ─────────────────────────────────────────────────
-        # ESPN NHL keys: goals, assists, shotsTotal, blockedShots, saves, etc.
-        # (all lowercased by _parse_box_score)
+        gl = _num("goals", "g")
+        asst = _num("assists", "a")
         if prop_type == "Goals":
-            return _num("goals") or _num("g")
+            return gl
         if prop_type == "Assists" and league == "NHL":
-            return _num("assists") or _num("a")
+            return asst
         if prop_type == "Points" and league == "NHL":
-            g = _num("goals") or _num("g")
-            a = _num("assists") or _num("a")
-            return None if None in (g, a) else g + a
+            return None if any(v is None for v in (gl, asst)) else gl + asst
         if prop_type.lower() == "shots on goal":
-            return _num("shotstotal") or _num("sog") or _num("shots") or _num("s")
+            return _num("shotstotal", "sog", "shots", "s")
         if prop_type in ("Goalie Saves", "Saves"):
-            return _num("saves") or _num("sv")
+            return _num("saves", "sv")
         if prop_type == "Blocked Shots":
-            return _num("blockedshots") or _num("blk")
+            return _num("blockedshots", "blk")
 
         return None
 
