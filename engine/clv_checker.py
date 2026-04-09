@@ -115,13 +115,10 @@ class CLVTracker:
                     if old_cp_val is None or abs(new_cp_val - old_cp_val) > 1e-4:
                         orig_true_prob = float(row.get("true_prob", 0))
                         
-                        # CLV edge: (Model's original true_prob - closing_prob)
-                        # Actually true CLV formula compares odds, but probabilistically:
-                        # CLV is just the difference in implied probability, or ratio.
-                        # For our tracking, clv_pct = original_prob - closing_prob 
-                        # Wait, if our model thought it was 55%, and it closes at 50%, we have a +5% edge!
-                        # So original_prob - closing_prob is correct.
-                        clv_pct = orig_true_prob - new_cp_val
+                        # CLV edge: (Closing Prob - Original True Prob)
+                        # If the market thinks it is MORE likely at start-time than when we bet it, 
+                        # we have Positive CLV (we beat the market).
+                        clv_pct = new_cp_val - orig_true_prob
                         
                         row["closing_prob"] = round(new_cp_val, 4)
                         row["clv_pct"] = round(clv_pct, 4)
@@ -130,7 +127,7 @@ class CLVTracker:
 
         if changed:
             self._write_csv(self._csv_path, rows, list(fieldnames))
-            logger.info("CLVTracker: updated closing lines for %d pending bets", updated_count)
+            logger.info("CLVTracker: updated %d pending bets (latest window)", updated_count)
 
         return updated_count
 

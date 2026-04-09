@@ -1538,7 +1538,7 @@ function renderBacktest() {
   renderPagination("bt-pagination", btState, totalItems, renderBacktest);
 
   if (totalItems === 0) {
-    tbody.innerHTML = `<tr><td colspan="17" class="empty-msg">No backtest data yet. Slips will appear here as they are logged.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="19" class="empty-msg">No backtest data yet. Slips will appear here as they are logged.</td></tr>`;
     return;
   }
 
@@ -1549,6 +1549,11 @@ function renderBacktest() {
     const evPct = l.proj_slip_ev_pct != null ? (parseFloat(l.proj_slip_ev_pct) * 100).toFixed(1) + "%" : "";
     const indEv = l.ind_ev_pct != null ? (parseFloat(l.ind_ev_pct) * 100).toFixed(1) + "%" : "";
     const trueP = l.true_prob != null ? (parseFloat(l.true_prob) * 100).toFixed(1) + "%" : "";
+    const closeP = l.closing_prob ? (parseFloat(l.closing_prob) * 100).toFixed(1) + "%" : "—";
+    const clvPctVal = l.clv_pct ? parseFloat(l.clv_pct) : null;
+    const clvPctText = clvPctVal != null ? (clvPctVal > 0 ? "+" : "") + (clvPctVal * 100).toFixed(1) + "%" : "—";
+    const clvCls = clvPctVal != null ? (clvPctVal > 0 ? "ev-high" : clvPctVal < 0 ? "ev-low" : "") : "";
+
     const resultCls = l.result === "hit" ? "result-hit" : l.result === "miss" ? "result-miss" : "result-pending";
     const resultText = l.result || "pending";
     const gameTime = l.game_start ? new Date(l.game_start).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
@@ -1580,6 +1585,8 @@ function renderBacktest() {
       <td class="line-value">${l.line || ""}</td>
       <td class="${l.side === "over" ? "side-over" : "side-under"}">${(l.side || "").toUpperCase()}</td>
       <td>${trueP}</td>
+      <td>${closeP}</td>
+      <td class="${clvCls}" style="font-weight:600;">${clvPctText}</td>
       <td class="ev-medium">${indEv}</td>
       <td>${l.urgency === "HIGH" ? '<span style="color:var(--yellow);font-weight:700;">HIGH</span>' : "NORMAL"}</td>
       <td class="game-time">${gameTime}</td>

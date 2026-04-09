@@ -486,6 +486,17 @@ def run_pipeline():
             except Exception as bt_exc:
                 logger.warning("Backtest try_log_slip error: %s", bt_exc)
 
+        # ── CLV Tracker: update closing lines for pending bets non-blocking ──
+        def _update_clv_bg():
+            try:
+                updated = _clv_tracker.update_closing_lines(matches)
+                if updated:
+                    logger.info("CLVTracker: %d rows updated in background", updated)
+            except Exception as clv_exc:
+                logger.warning("CLVTracker background error: %s", clv_exc)
+
+        threading.Thread(target=_update_clv_bg, daemon=True).start()
+
         # ── Results checker: back-fill any pending rows non-blocking ──
         def _check_results_bg():
             try:
@@ -1071,6 +1082,8 @@ def get_backtest_slips():
     try:
         with open(CSV_PATH, "r", encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
+            if rows:
+                logger.info("Backtest API: first row keys: %s", list(rows[0].keys()))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Cannot read backtest CSV: {exc}")
 
@@ -1098,6 +1111,8 @@ def get_backtest_slips():
             "ind_ev_pct": row.get("ind_ev_pct"),
             "urgency":    row.get("urgency"),
             "game_start": row.get("game_start"),
+            "closing_prob": row.get("closing_prob"),
+            "clv_pct":      row.get("clv_pct"),
             "result":     row.get("result"),
             "stat_actual":row.get("stat_actual"),
         })
