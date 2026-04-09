@@ -22,12 +22,20 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import statistics
+
 import config as cfg
 from engine.ev_calculator import BetResult, calculate_slip, evaluate_match
 from engine.matcher import match_props
 from engine.backtest import BacktestLogger
 from engine.results_checker import ESPNResultsChecker
 from engine.clv_checker import CLVTracker
+from engine.devig import (
+    american_to_implied as _american_to_implied,
+    devig_single_sided_scaled,
+    prob_to_american as _prob_to_american,
+    revigg_power,
+)
 from scrapers.fanduel import scrape_fanduel
 from scrapers.prizepicks import scrape_prizepicks
 from scrapers.draftkings import scrape_draftkings
@@ -82,6 +90,66 @@ _state = {
 }
 
 scheduler = BackgroundScheduler()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _compute_book_overround(props: list) -> float:
+    """
+    Compute the median overround (margin) for a book from its own both-sided
+    props.  Returns the overround as a fraction (e.g. 0.07 for 7%).
+    Falls back to 0.07 if there aren't enough both-sided lines.
+    """
+    _DEFAULT_OVERROUND = 0.07
+    margins = []
+    for p in props:
+        if getattr(p, "both_sided", False) and p.over_odds is not None and p.under_odds is not None:
+            impl_o = _american_to_implied(p.over_odds)
+            impl_u = _american_to_implied(p.under_odds)
+            margin = impl_o + impl_u - 1.0
+            if 0 < margin < 0.25:  # sanity: ignore bad data
+                margins.append(margin)
+    if len(margins) >= 3:
+        return statistics.median(margins)
+    return _DEFAULT_OVERROUND
+
+
+def _display_odds(book, side: str, book_overround: float = 0.07):
+    """
+    Return the American odds to display for a book on a given side.
+
+    If the book only has the opposite side, derive the missing side using:
+      1. Devig the available side → true probability
+      2. Complement → true probability for missing side
+      3. Re-vig BOTH sides using the inverse Power Method with the book's
+         own median overround, producing realistic vigged odds that honor
+         the favorite-longshot bias.
+
+    Returns None if the book is None or has no odds at all.
+    """
+    if book is None:
+        return None
+    direct = book.over_odds if side == "over" else book.under_odds
+    if direct is not None:
+        return direct
+    # Derive from opposite side using the book's own overround
+    opposite = book.under_odds if side == "over" else book.over_odds
+    if opposite is not None:
+        # Step 1-2: devig available side, complement for missing side
+        available_true = devig_single_sided_scaled(opposite)
+        missing_true = 1.0 - available_true
+        if missing_true <= 0 or missing_true >= 1:
+            return None
+        # Step 3: re-vig both sides with the book's observed overround
+        if side == "over":
+            vigged_over, vigged_under = revigg_power(missing_true, available_true, book_overround)
+            return round(_prob_to_american(vigged_over), 2)
+        else:
+            vigged_over, vigged_under = revigg_power(available_true, missing_true, book_overround)
+            return round(_prob_to_american(vigged_under), 2)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +328,14 @@ def run_pipeline():
 
         logger.info("Pipeline: matching %d PP lines vs %d FD, %d DK, %d Pinnacle props...", len(pp_lines), len(fd_props), len(dk_props), len(pin_props))
         matches = match_props(fd_props, dk_props, pp_lines, pin_props)
-        
+
+        # Compute each book's median overround from its own both-sided lines
+        fd_margin = _compute_book_overround(fd_props)
+        dk_margin = _compute_book_overround(dk_props)
+        pin_margin = _compute_book_overround(pin_props)
+        logger.info("Book overrounds: FD=%.2f%% DK=%.2f%% PIN=%.2f%%",
+                     fd_margin * 100, dk_margin * 100, pin_margin * 100)
+
         from engine.devig import prob_to_american
         from engine.ev_calculator import BetResult
         from engine.consensus import compute_true_probability, books_from_match
@@ -306,19 +381,14 @@ def run_pipeline():
                 if consensus_prob is None:
                     return None, None, None
 
-                # Find the best raw odds for display
-                fd_o = m.fd.over_odds if m.fd else None
-                fd_u = m.fd.under_odds if m.fd else None
-                dk_o = m.dk.over_odds if m.dk else None
-                dk_u = m.dk.under_odds if m.dk else None
-                pin_o = m.pin.over_odds if m.pin else None
-                pin_u = m.pin.under_odds if m.pin else None
-
-                if side == "over":
-                    odds_list = [o for o in [fd_o, dk_o, pin_o] if o is not None]
-                else:
-                    odds_list = [o for o in [fd_u, dk_u, pin_u] if o is not None]
-
+                # Find the best odds for display (includes derived complement odds)
+                odds_list = [
+                    o for o in [
+                        _display_odds(m.fd, side, fd_margin),
+                        _display_odds(m.dk, side, dk_margin),
+                        _display_odds(m.pin, side, pin_margin),
+                    ] if o is not None
+                ]
                 best_odds = max(odds_list) if odds_list else None
 
                 # Use worst-case probability for EV decisions (most conservative)
@@ -342,9 +412,9 @@ def run_pipeline():
                         **base,
                         "side": "over",
                         "best_odds": best,
-                        "fd_odds": m.fd.over_odds if (m.fd and m.fd.over_odds is not None) else None,
-                        "dk_odds": m.dk.over_odds if (m.dk and m.dk.over_odds is not None) else None,
-                        "pin_odds": m.pin.over_odds if (m.pin and m.pin.over_odds is not None) else None,
+                        "fd_odds": _display_odds(m.fd, "over", fd_margin),
+                        "dk_odds": _display_odds(m.dk, "over", dk_margin),
+                        "pin_odds": _display_odds(m.pin, "over", pin_margin),
                         "true_odds": true
                     })
 
@@ -368,9 +438,9 @@ def run_pipeline():
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
                             bet_book_odds[bet_id] = {
-                                "fd_odds":    m.fd.over_odds if m.fd else None,
-                                "dk_odds":    m.dk.over_odds if m.dk else None,
-                                "pin_odds":   m.pin.over_odds if m.pin else None,
+                                "fd_odds":    _display_odds(m.fd, "over", fd_margin),
+                                "dk_odds":    _display_odds(m.dk, "over", dk_margin),
+                                "pin_odds":   _display_odds(m.pin, "over", pin_margin),
                                 "start_time": base.get("start_time", ""),
                             }
 
@@ -382,9 +452,9 @@ def run_pipeline():
                         **base,
                         "side": "under",
                         "best_odds": best,
-                        "fd_odds": m.fd.under_odds if (m.fd and m.fd.under_odds is not None) else None,
-                        "dk_odds": m.dk.under_odds if (m.dk and m.dk.under_odds is not None) else None,
-                        "pin_odds": m.pin.under_odds if (m.pin and m.pin.under_odds is not None) else None,
+                        "fd_odds": _display_odds(m.fd, "under", fd_margin),
+                        "dk_odds": _display_odds(m.dk, "under", dk_margin),
+                        "pin_odds": _display_odds(m.pin, "under", pin_margin),
                         "true_odds": true
                     })
 
@@ -408,9 +478,9 @@ def run_pipeline():
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
                             bet_book_odds[bet_id] = {
-                                "fd_odds":    m.fd.under_odds if m.fd else None,
-                                "dk_odds":    m.dk.under_odds if m.dk else None,
-                                "pin_odds":   m.pin.under_odds if m.pin else None,
+                                "fd_odds":    _display_odds(m.fd, "under", fd_margin),
+                                "dk_odds":    _display_odds(m.dk, "under", dk_margin),
+                                "pin_odds":   _display_odds(m.pin, "under", pin_margin),
                                 "start_time": base.get("start_time", ""),
                             }
 

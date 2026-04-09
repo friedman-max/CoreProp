@@ -182,6 +182,90 @@ def devig_power(
 
 
 # ---------------------------------------------------------------------------
+# Inverse Power Method: re-vig fair probabilities → bookmaker odds
+# ---------------------------------------------------------------------------
+
+def revigg_power(
+    p_over: float,
+    p_under: float,
+    target_margin: float,
+    *,
+    tol: float = 1e-9,
+    max_iter: int = 200,
+) -> tuple[float, float]:
+    """
+    Inverse of the Power Method de-vig.  Given fair probabilities and a
+    target overround (margin), produce realistically vigged implied
+    probabilities that sum to 1 + target_margin.
+
+    The Power Method relationship:
+        π_i = p_i^(1/k)
+    where k > 1 is chosen so that  Σ π_i = 1 + margin.
+
+    Because 1/k < 1, raising probabilities to 1/k inflates them, with
+    lower probabilities (longshots) inflated proportionally MORE than
+    higher probabilities (favorites).  This mirrors the favorite-longshot
+    bias that real sportsbooks embed.
+
+    Args:
+        p_over:  Fair (devigged) probability for the over side.
+        p_under: Fair (devigged) probability for the under side.
+        target_margin: Desired overround as a fraction (e.g. 0.07 for 7%).
+
+    Returns:
+        (implied_over, implied_under) — vigged implied probabilities
+        that sum to approximately 1 + target_margin.
+    """
+    if target_margin <= 0:
+        # No vig requested — return fair probs directly
+        return p_over, p_under
+
+    # Clamp probs to avoid math errors
+    p_over = max(p_over, 1e-6)
+    p_under = max(p_under, 1e-6)
+    total_p = p_over + p_under
+    if abs(total_p - 1.0) > 0.01:
+        # Renormalize if they don't sum to 1
+        p_over /= total_p
+        p_under /= total_p
+
+    target_sum = 1.0 + target_margin
+
+    # Bisection for k in [1, k_max]
+    # At k=1: p_over^1 + p_under^1 = 1.0 (no vig) — too small
+    # At k→∞: both terms → 1.0, sum → 2.0 — too large
+    # We need sum = target_sum ∈ (1.0, 2.0)
+    k_lo, k_hi = 1.0, 50.0
+
+    f_lo = p_over ** (1.0 / k_lo) + p_under ** (1.0 / k_lo) - target_sum  # ≈ -margin
+    f_hi = p_over ** (1.0 / k_hi) + p_under ** (1.0 / k_hi) - target_sum
+
+    if f_hi < 0:
+        # target_margin too large for bisection range — fall back to multiplicative
+        scale = target_sum
+        return p_over * scale, p_under * scale
+
+    for _ in range(max_iter):
+        k_mid = (k_lo + k_hi) / 2.0
+        f_mid = p_over ** (1.0 / k_mid) + p_under ** (1.0 / k_mid) - target_sum
+
+        if abs(f_mid) < tol:
+            break
+
+        if f_mid < 0:
+            # Sum too small → need larger k (more vig)
+            k_lo = k_mid
+        else:
+            # Sum too large → need smaller k (less vig)
+            k_hi = k_mid
+
+    k = (k_lo + k_hi) / 2.0
+    inv_k = 1.0 / k
+
+    return p_over ** inv_k, p_under ** inv_k
+
+
+# ---------------------------------------------------------------------------
 # Worst-Case de-vig (defensive failsafe)
 # ---------------------------------------------------------------------------
 

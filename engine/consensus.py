@@ -34,6 +34,7 @@ from engine.devig import (
     apply_single_source_discount,
     market_width_cents,
     prob_to_american,
+    revigg_power,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,18 +89,21 @@ def _devig_book(book: BookOdds, side: str) -> Optional[float]:
     Devig a single book's odds for the requested side using the best
     available method.
 
-    - Both-sided → Power Method (primary) with worst-case as output
-    - Single-sided → Scaled single-sided devig
+    - Both-sided → Power Method (primary)
+    - Single-sided → Scaled single-sided devig for the available side,
+      complement (1 - p) for the missing side.
     """
     if book.both_sided and book.over_odds is not None and book.under_odds is not None:
         p_over, p_under = devig_power(book.over_odds, book.under_odds)
         return p_over if side == "over" else p_under
 
-    # Single-sided
-    if side == "over" and book.over_odds is not None:
-        return devig_single_sided_scaled(book.over_odds)
-    if side == "under" and book.under_odds is not None:
-        return devig_single_sided_scaled(book.under_odds)
+    # Single-sided: devig the side we have, derive the other via complement.
+    if book.over_odds is not None:
+        p_over = devig_single_sided_scaled(book.over_odds)
+        return p_over if side == "over" else 1.0 - p_over
+    if book.under_odds is not None:
+        p_under = devig_single_sided_scaled(book.under_odds)
+        return p_under if side == "under" else 1.0 - p_under
 
     return None
 
@@ -107,16 +111,19 @@ def _devig_book(book: BookOdds, side: str) -> Optional[float]:
 def _devig_book_worst_case(book: BookOdds, side: str) -> Optional[float]:
     """
     Devig using worst-case method for conservative output.
+    Same complement logic for single-sided books.
     """
     if book.both_sided and book.over_odds is not None and book.under_odds is not None:
         p_over, p_under = devig_worst_case(book.over_odds, book.under_odds)
         return p_over if side == "over" else p_under
 
-    # Single-sided — scaled devig is already conservative
-    if side == "over" and book.over_odds is not None:
-        return devig_single_sided_scaled(book.over_odds)
-    if side == "under" and book.under_odds is not None:
-        return devig_single_sided_scaled(book.under_odds)
+    # Single-sided: devig available side, complement for missing side.
+    if book.over_odds is not None:
+        p_over = devig_single_sided_scaled(book.over_odds)
+        return p_over if side == "over" else 1.0 - p_over
+    if book.under_odds is not None:
+        p_under = devig_single_sided_scaled(book.under_odds)
+        return p_under if side == "under" else 1.0 - p_under
 
     return None
 
@@ -134,11 +141,37 @@ def _get_market_width(book: BookOdds) -> float:
     return 15.0  # ~15% assumed overround for one-way markets
 
 
+_DEFAULT_MARGIN = 0.07   # 7% — typical US sportsbook overround for props
+
 def _get_side_odds(book: BookOdds, side: str) -> Optional[int | float]:
-    """Get the raw American odds for a specific side."""
-    if side == "over":
-        return book.over_odds
-    return book.under_odds
+    """
+    Get the American odds for a specific side.
+
+    If the book only has the opposite side, derive realistic vigged odds
+    for the requested side using the inverse Power Method with a standard
+    7% overround.  This ensures derived odds look like real book odds
+    (implied probs sum to ~107%) rather than fair/no-vig odds.
+    """
+    direct = book.over_odds if side == "over" else book.under_odds
+    if direct is not None:
+        return direct
+
+    # Derive from the opposite side using inverse Power Method re-vig
+    opposite = book.under_odds if side == "over" else book.over_odds
+    if opposite is not None:
+        available_true = devig_single_sided_scaled(opposite)
+        missing_true = 1.0 - available_true
+        if missing_true <= 0 or missing_true >= 1:
+            return None
+        # Re-vig with realistic margin
+        if side == "over":
+            vigged_over, _ = revigg_power(missing_true, available_true, _DEFAULT_MARGIN)
+            return prob_to_american(vigged_over)
+        else:
+            _, vigged_under = revigg_power(available_true, missing_true, _DEFAULT_MARGIN)
+            return prob_to_american(vigged_under)
+
+    return None
 
 
 def compute_true_probability(
