@@ -79,6 +79,16 @@ def _normalize_prop_type(raw: str) -> Optional[str]:
     if "first basket" in raw_norm: return "First Basket"
     if "power play points" in raw_norm: return "Power Play Points"
 
+    # ── Soccer player props ──
+    if "shots on target" in raw_norm: return "Shots On Target"
+    if "shots" in raw_norm: return "Shots"
+    if "goals" in raw_norm or "to score" in raw_norm or "goal-scorer" in raw_norm: return "Goals"
+    if "passes" in raw_norm: return "Passes Attempted"
+    if "tackles" in raw_norm: return "Tackles"
+    if "crosses" in raw_norm: return "Crosses"
+    if "clearances" in raw_norm: return "Clearances"
+    if "assists" in raw_norm: return "Shots Assisted"
+
     return None
 
 def _parse_american(price_str) -> Optional[int]:
@@ -409,26 +419,39 @@ LEAGUE_TABS = {
         "hits-allowed", "singles", "doubles", "triples",
         "alternative-run-lines",
     ],
+    "SOCCER": [
+        "player-props", "goalscorer", "shots", "cards", "assists", "passes"
+    ],
 }
 
 async def _scrape_league(client: httpx.AsyncClient, league: str) -> list[FanDuelProp]:
     all_props = []
 
     logger.info("FanDuel [%s]: fetching events (Phase 1)", league)
-    nav_url = f"https://sbapi.nj.sportsbook.fanduel.com/api/content-managed-page?page=CUSTOM&customPageId={league.lower()}&_ak={FD_AK_TOKEN}"
+    if league == "SOCCER":
+        nav_urls = [
+            f"https://sbapi.nj.sportsbook.fanduel.com/api/content-managed-page?page=SPORT&eventTypeId=1&_ak={FD_AK_TOKEN}"
+        ]
+    else:
+        nav_urls = [f"https://sbapi.nj.sportsbook.fanduel.com/api/content-managed-page?page=CUSTOM&customPageId={league.lower()}&_ak={FD_AK_TOKEN}"]
 
-    try:
-        r = await client.get(nav_url, headers=FD_HEADERS, timeout=15)
-        if r.status_code != 200:
-            logger.error("FanDuel [%s]: phase 1 returned %d", league, r.status_code)
-            return []
-        data = r.json()
-        events = data.get("attachments", {}).get("events", {})
-        event_ids = list(events.keys())
-        logger.info("FanDuel [%s]: found %d active events", league, len(event_ids))
-    except Exception as e:
-        logger.error("FanDuel [%s]: phase 1 error: %s", league, e)
+    event_ids = set()
+    for nav_url in nav_urls:
+        try:
+            r = await client.get(nav_url, headers=FD_HEADERS, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                events = data.get("attachments", {}).get("events", {})
+                event_ids.update(events.keys())
+        except Exception as e:
+            logger.error("FanDuel [%s]: phase 1 error on %s: %s", league, nav_url, e)
+
+    event_ids = list(event_ids)
+    if not event_ids:
+        logger.error("FanDuel [%s]: phase 1 returned 0 events", league)
         return []
+
+    logger.info("FanDuel [%s]: found %d active events", league, len(event_ids))
 
     TABS = LEAGUE_TABS.get(league.upper(), [
         "player-props", "player-points", "player-rebounds",
