@@ -1162,7 +1162,7 @@ def get_backtest_slips():
         return {"slips": [], "total": 0}
 
     try:
-        with open(CSV_PATH, "r", encoding="utf-8") as f:
+        with open(CSV_PATH, "r", encoding="utf-8-sig") as f:
             rows = list(csv.DictReader(f))
             if rows:
                 logger.info("Backtest API: first row keys: %s", list(rows[0].keys()))
@@ -1190,8 +1190,6 @@ def get_backtest_slips():
             "line":       row.get("line"),
             "side":       row.get("side"),
             "true_prob":  row.get("true_prob"),
-            "ind_ev_pct": row.get("ind_ev_pct"),
-            "urgency":    row.get("urgency"),
             "game_start": row.get("game_start"),
             "closing_prob": row.get("closing_prob"),
             "clv_pct":      row.get("clv_pct"),
@@ -1339,7 +1337,6 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest):
                 "side":             b.get("side", ""),
                 "true_prob":        round(float(b.get("true_prob") or 0), 4),
                 "ind_ev_pct":       round(float(b.get("individual_ev_pct") or 0), 4),
-                "urgency":          "HIGH" if _is_urgent(b.get("start_time")) else "NORMAL",
                 "game_start":       b.get("start_time", ""),
                 "result":           "pending",
                 "stat_actual":      "",
@@ -1371,7 +1368,6 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest):
                     "side":       r["side"],
                     "true_prob":  r["true_prob"],
                     "ind_ev_pct": r["ind_ev_pct"],
-                    "urgency":    r["urgency"],
                     "game_start": r["game_start"],
                 }
                 for r in rows

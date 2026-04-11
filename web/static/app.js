@@ -1593,7 +1593,6 @@ function renderBacktest() {
       <td>${closeP}</td>
       <td class="${clvCls}" style="font-weight:600;">${clvPctText}</td>
       <td class="ev-medium">${indEv}</td>
-      <td>${l.urgency === "HIGH" ? '<span style="color:var(--yellow);font-weight:700;">HIGH</span>' : "NORMAL"}</td>
       <td>${gameTime}</td>
       <td><span class="${resultCls}">${resultText.toUpperCase()}</span></td>
       <td>${l.stat_actual || "—"}</td>

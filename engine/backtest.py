@@ -25,7 +25,7 @@ CSV_PATH      = DATA_DIR / "backtest.csv"
 CSV_COLUMNS = [
     "slip_id", "timestamp", "slip_type", "n_legs", "proj_slip_ev_pct",
     "leg_num", "player", "league", "prop", "line", "side",
-    "true_prob", "ind_ev_pct", "urgency", "game_start",
+    "true_prob", "ind_ev_pct", "game_start",
     "closing_prob", "clv_pct", "result", "stat_actual",
 ]
 
@@ -71,9 +71,64 @@ class BacktestLogger:
 
     def _init_csv(self) -> None:
         if not self._csv_path.exists():
-            with open(self._csv_path, "w", newline="", encoding="utf-8") as f:
+            with open(self._csv_path, "w", newline="", encoding="utf-8-sig") as f:
                 csv.DictWriter(f, fieldnames=CSV_COLUMNS).writeheader()
             logger.info("Created backtest CSV at %s", self._csv_path)
+        else:
+            self.repair_csv()
+
+    def repair_csv(self) -> None:
+        """
+        Ensures the CSV header matches CSV_COLUMNS and fixes data misalignment.
+        """
+        if not self._csv_path.exists():
+            return
+
+        try:
+            with open(self._csv_path, "r", encoding="utf-8-sig") as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                if not header:
+                    return
+                rows = list(reader)
+
+            if header == CSV_COLUMNS:
+                return
+
+            logger.info("Repairing backtest CSV (handling 'urgency' removal)...")
+            
+            new_rows = []
+            if "urgency" in header:
+                # User wants to remove urgency. Identify its index.
+                u_idx = header.index("urgency")
+                logger.info("Stripping 'urgency' column at index %d", u_idx)
+                for r in rows:
+                    if len(r) > u_idx:
+                        new_r = r[:u_idx] + r[u_idx+1:]
+                        # Map to CSV_COLUMNS in case of other mismatches
+                        row_dict = dict(zip([h for h in header if h != "urgency"], new_r))
+                        final_r = [row_dict.get(col, "") for col in CSV_COLUMNS]
+                        new_rows.append(final_r)
+                    else:
+                        new_rows.append(r)
+            else:
+                # Standard repair: pad or re-map
+                for r in rows:
+                    row_dict = dict(zip(header, r))
+                    new_r = [row_dict.get(col, "") for col in CSV_COLUMNS]
+                    new_rows.append(new_r)
+
+            # Rewrite correctly
+            tmp = self._csv_path.with_suffix(".repair_tmp")
+            with open(tmp, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(CSV_COLUMNS)
+                writer.writerows(new_rows)
+            tmp.replace(self._csv_path)
+            logger.info("Backtest CSV repair complete.")
+
+        except Exception as e:
+            logger.error("Failed to repair backtest CSV: %s", e)
 
     def _rebuild_used_bets(self) -> None:
         """Read recent rows (approx last 24h) and repopulate used_players."""
@@ -84,7 +139,7 @@ class BacktestLogger:
         if not self._csv_path.exists():
             return
         try:
-            with open(self._csv_path, newline="", encoding="utf-8") as f:
+            with open(self._csv_path, newline="", encoding="utf-8-sig") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     ts = row.get("timestamp", "")
@@ -236,7 +291,6 @@ class BacktestLogger:
                 "side":             bet.get("side", ""),
                 "true_prob":        round(float(bet.get("true_prob") or 0), 4),
                 "ind_ev_pct":       round(_ev(bet), 4),
-                "urgency":          "NORMAL",
                 "game_start":       bet.get("start_time", ""),
                 "closing_prob":     "",
                 "clv_pct":          "",
@@ -245,7 +299,7 @@ class BacktestLogger:
             })
 
         try:
-            with open(self._csv_path, "a", newline="", encoding="utf-8") as f:
+            with open(self._csv_path, "a", newline="", encoding="utf-8-sig") as f:
                 csv.DictWriter(f, fieldnames=CSV_COLUMNS).writerows(rows)
             logger.info("Backtest: logged slip %s (6-leg Power EV=%.2f%%)", slip_id, best_ev * 100)
         except Exception as exc:
@@ -267,7 +321,6 @@ class BacktestLogger:
                     "side":       r["side"],
                     "true_prob":  r["true_prob"],
                     "ind_ev_pct": r["ind_ev_pct"],
-                    "urgency":    r["urgency"],
                     "game_start": r["game_start"],
                 }
                 for r in rows
