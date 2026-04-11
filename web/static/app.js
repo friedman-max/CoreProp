@@ -1572,18 +1572,37 @@ function renderBacktest() {
       }
     }
 
-    const deleteBtn = isFirst
-      ? `<button class="btn-delete-slip" data-slip-id="${l.slip_id}" title="Remove this slip">🗑</button>`
-      : "";
+    let headerHtml = "";
+    if (isFirst) {
+      headerHtml = `<tr class="slip-header-row">
+        <td colspan="12">
+          <div class="slip-header-content">
+            <button class="btn-delete-slip" data-slip-id="${l.slip_id}" title="Remove this slip">🗑</button>
+            <span class="slip-header-stat">
+              <span class="slip-header-label">Slip</span>
+              <span class="slip-header-id">${l.slip_id}</span>
+            </span>
+            <span class="slip-header-stat">
+              <span class="slip-header-value">${ts}</span>
+            </span>
+            <span class="slip-header-stat">
+              <span class="slip-header-value">${l.slip_type}</span>
+              <span class="slip-header-label">(${l.n_legs} Legs)</span>
+            </span>
+            <span class="slip-header-stat">
+              <span class="slip-header-label">Proj EV</span>
+              <span class="slip-header-value ev-high">${evPct}</span>
+            </span>
+            <span class="slip-header-stat">
+              <span class="slip-header-label">Payout</span>
+              <span class="slip-header-value" style="color:var(--yellow);">${payoutHtml}</span>
+            </span>
+          </div>
+        </td>
+      </tr>`;
+    }
 
-    return `<tr class="${isFirst ? "slip-first" : ""}">
-      <td>${deleteBtn}</td>
-      <td><code>${l.slip_id || ""}</code></td>
-      <td>${ts}</td>
-      <td>${l.slip_type || ""}</td>
-      <td>${l.n_legs || ""}</td>
-      <td class="ev-high">${isFirst ? evPct : ""}</td>
-      <td>${payoutHtml}</td>
+    return headerHtml + `<tr>
       <td><strong>${l.player || ""}</strong></td>
       <td><span class="league-tag league-${(l.league || "").toUpperCase()}">${l.league || ""}</span></td>
       <td>${l.prop || ""}</td>

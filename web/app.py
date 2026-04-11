@@ -1190,6 +1190,7 @@ def get_backtest_slips():
             "line":       row.get("line"),
             "side":       row.get("side"),
             "true_prob":  row.get("true_prob"),
+            "ind_ev_pct": row.get("ind_ev_pct"),
             "game_start": row.get("game_start"),
             "closing_prob": row.get("closing_prob"),
             "clv_pct":      row.get("clv_pct"),
