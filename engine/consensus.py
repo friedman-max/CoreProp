@@ -84,6 +84,17 @@ def _get_sharpness_weight(book_name: str) -> float:
     return SHARPNESS_WEIGHTS.get(book_name.lower(), _DEFAULT_WEIGHT)
 
 
+def _has_direct_odds(book: BookOdds, side: str) -> bool:
+    """Check if a book has direct (non-derived) odds for the requested side."""
+    if book.both_sided:
+        return True
+    if side == "over" and book.over_odds is not None:
+        return True
+    if side == "under" and book.under_odds is not None:
+        return True
+    return False
+
+
 def _devig_book(book: BookOdds, side: str) -> Optional[float]:
     """
     Devig a single book's odds for the requested side using the best
@@ -190,6 +201,16 @@ def compute_true_probability(
     - worst_case_prob: most conservative probability (used for EV decisions)
     - metadata: dict with n_books, devig_method, market_widths, etc.
     """
+    # ── Safeguard: reject purely complement-derived probabilities ─────────
+    # If NO book has direct odds for the requested side (i.e. every book's
+    # probability is derived via complement from the opposite side), reject.
+    # Complement-derived probabilities from extreme longshot single-sided
+    # lines (e.g. +700 'to record 1+ shots') are unreliable and produce
+    # phantom high-EV bets.
+    has_any_direct = any(_has_direct_odds(b, side) for b in books)
+    if not has_any_direct:
+        return None, None, {"n_books": 0, "devig_method": "no_direct_odds"}
+
     # Collect per-book data
     entries = []  # list of (book_name, power_prob, worst_prob, weight, width, odds)
     for book in books:

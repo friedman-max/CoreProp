@@ -33,42 +33,61 @@ LEAGUE_CONFIG = {
     "SOCCER": {"id": "1980,2663,2627,2196,2630,2462,214101"},
 }
 
-# Map Pinnacle prop-type labels → our normalized names
+# Map Pinnacle prop-type labels → our normalized names (league-aware)
+# Using nested dicts to avoid key collisions (e.g. "saves" means different
+# things in NHL vs Soccer).
 _PROP_TYPE_MAP = {
-    # Basketball
-    "points":          "Points",
-    "rebounds":        "Rebounds",
-    "assists":         "Assists",
-    "3 point fg":      "3-PT Made",
-    "pts+rebs+asts":   "Pts+Rebs+Asts",
-    "pts+rebs":        "Pts+Rebs",
-    "pts+asts":        "Pts+Asts",
-    "rebs+asts":       "Rebs+Asts",
-    "double+double":   "Double-Double",
-    "triple+double":   "Triple-Double",
-    "first basket scorer": "First Basket",
-    # Baseball
-    "home runs":       "Home Runs",
-    "total bases":     "Total Bases",
-    "hits":            "Hits",
-    "rbis":            "RBIs",
-    "runs":            "Runs",
-    "total strikeouts":"Pitcher Strikeouts",
-    "pitching outs":   "Pitching Outs",
-    "earned runs":     "Earned Runs Allowed",
-    "hits allowed":    "Hits Allowed",
-    "walks":           "Walks",
-    # Hockey
-    "goals":           "Goals",
-    "shots on goal":   "Shots on Goal",
-    "saves":           "Saves",
-    "power play points": "Power Play Points",
-    # Soccer
-    "shots":           "Shots",
-    "shots on target": "Shots On Target",
-    "passes":          "Passes Attempted",
-    "tackles":         "Tackles",
-    "saves":           "Goalie Saves",
+    "NBA": {
+        "points":              "Points",
+        "rebounds":            "Rebounds",
+        "assists":             "Assists",
+        "3 point fg":          "3-PT Made",
+        "pts+rebs+asts":       "Pts+Rebs+Asts",
+        "pts+rebs":            "Pts+Rebs",
+        "pts+asts":            "Pts+Asts",
+        "rebs+asts":           "Rebs+Asts",
+        "double+double":       "Double-Double",
+        "triple+double":       "Triple-Double",
+        "first basket scorer": "First Basket",
+    },
+    "NCAAB": {
+        "points":              "Points",
+        "rebounds":            "Rebounds",
+        "assists":             "Assists",
+        "3 point fg":          "3-PT Made",
+        "pts+rebs+asts":       "Pts+Rebs+Asts",
+        "pts+rebs":            "Pts+Rebs",
+        "pts+asts":            "Pts+Asts",
+    },
+    "MLB": {
+        "home runs":           "Home Runs",
+        "total bases":         "Total Bases",
+        "hits":                "Hits",
+        "rbis":                "RBIs",
+        "runs":                "Runs",
+        "total strikeouts":    "Pitcher Strikeouts",
+        "pitching outs":       "Pitching Outs",
+        "earned runs":         "Earned Runs Allowed",
+        "hits allowed":        "Hits Allowed",
+        "walks":               "Walks",
+    },
+    "NHL": {
+        "goals":               "Goals",
+        "shots on goal":       "Shots on Goal",
+        "saves":               "Saves",
+        "points":              "Points",
+        "assists":             "Assists",
+        "power play points":   "Power Play Points",
+    },
+    "SOCCER": {
+        "goals":               "Goals",
+        "shots":               "Shots",
+        "shots on target":     "Shots On Target",
+        "passes":              "Passes Attempted",
+        "tackles":             "Tackles",
+        "saves":               "Goalie Saves",
+        "assists":             "Assists",
+    },
 }
 
 _DESC_RE = re.compile(r"^(.+?)\s*\(([^)]+)\)")
@@ -126,7 +145,16 @@ async def _scrape_league_id(session: requests.AsyncSession, base: str, league: s
         if not player_name or not raw_prop:
             continue
 
-        normalized = _PROP_TYPE_MAP.get(raw_prop.lower())
+        # League-aware prop type lookup
+        raw_key = raw_prop.lower()
+        league_map = _PROP_TYPE_MAP.get(league.upper(), {})
+        normalized = league_map.get(raw_key)
+        if not normalized:
+            # Fallback: try all leagues (for shared prop names like 'goals')
+            for lmap in _PROP_TYPE_MAP.values():
+                if raw_key in lmap:
+                    normalized = lmap[raw_key]
+                    break
         if not normalized:
             continue
 

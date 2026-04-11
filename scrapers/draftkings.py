@@ -167,7 +167,7 @@ SUBCAT_TO_PROP_TYPE = {
         "Shots on Target":  "Shots On Target",
         "Passes Attempted": "Passes Attempted",
         "Tackles":          "Tackles",
-        "Assists":          "Shots Assisted",
+        "Assists":          "Assists",
         "Saves":            "Goalie Saves",
     }
 }

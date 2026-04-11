@@ -26,11 +26,24 @@ FD_HEADERS = {
 }
 
 def _normalize_prop_type(raw: str, league: str = "") -> Optional[str]:
+    """
+    Map FanDuel market names or types to canonical PrizePicks stat_type labels.
+    """
     raw = raw.lower().strip()
     raw_norm = raw.replace("_", " ")
 
-    # ── Soccer (Priority to avoid overlap or incorrect global mapping) ──
-    if league == "SOCCER":
+    # 1. Direct lookup in league-aware PROP_TYPE_MAP
+    res = PROP_TYPE_MAP.get(league.upper(), {}).get(raw)
+    if res: return res
+    
+    # Check normalized string too
+    res = PROP_TYPE_MAP.get(league.upper(), {}).get(raw_norm)
+    if res: return res
+
+    # 2. League-Specific substring matching (Handling FanDuel's verbose market names)
+    lkey = league.upper()
+    
+    if lkey == "SOCCER":
         if "shots on target" in raw_norm or "shots on goal" in raw_norm: return "Shots On Target"
         if "shots" in raw_norm: return "Shots"
         if "goals" in raw_norm or "to score" in raw_norm or "goal-scorer" in raw_norm: return "Goals"
@@ -38,59 +51,41 @@ def _normalize_prop_type(raw: str, league: str = "") -> Optional[str]:
         if "tackles" in raw_norm: return "Tackles"
         if "crosses" in raw_norm: return "Crosses"
         if "clearances" in raw_norm: return "Clearances"
-        if "assists" in raw_norm: return "Shots Assisted"
+        if "assists" in raw_norm: return "Assists"
         if "saves" in raw_norm: return "Goalie Saves"
-        return None
 
-    res = PROP_TYPE_MAP.get(raw)
-    if res: return res
+    elif lkey in ("NBA", "NCAAB"):
+        if "made 3 point field goals" in raw_norm or "made threes" in raw_norm or " threes" in raw_norm: return "3-PT Made"
+        if "points + rebounds + assists" in raw_norm or "pts + reb + ast" in raw_norm or "pts+reb+ast" in raw_norm: return "Pts+Rebs+Asts"
+        if "points + rebounds" in raw_norm or "pts + reb" in raw_norm: return "Pts+Rebs"
+        if "points + assists" in raw_norm or "pts + ast" in raw_norm: return "Pts+Asts"
+        if "rebounds + assists" in raw_norm or "reb + ast" in raw_norm: return "Rebs+Asts"
+        if "blocks + steals" in raw_norm or "steals + blocks" in raw_norm: return "Blks+Stls"
+        if "total points" in raw_norm or raw_norm.endswith(" - points") or raw_norm.endswith(" points"):
+            if any(x in raw_norm for x in ["1st", "2nd", "3rd", "4th", "quarter", "1q", "2q", "3q", "4q", "half"]): return None
+            return "Points"
+        if "total rebounds" in raw_norm or raw_norm.endswith(" - rebounds") or raw_norm.endswith(" rebounds"): return "Rebounds"
+        if "total assists" in raw_norm or raw_norm.endswith(" - assists") or raw_norm.endswith(" assists"): return "Assists"
+        if "blocked shots" in raw_norm or raw_norm == "blocks" or raw_norm.endswith(" - blocks"): return "Blocked Shots"
 
-    # If market name has "Player - PropType" format, try just the prop part
-    if " - " in raw:
-        prop_part = raw.split(" - ", 1)[1].strip()
-        res = PROP_TYPE_MAP.get(prop_part)
-        if res: return res
+    elif lkey == "MLB":
+        if "total strikeouts" in raw_norm or "strikeouts thrown" in raw_norm: return "Pitcher Strikeouts"
+        if "outs recorded" in raw_norm or "pitching outs" in raw_norm: return "Pitching Outs"
+        if "total bases" in raw_norm and "record" not in raw_norm: return "Total Bases"
+        if raw_norm.endswith(" - hits") or raw_norm == "hits": return "Hits"
+        if raw_norm.endswith(" - runs") or raw_norm == "runs" or raw_norm == "batting runs": return "Runs"
+        if raw_norm.endswith(" - rbis") or raw_norm == "rbis": return "RBIs"
 
-    # ── NBA / NCAAB combo stats ──
-    if "made 3 point field goals" in raw_norm or "made threes" in raw_norm or " threes" in raw_norm: return "3-PT Made"
-    if "points + rebounds + assists" in raw_norm or "pts + reb + ast" in raw_norm or "pts+reb+ast" in raw_norm: return "Pts+Rebs+Asts"
-    if "points + rebounds" in raw_norm or "pts + reb" in raw_norm: return "Pts+Rebs"
-    if "points + assists" in raw_norm or "pts + ast" in raw_norm: return "Pts+Asts"
-    if "rebounds + assists" in raw_norm or "reb + ast" in raw_norm: return "Rebs+Asts"
-    if "blocks + steals" in raw_norm or "steals + blocks" in raw_norm: return "Blks+Stls"
+    elif lkey == "NHL":
+        if "shots on goal" in raw_norm or "total shots" in raw_norm or "shots" in raw_norm: return "Shots on Goal"
+        if "total saves" in raw_norm or "saves" in raw_norm: return "Saves"
+        if "total goals" in raw_norm or "goal" in raw_norm: return "Goals"
+        if "total assists" in raw_norm or "assist" in raw_norm: return "Assists"
 
-    # ── NBA / NCAAB individual stats ──
-    if "total points" in raw_norm or raw_norm.endswith(" - points") or raw_norm.endswith(" points"):
-        if any(x in raw_norm for x in ["1st", "2nd", "3rd", "4th", "quarter", "1q", "2q", "3q", "4q", "half"]): return None
-        return "Points"
-    if "total rebounds" in raw_norm or raw_norm.endswith(" - rebounds") or raw_norm.endswith(" rebounds"): return "Rebounds"
-    if "total assists" in raw_norm or raw_norm.endswith(" - assists") or raw_norm.endswith(" assists"): return "Assists"
-    if raw_norm == "steals" or raw_norm.endswith(" - steals"): return "Steals"
-    if "blocked shots" in raw_norm or raw_norm == "blocks" or raw_norm.endswith(" - blocks"): return "Blocked Shots"
-
-    # ── MLB pitcher props (market types like PITCHER_C_TOTAL_STRIKEOUTS) ──
-    if "total strikeouts" in raw_norm or raw_norm.endswith(" strikeouts") or raw_norm.endswith(" - strikeouts"):
-        return "Pitcher Strikeouts"
-    if "outs recorded" in raw_norm: return "Pitching Outs"
-    if "earned runs" in raw_norm: return "Earned Runs Allowed"
-    if "hits allowed" in raw_norm: return "Hits Allowed"
-    if "walks allowed" in raw_norm or "walks issued" in raw_norm: return "Walks"
-    if "total bases" in raw_norm and "record" not in raw_norm: return "Total Bases"
-    if raw_norm.endswith(" - hits") or raw_norm == "hits": return "Hits"
-    if raw_norm.endswith(" - runs") or raw_norm == "runs" or raw_norm == "batting runs": return "Runs"
-    if raw_norm.endswith(" - rbis") or raw_norm == "rbis": return "RBIs"
-
-    # ── NHL player props (market types like PLAYER_TOTAL_SHOTS, PLAYER_TOTAL_SAVES) ──
-    if "shots on goal" in raw_norm or "total shots" in raw_norm or "player total shots" in raw_norm or "shots" in raw_norm: return "Shots on Goal"
-    if "total saves" in raw_norm or "player total saves" in raw_norm or "saves" in raw_norm: return "Goalie Saves"
-    if "total goals" in raw_norm or "player total goals" in raw_norm or "goal" in raw_norm: return "Goals"
-    if "total assists" in raw_norm or "player total assists" in raw_norm or "assist" in raw_norm: return "Assists"
-    if "time on ice" in raw_norm: return "Time On Ice"
-    if "points" in raw_norm and league == "NHL": return "Points"
+    # Global/Generic fallbacks (use with caution)
     if "double double" in raw_norm: return "Double-Double"
     if "triple double" in raw_norm: return "Triple-Double"
     if "first basket" in raw_norm: return "First Basket"
-    if "power play points" in raw_norm: return "Power Play Points"
 
     return None
 
@@ -158,8 +153,16 @@ _MULTI_RUNNER_MAP = {
     # -- NHL milestones --
     "shots on goal":      "Shots on Goal",
     "shots":              "Shots on Goal",
+    "saves":              "Saves",
+    
+    # -- Soccer milestones --
     "shots on target":    "Shots On Target",
-    "saves":              "Goalie Saves",
+    "sot":                "Shots On Target",
+    "total shots":        "Shots",
+    "goalie saves":       "Goalie Saves",
+    "goalkeeper saves":   "Goalie Saves",
+    
+    # -- General --
     "goals":              "Goals",
     "points-assists":     "Pts+Asts",
     "points":             "Points",
@@ -191,15 +194,19 @@ def _parse_multi_runner_market(mkt_name: str, league: str = "") -> Optional[tupl
     # Try mapping
     pp_stat = _MULTI_RUNNER_MAP.get(stat_raw) or _MULTI_RUNNER_MAP.get(stat_norm)
     if not pp_stat:
-        # Partial match
-        for key, val in _MULTI_RUNNER_MAP.items():
+        # Partial match - sort by length descending to match most specific string first
+        # (e.g. "Shots on Target" before "Shots")
+        sorted_keys = sorted(_MULTI_RUNNER_MAP.keys(), key=len, reverse=True)
+        for key in sorted_keys:
             if key in stat_raw:
-                pp_stat = val
+                pp_stat = _MULTI_RUNNER_MAP[key]
                 break
     
     # League override for multi-runner
     if league == "SOCCER" and pp_stat == "Shots on Goal":
-        pp_stat = "Shots On Target"
+        pp_stat = "Shots"
+    if league == "SOCCER" and pp_stat == "Saves":
+        pp_stat = "Goalie Saves"
 
     if not pp_stat:
         return None

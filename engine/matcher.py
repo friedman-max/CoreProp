@@ -71,13 +71,14 @@ def normalize_name(name: str) -> str:
     return name
 
 
-def normalize_prop_type(raw: str) -> Optional[str]:
+def normalize_prop_type(raw: str, league: str) -> Optional[str]:
     """
-    Map a raw FanDuel prop type string to the canonical PrizePicks stat_type label.
+    Map a raw FanDuel prop type string to the canonical PrizePicks stat_type label,
+    using league-aware dictionary lookup.
     Returns None if the prop type is unrecognized (should be skipped).
     """
     key = raw.lower().strip()
-    return PROP_TYPE_MAP.get(key)
+    return PROP_TYPE_MAP.get(league.upper(), {}).get(key)
 
 
 # ---------------------------------------------------------------------------
@@ -113,20 +114,21 @@ def match_props(
         key = (pin.league.upper(), pin.prop_type.lower())
         pin_index.setdefault(key, []).append(pin)
 
-    # Alias map: PrizePicks stat names that differ from book prop names
+    # League-aware alias map: PrizePicks stat names that differ from book prop names
+    # Only apply aliases for specific leagues to avoid cross-league pollution
     _STAT_ALIASES = {
-        "goalie saves": "goalie saves",
-        "saves": "goalie saves",
-        "shots on goal": "shots on target",
-        "shots assisted": "shots assisted",
-        "assists": "shots assisted",
+        "SOCCER": {
+            "saves": "goalie saves",
+            "goalkeeper saves": "goalie saves",
+        },
     }
 
     results: list[MatchedProp] = []
 
     for pp in pp_lines:
         stat_key = pp.stat_type.lower()
-        stat_key = _STAT_ALIASES.get(stat_key, stat_key)
+        league_aliases = _STAT_ALIASES.get(pp.league.upper(), {})
+        stat_key = league_aliases.get(stat_key, stat_key)
         key = (pp.league.upper(), stat_key)
 
         fd_candidates = fd_index.get(key, [])
