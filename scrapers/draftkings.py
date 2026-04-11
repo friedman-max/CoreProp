@@ -168,7 +168,7 @@ SUBCAT_TO_PROP_TYPE = {
         "Passes Attempted": "Passes Attempted",
         "Tackles":          "Tackles",
         "Assists":          "Shots Assisted",
-        "Saves":            "Saves",
+        "Saves":            "Goalie Saves",
     }
 }
 

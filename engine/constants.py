@@ -130,4 +130,25 @@ PROP_TYPE_MAP = {
     "player total points":           "Points",
     "power play points":             "Power Play Points",
     "1st period goals":              "1st Period Goals",
+
+    # ── Soccer ──
+    # PrizePicks: Goals, Shots, Shots On Target, Passes Attempted, Tackles, 
+    #   Crosses, Clearances, Shots Assisted, Goalie Saves
+    "shots on target":               "Shots On Target",
+    "sot":                           "Shots On Target",
+    "shots":                         "Shots",
+    "goals":                         "Goals",
+    "anytime goalscorer":            "Goals",
+    "to score":                      "Goals",
+    "assists":                       "Shots Assisted",
+    "shots assisted":                "Shots Assisted",
+    "passes":                        "Passes Attempted",
+    "passes attempted":              "Passes Attempted",
+    "tackles":                       "Tackles",
+    "crosses":                       "Crosses",
+    "clearances":                    "Clearances",
+    "saves":                         "Goalie Saves",
+    "goalkeeper saves":              "Goalie Saves",
+    "goalie saves":                  "Goalie Saves",
+    "attempted dribbles":            "Attempted Dribbles",
 }

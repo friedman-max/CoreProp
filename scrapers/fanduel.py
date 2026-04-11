@@ -25,8 +25,23 @@ FD_HEADERS = {
     "Accept": "application/json"
 }
 
-def _normalize_prop_type(raw: str) -> Optional[str]:
+def _normalize_prop_type(raw: str, league: str = "") -> Optional[str]:
     raw = raw.lower().strip()
+    raw_norm = raw.replace("_", " ")
+
+    # ── Soccer (Priority to avoid overlap or incorrect global mapping) ──
+    if league == "SOCCER":
+        if "shots on target" in raw_norm or "shots on goal" in raw_norm: return "Shots On Target"
+        if "shots" in raw_norm: return "Shots"
+        if "goals" in raw_norm or "to score" in raw_norm or "goal-scorer" in raw_norm: return "Goals"
+        if "passes" in raw_norm: return "Passes Attempted"
+        if "tackles" in raw_norm: return "Tackles"
+        if "crosses" in raw_norm: return "Crosses"
+        if "clearances" in raw_norm: return "Clearances"
+        if "assists" in raw_norm: return "Shots Assisted"
+        if "saves" in raw_norm: return "Goalie Saves"
+        return None
+
     res = PROP_TYPE_MAP.get(raw)
     if res: return res
 
@@ -35,8 +50,6 @@ def _normalize_prop_type(raw: str) -> Optional[str]:
         prop_part = raw.split(" - ", 1)[1].strip()
         res = PROP_TYPE_MAP.get(prop_part)
         if res: return res
-
-    raw_norm = raw.replace("_", " ")
 
     # ── NBA / NCAAB combo stats ──
     if "made 3 point field goals" in raw_norm or "made threes" in raw_norm or " threes" in raw_norm: return "3-PT Made"
@@ -69,7 +82,7 @@ def _normalize_prop_type(raw: str) -> Optional[str]:
 
     # ── NHL player props (market types like PLAYER_TOTAL_SHOTS, PLAYER_TOTAL_SAVES) ──
     if "shots on goal" in raw_norm or "total shots" in raw_norm or "player total shots" in raw_norm or "shots" in raw_norm: return "Shots on Goal"
-    if "total saves" in raw_norm or "player total saves" in raw_norm or "saves" in raw_norm: return "Saves"
+    if "total saves" in raw_norm or "player total saves" in raw_norm or "saves" in raw_norm: return "Goalie Saves"
     if "total goals" in raw_norm or "player total goals" in raw_norm or "goal" in raw_norm: return "Goals"
     if "total assists" in raw_norm or "player total assists" in raw_norm or "assist" in raw_norm: return "Assists"
     if "time on ice" in raw_norm: return "Time On Ice"
@@ -78,16 +91,6 @@ def _normalize_prop_type(raw: str) -> Optional[str]:
     if "triple double" in raw_norm: return "Triple-Double"
     if "first basket" in raw_norm: return "First Basket"
     if "power play points" in raw_norm: return "Power Play Points"
-
-    # ── Soccer player props ──
-    if "shots on target" in raw_norm: return "Shots On Target"
-    if "shots" in raw_norm: return "Shots"
-    if "goals" in raw_norm or "to score" in raw_norm or "goal-scorer" in raw_norm: return "Goals"
-    if "passes" in raw_norm: return "Passes Attempted"
-    if "tackles" in raw_norm: return "Tackles"
-    if "crosses" in raw_norm: return "Crosses"
-    if "clearances" in raw_norm: return "Clearances"
-    if "assists" in raw_norm: return "Shots Assisted"
 
     return None
 
@@ -155,7 +158,8 @@ _MULTI_RUNNER_MAP = {
     # -- NHL milestones --
     "shots on goal":      "Shots on Goal",
     "shots":              "Shots on Goal",
-    "saves":              "Saves",
+    "shots on target":    "Shots On Target",
+    "saves":              "Goalie Saves",
     "goals":              "Goals",
     "points-assists":     "Pts+Asts",
     "points":             "Points",
@@ -163,7 +167,7 @@ _MULTI_RUNNER_MAP = {
     "first basket":       "First Basket",
 }
 
-def _parse_multi_runner_market(mkt_name: str) -> Optional[tuple[str, float]]:
+def _parse_multi_runner_market(mkt_name: str, league: str = "") -> Optional[tuple[str, float]]:
     """
     Parse a multi-runner milestone market name.
     """
@@ -192,6 +196,11 @@ def _parse_multi_runner_market(mkt_name: str) -> Optional[tuple[str, float]]:
             if key in stat_raw:
                 pp_stat = val
                 break
+    
+    # League override for multi-runner
+    if league == "SOCCER" and pp_stat == "Shots on Goal":
+        pp_stat = "Shots On Target"
+
     if not pp_stat:
         return None
 
@@ -239,7 +248,7 @@ def _extract_props_from_json(data: dict, league: str) -> list[FanDuelProp]:
                 continue
 
             # ── Multi-runner / Milestone markets ──
-            multi = _parse_multi_runner_market(mkt_name)
+            multi = _parse_multi_runner_market(mkt_name, league)
             is_alt = " - alt" in mkt_name.lower() or "alternative" in mkt_name.lower() 
             
             if multi or is_alt:
@@ -258,7 +267,7 @@ def _extract_props_from_json(data: dict, league: str) -> list[FanDuelProp]:
                         threshold = int(m_th.group(1))
                         line = threshold - 0.5
                         
-                        pp_stat = _normalize_prop_type(mkt_name)
+                        pp_stat = _normalize_prop_type(mkt_name, league)
                         if not pp_stat: continue
                         
                         player_name = runner_raw.split(" - ")[0].strip()
@@ -284,7 +293,7 @@ def _extract_props_from_json(data: dict, league: str) -> list[FanDuelProp]:
                     ))
                 continue
 
-            normalized = _normalize_prop_type(mkt_name) or _normalize_prop_type(market_type)
+            normalized = _normalize_prop_type(mkt_name, league) or _normalize_prop_type(market_type, league)
             if not normalized:
                 continue
 

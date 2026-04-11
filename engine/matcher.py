@@ -115,8 +115,11 @@ def match_props(
 
     # Alias map: PrizePicks stat names that differ from book prop names
     _STAT_ALIASES = {
-        "goalie saves": "saves",
-        "shots on goal": "shots on goal",
+        "goalie saves": "goalie saves",
+        "saves": "goalie saves",
+        "shots on goal": "shots on target",
+        "shots assisted": "shots assisted",
+        "assists": "shots assisted",
     }
 
     results: list[MatchedProp] = []

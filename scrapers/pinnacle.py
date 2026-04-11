@@ -68,6 +68,7 @@ _PROP_TYPE_MAP = {
     "shots on target": "Shots On Target",
     "passes":          "Passes Attempted",
     "tackles":         "Tackles",
+    "saves":           "Goalie Saves",
 }
 
 _DESC_RE = re.compile(r"^(.+?)\s*\(([^)]+)\)")
