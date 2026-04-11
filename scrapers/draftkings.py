@@ -92,6 +92,18 @@ LEAGUE_CONFIG = {
             "Pts+Rebs": "16482",
             "Pts+Rebs+Asts": "16483",
         }
+    },
+    "SOCCER": {
+        "id": "40253,12513,12301,12290,12285,12286,12284,12283,12521",
+        "subcategories": {
+            "Goals": "53",
+            "Shots on Target": "130",
+            "Shots": "131",
+            "Passes Attempted": "153",
+            "Tackles": "154",
+            "Saves": "156",
+            "Assists": "132",
+        }
     }
 }
 
@@ -101,51 +113,69 @@ LEAGUE_CONFIG = {
 # know what kind of prop we're looking at.
 # ---------------------------------------------------------------------------
 SUBCAT_TO_PROP_TYPE = {
-    # NBA
-    "Points":           "Points",
-    "Assists":          "Assists",
-    "Rebounds":         "Rebounds",
-    "Three Pointers":   "3-PT Made",
-    "Pts+Asts":         "Pts+Asts",
-    "Pts+Rebs":         "Pts+Rebs",
-    "Pts+Rebs+Asts":    "Pts+Rebs+Asts",
-    # MLB batter
-    "Home Runs":        "Home Runs",
-    "Hits":             "Hits",
-    "Total Bases":      "Total Bases",
-    "RBIs":             "RBIs",
-    "Hits+Runs+RBIs":   "Hits+Runs+RBIs",
-    "Runs":             "Runs",
-    "Singles":          "Singles",
-    "Doubles":          "Doubles",
-    "Triples":          "Triples",
-    "Stolen Bases":     "Stolen Bases",
-    "Extra Base Hits":  "Extra Base Hits",
-    "Runs+RBIs":        "Runs+RBIs",
-    # MLB pitcher
-    "Pitcher Strikeouts": "Pitcher Strikeouts",
-    "Pitching Outs":    "Pitching Outs",
-    # NHL
-    "Goals":            "Goals",
-    "Shots on Goal":    "Shots on Goal",
-    "Saves":            "Saves",
-    "Double-Double":    "Double-Double",
-    "Triple-Double":    "Triple-Double",
-    "Earned Runs Allowed": "Earned Runs Allowed",
-    "Hits Allowed":     "Hits Allowed",
-    "Walks Allowed":    "Walks Allowed",
-    "Power Play Points": "Power Play Points",
-    "60 Mins Props":    "1st Period Goals",
+    "NBA": {
+        "Points":           "Points",
+        "Assists":          "Assists",
+        "Rebounds":         "Rebounds",
+        "Three Pointers":   "3-PT Made",
+        "Pts+Asts":         "Pts+Asts",
+        "Pts+Rebs":         "Pts+Rebs",
+        "Pts+Rebs+Asts":    "Pts+Rebs+Asts",
+        "Double-Double":    "Double-Double",
+        "Triple-Double":    "Triple-Double",
+    },
+    "MLB": {
+        "Home Runs":        "Home Runs",
+        "Hits":             "Hits",
+        "Total Bases":      "Total Bases",
+        "RBIs":             "RBIs",
+        "Hits+Runs+RBIs":   "Hits+Runs+RBIs",
+        "Runs":             "Runs",
+        "Singles":          "Singles",
+        "Doubles":          "Doubles",
+        "Triples":          "Triples",
+        "Stolen Bases":     "Stolen Bases",
+        "Extra Base Hits":  "Extra Base Hits",
+        "Runs+RBIs":        "Runs+RBIs",
+        "Pitcher Strikeouts": "Pitcher Strikeouts",
+        "Pitching Outs":    "Pitching Outs",
+        "Earned Runs Allowed": "Earned Runs Allowed",
+        "Hits Allowed":     "Hits Allowed",
+        "Walks Allowed":    "Walks Allowed",
+    },
+    "NHL": {
+        "Goals":            "Goals",
+        "Points":           "Points",
+        "Assists":          "Assists",
+        "Shots on Goal":    "Shots on Goal",
+        "Saves":            "Saves",
+        "Power Play Points": "Power Play Points",
+        "60 Mins Props":    "1st Period Goals",
+    },
+    "NCAAB": {
+        "Points":           "Points",
+        "Assists":          "Assists",
+        "Rebounds":         "Rebounds",
+        "Three Pointers":   "3-PT Made",
+        "Pts+Asts":         "Pts+Asts",
+        "Pts+Rebs":         "Pts+Rebs",
+        "Pts+Rebs+Asts":    "Pts+Rebs+Asts",
+    },
+    "SOCCER": {
+        "Goals":            "Goals",
+        "Shots":            "Shots",
+        "Shots on Target":  "Shots On Target",
+        "Passes Attempted": "Passes Attempted",
+        "Tackles":          "Tackles",
+        "Assists":          "Shots Assisted",
+        "Saves":            "Saves",
+    }
 }
 
 
-def _resolve_prop_type(subcat_name: str) -> Optional[str]:
-    """Resolve the canonical prop type from the subcategory name.
-    
-    Since we fetch by subcategory, the subcategory name is the
-    authoritative source of what prop type we're dealing with.
-    """
-    return SUBCAT_TO_PROP_TYPE.get(subcat_name)
+def _resolve_prop_type(league: str, subcat_name: str) -> Optional[str]:
+    """Resolve the canonical prop type using league context."""
+    return SUBCAT_TO_PROP_TYPE.get(league.upper(), {}).get(subcat_name)
 
 
 def _extract_player_name(market_name: str, participants: list, prop_type: Optional[str]) -> str:
@@ -172,6 +202,7 @@ def _extract_player_name(market_name: str, participants: list, prop_type: Option
         " Three Pointers Made", " Three Pointers",
         " Rebounds", " Assists", " Points",
         " Shots on Goal", " Saves", " Goals",
+        " Shots on Target", " Shots", " Passes Attempted", " Tackles",
         " (Double-Double)", " (Points + Rebounds)",
     ]
     for suffix in _SUFFIXES:
@@ -269,7 +300,7 @@ async def _fetch_subcategory(
             # Player name
             participants = sel.get("participants", [])
             # Use the subcategory name as the authoritative prop type
-            prop_type = _resolve_prop_type(subcat_name)
+            prop_type = _resolve_prop_type(league, subcat_name)
             player_name = _extract_player_name(mkt_name, participants, prop_type)
 
             if not player_name or not prop_type:
@@ -325,11 +356,14 @@ async def _scrape_league(
     if not config:
         return []
 
+    league_ids = config["id"].split(",")
+
     tasks = []
-    for subcat_name, subcat_id in config["subcategories"].items():
-        tasks.append(
-            _fetch_subcategory(session, league, config["id"], subcat_name, subcat_id)
-        )
+    for lid in league_ids:
+        for subcat_name, subcat_id in config["subcategories"].items():
+            tasks.append(
+                _fetch_subcategory(session, league, lid, subcat_name, subcat_id)
+            )
 
     results = await asyncio.gather(*tasks)
     all_props: List[DraftKingsProp] = []
