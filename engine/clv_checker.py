@@ -21,6 +21,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from engine.consensus import compute_true_probability, books_from_match
+from engine.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,21 @@ class CLVTracker:
                     row["clv_pct"] = round(clv_pct, 4)
                     updated_count += 1
                     changed = True
+
+                    # Supabase Sync
+                    db = get_db()
+                    if db:
+                        try:
+                            # Match by slip_id and leg_num
+                            sid = row.get("slip_id")
+                            l_num = int(row.get("leg_num", 0))
+                            db.table("legs").update({
+                                "closing_prob": row["closing_prob"],
+                                "clv_pct":      row["clv_pct"]
+                            }).eq("slip_id", sid).eq("leg_num", l_num).execute()
+                        except Exception as db_exc:
+                            logger.error("CLVTracker DB update failed: %s", db_exc)
+
                     logger.debug(
                         "CLVTracker: Update %s %s %s @%s -> %.4f", 
                         player, prop, side, line, new_cp_val
@@ -186,6 +202,19 @@ class CLVTracker:
                 row["clv_pct"] = 0.0
                 finalized += 1
                 changed = True
+
+                # Supabase Sync
+                db = get_db()
+                if db:
+                    try:
+                        sid = row.get("slip_id")
+                        l_num = int(row.get("leg_num", 0))
+                        db.table("legs").update({
+                            "closing_prob": row["closing_prob"],
+                            "clv_pct":      row["clv_pct"]
+                        }).eq("slip_id", sid).eq("leg_num", l_num).execute()
+                    except Exception as db_exc:
+                        logger.error("CLVTracker DB finalization failed: %s", db_exc)
 
         if changed:
             self._write_csv(self._csv_path, rows, list(fieldnames))

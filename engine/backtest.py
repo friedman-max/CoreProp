@@ -16,6 +16,7 @@ import unidecode
 
 from engine.constants import BREAK_EVEN
 from engine.ev_calculator import power_slip_ev, flex_slip_ev
+from engine.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +225,15 @@ class BacktestLogger:
                 tmp.unlink()
             return 0
 
+        # Supabase Sync
+        db = get_db()
+        if db:
+            try:
+                db.table("slips").delete().eq("id", slip_id).execute()
+                logger.info("Backtest: removed slip %s from Supabase", slip_id)
+            except Exception as db_exc:
+                logger.error("Backtest: Supabase delete failed for %s: %s", slip_id, db_exc)
+
         logger.info("Backtest: removed slip %s (%d rows)", slip_id, len(removed_rows))
         return len(removed_rows)
 
@@ -302,10 +312,46 @@ class BacktestLogger:
         try:
             with open(self._csv_path, "a", newline="", encoding="utf-8-sig") as f:
                 csv.DictWriter(f, fieldnames=CSV_COLUMNS).writerows(rows)
-            logger.info("Backtest: logged slip %s (6-leg Power EV=%.2f%%)", slip_id, best_ev * 100)
+            logger.info("Backtest: logged slip %s to CSV (6-leg Power EV=%.2f%%)", slip_id, best_ev * 100)
         except Exception as exc:
             logger.error("Backtest: CSV write failed: %s", exc)
             return None
+
+        # Supabase Dual-Write
+        db = get_db()
+        if db:
+            try:
+                # 1. Insert slip header
+                db.table("slips").insert({
+                    "id":               slip_id,
+                    "timestamp":        timestamp,
+                    "slip_type":        "Power",
+                    "n_legs":           6,
+                    "proj_slip_ev_pct": proj_ev
+                }).execute()
+                # 2. Insert legs
+                db_legs = []
+                for r in rows:
+                    db_legs.append({
+                        "slip_id":      slip_id,
+                        "leg_num":      r["leg_num"],
+                        "player":       r["player"],
+                        "league":       r["league"],
+                        "prop":         r["prop"],
+                        "line":         r["line"],
+                        "side":         r["side"],
+                        "true_prob":    r["true_prob"],
+                        "ind_ev_pct":   r["ind_ev_pct"],
+                        "game_start":   r["game_start"] if r["game_start"] else None,
+                        "closing_prob": r["closing_prob"],
+                        "clv_pct":      r["clv_pct"],
+                        "result":       r["result"],
+                        "stat_actual":  None if r["stat_actual"] == "" else r["stat_actual"]
+                    })
+                db.table("legs").insert(db_legs).execute()
+                logger.info("Backtest: slip %s sync'd to Supabase", slip_id)
+            except Exception as db_exc:
+                logger.error("Backtest: Supabase sync failed: %s", db_exc)
 
         return {
             "slip_id":          slip_id,

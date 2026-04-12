@@ -14,6 +14,7 @@ from typing import Optional
 
 import requests as _requests
 from rapidfuzz import fuzz
+from engine.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,19 @@ class ESPNResultsChecker:
             row["stat_actual"] = actual
             updated += 1
             changed = True
+
+            # Supabase Sync
+            db = get_db()
+            if db:
+                try:
+                    sid = row.get("slip_id")
+                    l_num = int(row.get("leg_num", 0))
+                    db.table("legs").update({
+                        "result":      result,
+                        "stat_actual": actual
+                    }).eq("slip_id", sid).eq("leg_num", l_num).execute()
+                except Exception as db_exc:
+                    logger.error("ResultsChecker DB update failed: %s", db_exc)
             logger.debug(
                 "ResultsChecker: %s %s %s %s %.1f  actual=%.1f  →  %s",
                 league, player_name, prop_type, side, line, actual, result,

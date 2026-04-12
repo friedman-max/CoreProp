@@ -1155,79 +1155,107 @@ def get_latest_slip():
 
 @app.get("/api/backtest/slips")
 def get_backtest_slips():
-    """Return the last 50 logged slips from the backtest CSV."""
-    import pathlib
+    """Return the last 50 logged slips, prioritizing Supabase data with a CSV fallback."""
+    import csv as _csv
     from engine.backtest import CSV_PATH
+    from engine.database import get_db
 
-    if not CSV_PATH.exists():
-        return {"slips": [], "total": 0}
+    db = get_db()
+    use_csv = False
+    all_slips = []
 
-    try:
-        with open(CSV_PATH, "r", encoding="utf-8-sig") as f:
-            rows = list(csv.DictReader(f))
-            if rows:
-                logger.info("Backtest API: first row keys: %s", list(rows[0].keys()))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Cannot read backtest CSV: {exc}")
+    if db:
+        try:
+            # 1. Fetch the latest 50 slips
+            slips_res = db.table("slips").select("*").order("timestamp", desc=True).limit(50).execute()
+            slip_data = slips_res.data
+            if not slip_data:
+                use_csv = True
+            else:
+                sids = [s["id"] for s in slip_data]
+                # 2. Fetch all legs for these slips
+                legs_res = db.table("legs").select("*").in_("slip_id", sids).execute()
+                legs_by_slip = {}
+                for l in legs_res.data:
+                    sid = l["slip_id"]
+                    if sid not in legs_by_slip:
+                        legs_by_slip[sid] = []
+                    legs_by_slip[sid].append(l)
+                
+                for s in slip_data:
+                    # Rename 'id' to 'slip_id' for frontend compatibility if needed, 
+                    # but our CSV format uses 'slip_id'.
+                    s["slip_id"] = s["id"]
+                    s["legs"] = sorted(legs_by_slip.get(s["id"], []), key=lambda x: x["leg_num"])
+                all_slips = slip_data
+        except Exception as db_err:
+            _logger.warning("Backtest API: Supabase fetch failed, falling back to CSV: %s", db_err)
+            use_csv = True
+    else:
+        use_csv = True
 
-    # Group rows by slip_id to build slip summaries
-    slips_by_id: dict = {}
-    for row in rows:
-        sid = row.get("slip_id", "")
-        if sid not in slips_by_id:
-            slips_by_id[sid] = {
-                "slip_id":          sid,
-                "timestamp":        row.get("timestamp"),
-                "slip_type":        row.get("slip_type"),
-                "n_legs":           row.get("n_legs"),
-                "proj_slip_ev_pct": row.get("proj_slip_ev_pct"),
-                "legs":             [],
-            }
-        slips_by_id[sid]["legs"].append({
-            "leg_num":    row.get("leg_num"),
-            "player":     row.get("player"),
-            "league":     row.get("league"),
-            "prop":       row.get("prop"),
-            "line":       row.get("line"),
-            "side":       row.get("side"),
-            "true_prob":  row.get("true_prob"),
-            "ind_ev_pct": row.get("ind_ev_pct"),
-            "game_start": row.get("game_start"),
-            "closing_prob": row.get("closing_prob"),
-            "clv_pct":      row.get("clv_pct"),
-            "result":     row.get("result"),
-            "stat_actual":row.get("stat_actual"),
-        })
+    if use_csv:
+        if not CSV_PATH.exists():
+            return {"slips": [], "total": 0}
+        try:
+            with open(CSV_PATH, "r", encoding="utf-8-sig") as f:
+                rows = list(_csv.DictReader(f))
+            
+            slips_by_id = {}
+            for row in rows:
+                sid = row.get("slip_id", "")
+                if sid not in slips_by_id:
+                    slips_by_id[sid] = {
+                        "slip_id":          sid,
+                        "timestamp":        row.get("timestamp"),
+                        "slip_type":        row.get("slip_type"),
+                        "n_legs":           row.get("n_legs"),
+                        "proj_slip_ev_pct": row.get("proj_slip_ev_pct"),
+                        "legs":             [],
+                    }
+                slips_by_id[sid]["legs"].append({
+                    "leg_num":    row.get("leg_num"),
+                    "player":     row.get("player"),
+                    "league":     row.get("league"),
+                    "prop":       row.get("prop"),
+                    "line":       row.get("line"),
+                    "side":       row.get("side"),
+                    "true_prob":  row.get("true_prob"),
+                    "ind_ev_pct": row.get("ind_ev_pct"),
+                    "game_start": row.get("game_start"),
+                    "closing_prob": row.get("closing_prob"),
+                    "clv_pct":      row.get("clv_pct"),
+                    "result":     row.get("result"),
+                    "stat_actual":row.get("stat_actual"),
+                })
+            # Convert to list and sort
+            all_slips = sorted(slips_by_id.values(), key=lambda s: s.get("timestamp") or "", reverse=True)[:50]
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Cannot read backtest CSV: {exc}")
 
-    # Compute payout per slip
+    # Compute payout per slip (Common Logic)
     from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS
 
-    all_slips = list(slips_by_id.values())
     for slip in all_slips:
         legs = slip.get("legs", [])
         n_legs = int(slip.get("n_legs") or len(legs))
         slip_type = (slip.get("slip_type") or "").lower()
         results = [l.get("result", "pending") for l in legs]
 
-        # A slip is "completed" when all legs have a result (hit, miss, push, or dnp)
         completed = all(r in ("hit", "miss", "push", "dnp") for r in results)
         slip["completed"] = completed
 
         if completed:
-            # Revert logic: slips downgrade if there are pushes or DNPs
             effective_results = [r for r in results if r not in ("push", "dnp")]
             n_eff = len(effective_results)
             hits_eff = sum(1 for r in effective_results if r == "hit")
 
             if n_eff < 2:
-                # If a slip reverts to 1 or 0 effective legs, it's typically voided/refunded (1x)
                 payout = 1.0 if (n_eff == 0 or (n_eff == 1 and hits_eff == 1)) else 0
             elif slip_type == "power":
-                # Power: All effective legs must hit
                 payout = POWER_PAYOUTS.get(n_eff, 0) if hits_eff == n_eff else 0
             else:  # flex
                 if n_eff == 2:
-                    # 3-leg flex with 1 push reverts to 2-leg power
                     payout = POWER_PAYOUTS.get(2, 0) if hits_eff == 2 else 0
                 else:
                     payout = FLEX_PAYOUTS.get(n_eff, {}).get(hits_eff, 0)
@@ -1238,9 +1266,7 @@ def get_backtest_slips():
             slip["payout"] = None
             slip["hits"] = None
 
-    # Sort by timestamp descending, return last 50
-    all_slips.sort(key=lambda s: s.get("timestamp") or "", reverse=True)
-    return {"slips": all_slips[:50], "total": len(all_slips)}
+    return {"slips": all_slips, "total": len(all_slips)}
 
 
 class BacktestAddSlipRequest(BaseModel):
@@ -1348,10 +1374,47 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest):
             })
 
         try:
-            with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
+            with open(CSV_PATH, "a", newline="", encoding="utf-8-sig") as f:
                 _csv.DictWriter(f, fieldnames=CSV_COLUMNS).writerows(rows)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"CSV write failed: {exc}")
+
+        # Supabase Dual-Write
+        from engine.database import get_db
+        db_client = get_db()
+        if db_client:
+            try:
+                # 1. Insert slip header
+                db_client.table("slips").insert({
+                    "id":               slip_id,
+                    "timestamp":        timestamp,
+                    "slip_type":        best_type,
+                    "n_legs":           k,
+                    "proj_slip_ev_pct": proj_ev
+                }).execute()
+                # 2. Insert legs
+                db_legs = []
+                for r in rows:
+                    db_legs.append({
+                        "slip_id":      slip_id,
+                        "leg_num":      r["leg_num"],
+                        "player":       r["player"],
+                        "league":       r["league"],
+                        "prop":         r["prop"],
+                        "line":         r["line"],
+                        "side":         r["side"],
+                        "true_prob":    r["true_prob"],
+                        "ind_ev_pct":   r["ind_ev_pct"],
+                        "game_start":   r["game_start"] if r["game_start"] else None,
+                        "closing_prob": r["closing_prob"],
+                        "clv_pct":      r["clv_pct"],
+                        "result":       r["result"],
+                        "stat_actual":  None if r["stat_actual"] == "" else r["stat_actual"]
+                    })
+                db_client.table("legs").insert(db_legs).execute()
+                _logger.info("Backtest: manually added slip %s sync'd to Supabase", slip_id)
+            except Exception as db_exc:
+                _logger.error("Backtest: manual slip Supabase sync failed: %s", db_exc)
 
         # Mark legs as used
         for b in backtest_bets:
