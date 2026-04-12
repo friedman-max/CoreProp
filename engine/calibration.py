@@ -217,21 +217,27 @@ def evaluate_calibration(csv_path: pathlib.Path | None = None) -> dict:
     hit_rate = n_won / n if n > 0 else None
     avg_pred = sum(r["true_prob"] for r in rows) / n
 
-    # Build calibration buckets (deciles: 0-10%, 10-20%, ..., 90-100%)
+    # Build calibration buckets (5% wide ranges: 50-54, 55-59, ..., 75-79)
     buckets = []
-    for bucket_start in range(0, 100, 10):
+    for bucket_start in range(50, 80, 5):
         lo = bucket_start / 100.0
-        hi = (bucket_start + 10) / 100.0
+        hi = (bucket_start + 5) / 100.0
         bucket_rows = [r for r in rows if lo <= r["true_prob"] < hi]
-        if bucket_rows:
-            pred_avg = sum(r["true_prob"] for r in bucket_rows) / len(bucket_rows)
-            actual_avg = sum(r["outcome"] for r in bucket_rows) / len(bucket_rows)
-            buckets.append({
-                "bucket": f"{bucket_start}-{bucket_start+10}%",
-                "predicted_avg": round(pred_avg, 4),
-                "actual_avg": round(actual_avg, 4),
-                "count": len(bucket_rows),
-            })
+
+        count = len(bucket_rows)
+        if count > 0:
+            pred_avg = sum(r["true_prob"] for r in bucket_rows) / count
+            actual_avg = sum(r["outcome"] for r in bucket_rows) / count
+        else:
+            pred_avg = None
+            actual_avg = None
+
+        buckets.append({
+            "bucket": f"{bucket_start}-{bucket_start+4}%",
+            "predicted_avg": round(pred_avg, 4) if pred_avg is not None else None,
+            "actual_avg": round(actual_avg, 4) if actual_avg is not None else None,
+            "count": count,
+        })
 
     # CLV
     clv_rows = _load_clv_rows(csv_path)

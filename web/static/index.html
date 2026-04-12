@@ -521,12 +521,6 @@
           <div class="bt-card-value" id="cal-brier">—</div>
         </div>
         <div class="bt-card">
-          <div class="bt-card-label"
-            title="Cross-entropy loss. Penalises overconfident mispredictions. Lower is better.">Log-Loss <span
-              style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
-          <div class="bt-card-value" id="cal-logloss">—</div>
-        </div>
-        <div class="bt-card">
           <div class="bt-card-label">Resolved Legs</div>
           <div class="bt-card-value" id="cal-resolved">0</div>
         </div>
@@ -553,70 +547,54 @@
         <button class="btn btn-primary" id="btn-cal-refresh">Refresh Calibration</button>
       </div>
 
-      <!-- Explanation -->
-      <div
-        style="margin: 0 16px 16px; padding: 14px 18px; background: var(--surface-2); border-radius: 8px; border: 1px solid var(--border);">
-        <h3 style="margin: 0 0 8px; font-size: 14px; color: var(--text);">How to Read These Metrics</h3>
-        <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6;">
-          <p style="margin: 0 0 6px;"><strong>Brier Score</strong> — Range [0, 1]. Lower = better. A score of
-            <strong>0.25</strong> means coin-flip accuracy. Below 0.25 = your model identifies real edges.
-          </p>
-          <p style="margin: 0 0 6px;"><strong>Log-Loss</strong> — Penalises overconfident wrong predictions
-            asymmetrically. A 95% prediction that fails is punished far more than a 55% prediction that fails. Lower =
-            better.</p>
-          <p style="margin: 0;"><strong>Calibration Buckets</strong> — If your model says "60% chance", it should win
-            ~60% of the time. The table below shows predicted vs actual win rates by decile.</p>
-        </div>
-      </div>
 
-      <!-- Calibration buckets table -->
-      <div class="table-section" style="flex:1;">
-        <h3 style="margin: 0 16px 8px; font-size: 14px; color: var(--text);">Calibration Buckets</h3>
-        <div class="table-wrapper">
-          <table id="cal-buckets-table">
-            <thead>
-              <tr>
-                <th>Probability Range</th>
-                <th>Avg Predicted</th>
-                <th>Actual Win Rate</th>
-                <th>Count</th>
-                <th>Calibration</th>
-              </tr>
-            </thead>
-            <tbody id="cal-buckets-tbody">
-              <tr>
-                <td colspan="5" class="empty-msg">Click "Refresh Calibration" to load data.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- CLV Tracking section -->
-      <div style="margin: 16px;">
-        <h3 style="font-size: 14px; color: var(--text); margin-bottom: 8px;">Closing Line Value (CLV) Tracking</h3>
-        <div
-          style="padding: 14px 18px; background: var(--surface-2); border-radius: 8px; border: 1px solid var(--border);">
-          <div class="bt-summary" id="clv-summary" style="margin: 0 0 12px;">
-            <div class="bt-card">
-              <div class="bt-card-label">CLV Tracked Bets</div>
-              <div class="bt-card-value" id="clv-count">0</div>
-            </div>
-            <div class="bt-card">
-              <div class="bt-card-label" title="How often your opening line beat the closing line.">CLV+ Rate <span
-                  style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
-              <div class="bt-card-value" id="clv-positive-rate">—</div>
-            </div>
-            <div class="bt-card">
-              <div class="bt-card-label" title="Average percentage edge over the closing line.">Avg CLV% <span
-                  style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
-              <div class="bt-card-value" id="clv-avg-pct">—</div>
-            </div>
+      <!-- Main Content Container (Side-by-Side) -->
+      <div class="analytics-main-content">
+        <!-- Calibration buckets table (50-80%) -->
+        <div class="table-section cal-table-section">
+          <h3 style="margin: 0 16px 8px; font-size: 14px; color: var(--text);">High-Prop Calibration (50-79%)</h3>
+          <div class="table-wrapper">
+            <table id="cal-table">
+              <thead>
+                <tr>
+                  <th>Range</th>
+                  <th>Predicted</th>
+                  <th>Actual</th>
+                  <th>Count</th>
+                  <th>Delta</th>
+                </tr>
+              </thead>
+              <tbody id="cal-tbody">
+                <tr>
+                  <td colspan="5" class="empty-msg">Click "Refresh Calibration" to load data.</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6;">
-            <p style="margin: 0;"><strong>CLV tracks whether you're consistently getting better odds than the market
-                settles at.</strong> If your CLV+ rate is above 50% and your average CLV% is positive, your probability
-              model is identifying real edges before the market corrects.</p>
+        </div>
+
+        <!-- CLV Tracking section -->
+        <div class="clv-section">
+          <h3 style="font-size: 14px; color: var(--text); margin-bottom: 8px;">Closing Line Value (CLV) Tracking</h3>
+          <div
+            style="padding: 14px 18px; background: var(--surface-2); border-radius: 8px; border: 1px solid var(--border); height: 100%;">
+            <div class="bt-summary" id="clv-summary" style="margin: 0 0 12px; padding: 0; border: none; gap: 8px;">
+              <div class="bt-card" style="min-width: 0; flex: 1; padding: 10px;">
+                <div class="bt-card-label" style="font-size: 10px;">Tracked</div>
+                <div class="bt-card-value" id="clv-count" style="font-size: 18px;">0</div>
+              </div>
+              <div class="bt-card" style="min-width: 0; flex: 1; padding: 10px;">
+                <div class="bt-card-label" title="How often your opening line beat the closing line." style="font-size: 10px;">CLV+ Rate</div>
+                <div class="bt-card-value" id="clv-positive-rate" style="font-size: 18px;">—</div>
+              </div>
+              <div class="bt-card" style="min-width: 0; flex: 1; padding: 10px;">
+                <div class="bt-card-label" title="Average percentage edge over the closing line." style="font-size: 10px;">Avg CLV%</div>
+                <div class="bt-card-value" id="clv-avg-pct" style="font-size: 18px;">—</div>
+              </div>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+              <p style="margin: 0;"><strong>CLV tracks market edges.</strong> If your CLV+ rate > 50% and Avg CLV% is positive, you're beating the market.</p>
+            </div>
           </div>
         </div>
       </div>

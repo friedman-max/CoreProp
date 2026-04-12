@@ -385,3 +385,57 @@ tr.in-backtest.selected {
   line-height: 1.5;
 }
 
+/* ── Calibration Labels ── */
+.cal-delta {
+  font-weight: 700;
+  font-size: 11px;
+}
+.cal-delta.perfect { color: #4ade80; }
+.cal-delta.good    { color: #60a5fa; }
+.cal-delta.off     { color: #f87171; }
+.cal-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+}
+
+/* ── Analytics side-by-side layout ── */
+.analytics-main-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 16px 16px;
+  gap: 16px;
+}
+.cal-table-section {
+  flex: 3;
+  display: flex;
+  flex-direction: column;
+}
+.clv-section {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+}
+.cal-table-section .table-wrapper {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  flex: 1;
+  overflow-y: auto;
+}
+/* ── Calibration Table Compact adjustments ── */
+#cal-table th, #cal-table td {
+  padding: 8px 6px;
+  font-size: 11px;
+}
+#cal-table th {
+  font-size: 10px;
+}
+#cal-table td:first-child, #cal-table th:first-child {
+  padding-left: 12px;
+}
+#cal-table td:last-child, #cal-table th:last-child {
+  padding-right: 12px;
+}

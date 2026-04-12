@@ -1795,15 +1795,6 @@ function renderCalibration(data) {
     brierEl.className = "bt-card-value";
   }
 
-  const llEl = $("cal-logloss");
-  if (data.log_loss != null) {
-    const ll = data.log_loss;
-    llEl.textContent = ll.toFixed(4);
-    llEl.className = "bt-card-value" + (ll < 0.693 ? " positive" : ll < 0.80 ? "" : " negative");
-  } else {
-    llEl.textContent = "\u2014";
-    llEl.className = "bt-card-value";
-  }
 
   $("cal-resolved").textContent = data.n_resolved || 0;
   $("cal-won").textContent = data.n_won || 0;
@@ -1822,31 +1813,52 @@ function renderCalibration(data) {
     $("cal-avgpred").textContent = "\u2014";
   }
 
-  // Calibration buckets table
-  const bucketsTbody = $("cal-buckets-tbody");
+  // Calibration buckets table (50-80%)
+  const tbody = $("cal-tbody");
   const buckets = data.calibration_buckets || [];
 
+  if (!tbody) return;
   if (buckets.length === 0) {
-    bucketsTbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No resolved data available yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No high-prop data available yet.</td></tr>';
     return;
   }
 
-  bucketsTbody.innerHTML = buckets.map(b => {
+  tbody.innerHTML = buckets.map(b => {
+    if (b.count === 0) {
+      return `<tr>
+        <td><div style="font-weight:700;">${b.bucket}</div></td>
+        <td style="font-family:var(--font-mono); opacity:0.3;">\u2014</td>
+        <td style="font-family:var(--font-mono); opacity:0.3;">\u2014</td>
+        <td style="opacity:0.3;">0</td>
+        <td><span class="cal-tag" style="opacity:0.2;">No Data</span></td>
+      </tr>`;
+    }
+
     const predicted = (b.predicted_avg * 100).toFixed(1) + "%";
     const actual = (b.actual_avg * 100).toFixed(1) + "%";
     const diff = b.actual_avg - b.predicted_avg;
     const diffPct = (diff * 100).toFixed(1);
     const diffSign = diff >= 0 ? "+" : "";
-    const diffClass = Math.abs(diff) < 0.05 ? "ev-medium" : (diff >= 0 ? "ev-high" : "ev-low");
-    const calibLabel = Math.abs(diff) < 0.03 ? "\u2705 Well calibrated"
-                     : diff > 0 ? "\u2B06\uFE0F Underconfident" : "\u2B07\uFE0F Overconfident";
+    
+    // Status Logic
+    const absDiff = Math.abs(diff);
+    let statusClass = "off";
+    if (absDiff < 0.02) statusClass = "perfect";
+    else if (absDiff < 0.05) statusClass = "good";
+
+    const alignLabel = diff > 0.02 ? "Under" : diff < -0.02 ? "Over" : "OK";
 
     return `<tr>
-      <td><strong>${b.bucket}</strong></td>
-      <td>${predicted}</td>
-      <td class="${diffClass}">${actual}</td>
-      <td>${b.count}</td>
-      <td><span class="${diffClass}">${diffSign}${diffPct}pp</span> ${calibLabel}</td>
+      <td><div style="font-weight:700;">${b.bucket}</div></td>
+      <td style="font-family:var(--font-mono); opacity:0.8;">${predicted}</td>
+      <td style="font-family:var(--font-mono); font-weight:700;">${actual}</td>
+      <td style="opacity:0.7;">${b.count}</td>
+      <td>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span class="cal-delta ${statusClass}">${diffSign}${diffPct}pp</span>
+          <span class="cal-tag">${alignLabel}</span>
+        </div>
+      </td>
     </tr>`;
   }).join("");
   // CLV Tracking section
