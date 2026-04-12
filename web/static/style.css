@@ -79,22 +79,28 @@ header {
 
 /* ── Tab bar ── */
 .tab-bar {
-  display: flex; gap: 0; background: var(--surface); border-bottom: 1px solid var(--border);
-  padding: 0 20px;
+  display: flex; gap: 10px; background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 10px 20px;
   overflow-x: auto;
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* IE/Edge */
   flex-shrink: 0;
+  align-items: center;
 }
 .tab-bar::-webkit-scrollbar { display: none; } /* Chrome/Safari */
 .tab {
-  padding: 10px 20px; border: none; background: none; color: var(--text-muted);
-  font-size: 13px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
+  padding: 8px 18px; border: 1px solid transparent; background: var(--surface2); color: var(--text-muted);
+  font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 25px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
 }
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab:hover { background: #262a3d; color: var(--text); }
+.tab.active { 
+  background: rgba(59, 130, 246, 0.15); 
+  color: var(--text); 
+  border-color: var(--blue);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.1);
+}
 
 /* ── Filters bar ── */
 .filters-bar {
