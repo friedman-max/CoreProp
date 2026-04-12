@@ -1,7 +1,11 @@
 fastapi
 uvicorn[standard]
+gunicorn
 apscheduler
 httpx
 curl_cffi
 rapidfuzz
 python-dotenv
+unidecode
+requests
+postgrest

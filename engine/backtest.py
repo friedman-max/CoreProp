@@ -68,6 +68,7 @@ class BacktestLogger:
         self._csv_path = csv_path or CSV_PATH
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._init_csv()
+        self.sync_from_supabase()
         self._rebuild_used_bets()
 
     def _init_csv(self) -> None:
@@ -130,6 +131,68 @@ class BacktestLogger:
 
         except Exception as e:
             logger.error("Failed to repair backtest CSV: %s", e)
+
+    def sync_from_supabase(self) -> None:
+        """
+        Pull the latest 100 legs from Supabase and rebuild backtest.csv.
+        Crucial for ephemeral hosting (Render) where local files are wiped.
+        """
+        db = get_db()
+        if not db:
+            return
+
+        try:
+            logger.info("Backtest: Syncing from Supabase to rebuild local CSV...")
+            # 1. Fetch latest 100 legs
+            # Use 'id' if serial, otherwise order by created_at or just get latest
+            res = db.table("legs").select("*").order("slip_id", desc=True).limit(100).execute()
+            legs = res.data
+            if not legs:
+                return
+
+            # 2. Fetch corresponding slips to get timestamps/types/ev
+            sids = list(set(l["slip_id"] for l in legs))
+            slips_res = db.table("slips").select("*").in_("id", sids).execute()
+            slips_map = {s["id"]: s for s in slips_res.data}
+
+            # 3. Map to CSV row format
+            rows = []
+            for l in legs:
+                s = slips_map.get(l["slip_id"], {})
+                rows.append({
+                    "slip_id":          l["slip_id"],
+                    "timestamp":        s.get("timestamp", ""),
+                    "slip_type":        s.get("slip_type", ""),
+                    "n_legs":           s.get("n_legs", ""),
+                    "proj_slip_ev_pct": s.get("proj_slip_ev_pct", ""),
+                    "leg_num":          l.get("leg_num", ""),
+                    "player":           l.get("player", ""),
+                    "league":           l.get("league", ""),
+                    "prop":             l.get("prop", ""),
+                    "line":             l.get("line", ""),
+                    "side":             l.get("side", ""),
+                    "true_prob":        l.get("true_prob", ""),
+                    "ind_ev_pct":       l.get("ind_ev_pct", ""),
+                    "game_start":       l.get("game_start", ""),
+                    "closing_prob":     l.get("closing_prob", ""),
+                    "clv_pct":          l.get("clv_pct", ""),
+                    "result":           l.get("result", "pending"),
+                    "stat_actual":      l.get("stat_actual", ""),
+                })
+
+            # Sort by timestamp (asc) for CSV order
+            rows = sorted(rows, key=lambda x: str(x["timestamp"] or ""), reverse=False)
+
+            # 4. Write to CSV (overwrite)
+            with open(self._csv_path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+                writer.writeheader()
+                writer.writerows(rows)
+            
+            logger.info("Backtest: Rebuilt CSV with %d rows from Supabase", len(rows))
+
+        except Exception as e:
+            logger.error("Backtest: Supabase sync failed: %s", e)
 
     def _rebuild_used_bets(self) -> None:
         """Read recent rows (approx last 24h) and repopulate used_players."""
