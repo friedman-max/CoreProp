@@ -27,6 +27,7 @@ ESPN_SCOREBOARD = {
     "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard",
     "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard",
     "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
+    "SOCCER": "https://site.api.espn.com/apis/site/v2/sports/soccer/scoreboard",
 }
 
 # ESPN event summary (for box scores)
@@ -35,6 +36,7 @@ ESPN_SUMMARY = {
     "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/summary",
     "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary",
     "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary",
+    "SOCCER": "https://site.api.espn.com/apis/site/v2/sports/soccer/summary",
 }
 
 # Conservative estimate of how long after game_start a result can be fetched
@@ -43,6 +45,7 @@ GAME_DURATION_MINUTES = {
     "NCAAB": 150,   # 2.5 h
     "MLB":   225,   # 3.75 h
     "NHL":   180,   # 3 h
+    "SOCCER": 120,   # 2 h
 }
 
 FUZZY_THRESHOLD = 80   # Strict threshold for name matching
@@ -78,7 +81,7 @@ class ESPNResultsChecker:
             return 0
 
         try:
-            with open(csv_path, "r", encoding="utf-8") as f:
+            with open(csv_path, "r", encoding="utf-8-sig") as f:
                 rows = list(csv.DictReader(f))
         except Exception as exc:
             logger.error("ResultsChecker: cannot read CSV: %s", exc)
@@ -123,7 +126,9 @@ class ESPNResultsChecker:
             except ValueError:
                 continue
 
-            player_stats = self._get_player_stats(league, date_str, player_name)
+            # To handle timezone boundaries (UTC vs ET), we fetch stats for a window
+            # around the game start date.
+            player_stats = self._get_player_stats(league, gs, player_name)
             
             actual = None
             if player_stats is not None:
@@ -194,14 +199,27 @@ class ESPNResultsChecker:
     # ------------------------------------------------------------------
 
     def _get_player_stats(
-        self, league: str, date_str: str, player_name: str
+        self, league: str, game_start: datetime, player_name: str
     ) -> Optional[dict]:
-        cache_key = (league, date_str)
-        if cache_key not in self._cache:
-            self._cache[cache_key] = self._fetch_all_stats(league, date_str)
+        """
+        Fetch stats while handling UTC date boundaries by checking a 2-day window
+        around the game start.
+        """
+        # ESPN typically indexes games by their Eastern Time starting date.
+        # We check the UTC date and the day before it to ensure coverage.
+        date_utc = game_start.strftime("%Y%m%d")
+        date_prev = (game_start - timedelta(days=1)).strftime("%Y%m%d")
+        
+        # We aggregate stats from both days into a single pool for this player
+        # if they appear on multiple days (rare) or just handle the offset.
+        all_matches = {}
+        for d_str in [date_prev, date_utc]:
+            cache_key = (league, d_str)
+            if cache_key not in self._cache:
+                self._cache[cache_key] = self._fetch_all_stats(league, d_str)
+            all_matches.update(self._cache.get(cache_key, {}))
 
-        stats_by_player = self._cache.get(cache_key, {})
-        if not stats_by_player:
+        if not all_matches:
             return None
 
         def _norm(n): return unidecode.unidecode(n).lower().strip()
@@ -211,7 +229,7 @@ class ESPNResultsChecker:
         best_stats  = None
         best_display = None
 
-        for known_name, stats in stats_by_player.items():
+        for known_name, stats in all_matches.items():
             score = fuzz.token_sort_ratio(name_lower, _norm(known_name))
             if score > best_score:
                 best_score = score
@@ -417,6 +435,21 @@ class ESPNResultsChecker:
         if prop_type == "Blocked Shots":
             return _num("blockedshots", "blk")
 
+        # ── Soccer ──────────────────────────────────────────────
+        if league.upper() == "SOCCER":
+            sog = _num("st", "sog", "shotsongoal")
+            sh  = _num("sh", "shots")
+            gl  = _num("g", "goals")
+            asst = _num("a", "assists")
+            if prop_type.lower() in ("shots on goal", "sog"):
+                return sog
+            if prop_type.lower() == "shots":
+                return sh
+            if prop_type.lower() == "goals":
+                return gl
+            if prop_type.lower() == "assists":
+                return asst
+
         return None
 
     def _fetch_gamelog_stats(self, league: str, player_name: str, target_date: datetime) -> Optional[dict]:
@@ -458,8 +491,13 @@ class ESPNResultsChecker:
         }.get(league.upper())
         
         if not league_path:
-            self._gamelog_cache[cache_key] = None
-            return None
+            # For Soccer, the path is often just "soccer" or "soccer/league.id"
+            # UID format: "s:600~a:12345" (no league) or "s:600~l:94~a:12345"
+            if league.upper() == "SOCCER" and uid and "s:600" in uid:
+                league_path = "soccer"
+            else:
+                self._gamelog_cache[cache_key] = None
+                return None
             
         gl_url = f"https://site.web.api.espn.com/apis/common/v3/sports/{league_path}/athletes/{athlete_id}/gamelog"
         try:
