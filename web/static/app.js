@@ -1489,7 +1489,11 @@ function renderBacktest() {
 
   let legHitRateText = "—";
   let legHitRateClass = "bt-card-value";
+  let expectedHitRateText = "—";
+
   if (completedLegsCount > 0) {
+    const avgExp = checkedLegs.reduce((sum, l) => sum + (parseFloat(l.true_prob) || 0), 0) / completedLegsCount;
+    expectedHitRateText = (avgExp * 100).toFixed(1) + "%";
     const pHat = hitLegs / completedLegsCount;
     const margin = 1.96 * Math.sqrt((pHat * (1 - pHat)) / completedLegsCount);
     const lower = Math.max(0, pHat - margin);
@@ -1507,16 +1511,21 @@ function renderBacktest() {
     }
   }
 
-  $("bt-total-slips").textContent = totalSlips;
-  $("bt-completed").textContent = completedSlips.length;
+  if ($("bt-slips-stat")) {
+    $("bt-slips-stat").textContent = `${completedSlips.length} / ${totalSlips}`;
+  }
   $("bt-hit-rate").textContent = slipHitRate;
   $("bt-hit-rate").className = "bt-card-value" + (completedSlips.length > 0 && slipHits / completedSlips.length >= 0.3 ? " positive" : completedSlips.length > 0 ? " negative" : "");
   
-  $("bt-total-legs").textContent = totalLegsCount;
-  $("bt-completed-legs").textContent = completedLegsCount;
+  if ($("bt-legs-stat")) {
+    $("bt-legs-stat").textContent = `${completedLegsCount} / ${totalLegsCount}`;
+  }
   if ($("bt-leg-hit-rate")) {
     $("bt-leg-hit-rate").innerHTML = legHitRateText;
     $("bt-leg-hit-rate").className = legHitRateClass;
+  }
+  if ($("bt-expected-hit-rate")) {
+    $("bt-expected-hit-rate").textContent = expectedHitRateText;
   }
 
   $("bt-roi").textContent = roi;
