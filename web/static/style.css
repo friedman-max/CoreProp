@@ -307,6 +307,7 @@ tr.slip-header-row:hover { background: var(--surface); } /* disable zebra hover 
 .result-hit     { color: var(--green); font-weight: 700; }
 .result-miss    { color: var(--red);   font-weight: 700; }
 .result-pending { color: var(--yellow); font-weight: 500; }
+.result-dnp     { color: var(--text-muted); font-style: italic; opacity: 0.7; }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

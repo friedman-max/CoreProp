@@ -1563,7 +1563,7 @@ function renderBacktest() {
     const clvPctText = clvPctVal !== null ? (clvPctVal > 0 ? "+" : "") + (clvPctVal * 100).toFixed(1) + "%" : "—";
     const clvCls = clvPctVal !== null ? (clvPctVal > 0 ? "ev-high" : clvPctVal < 0 ? "ev-low" : "") : "";
 
-    const resultCls = l.result === "hit" ? "result-hit" : l.result === "miss" ? "result-miss" : "result-pending";
+    const resultCls = l.result === "hit" ? "result-hit" : l.result === "miss" ? "result-miss" : l.result === "dnp" ? "result-dnp" : "result-pending";
     const resultText = l.result || "pending";
     const gameTime = l.game_start ? new Date(l.game_start).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
     const ts = l.timestamp ? new Date(l.timestamp).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
