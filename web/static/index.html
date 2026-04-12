@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>CoreProp</title>
+  <link rel="icon" type="image/png" href="/static/logo.png" />
   <link rel="stylesheet" href="/static/style.css?v=101" />
 </head>
 
@@ -12,17 +13,11 @@
   <!-- ── Slip notification banner ── -->
   <div id="slip-banner" class="slip-banner hidden"></div>
 
-  <!-- ── Header ── -->
-  <header>
-    <div class="header-left">
-      <span class="logo">CoreProp</span>
-    </div>
-    <div class="header-right">
-    </div>
-  </header>
-
   <!-- ── Tab bar ── -->
   <div class="tab-bar">
+    <div class="sticky-logo-wrap">
+      <img src="/static/logo_full.png" alt="CoreProp Logo" class="tab-logo" />
+    </div>
     <button class="tab active" data-tab="ev">+EV Bets</button>
     <button class="tab" data-tab="matched">Combined Lines</button>
     <button class="tab" data-tab="pp">PrizePicks Lines</button>
