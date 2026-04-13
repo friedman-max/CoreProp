@@ -1157,6 +1157,26 @@ tr.in-backtest.selected {
     white-space: nowrap;
   }
 
+  /* Slip Header: Enable horizontal scroll */
+  .slip-header-content {
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 20px !important;
+    padding-right: 40px !important; /* Room for the fade */
+    mask-image: linear-gradient(to right, black 85%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
+  }
+
+  .slip-header-content::-webkit-scrollbar {
+    display: none;
+  }
+
+  .slip-header-stat {
+    flex-shrink: 0 !important;
+  }
+
   /* Main Layout: Stack containers and enable internal scroll */
   .main-layout:not(.hidden) {
     display: flex !important;
