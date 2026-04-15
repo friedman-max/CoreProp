@@ -29,30 +29,24 @@ const state = {
   lastRefresh:   null,        // ISO string from server (for staleness display)
 };
 
-// ── localStorage cache ─────────────────────────────────────────────────────
-// Bump CACHE_VERSION whenever the shape of any cached dataset changes so old
-// blobs are ignored instead of crashing the renderer.
-const CACHE_VERSION = 1;
-const CACHE_KEY = "coreprop:cache:v" + CACHE_VERSION;
-
-function cacheLoad() {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch (e) {
-    return {};
+// ── NO localStorage cache ──────────────────────────────────────────────────
+// We deliberately do NOT cache datasets in the browser. Every page open
+// fetches the latest data from the backend (which is seeded from Supabase
+// on startup and kept current by the auto-refresh scheduler). This
+// guarantees users see fresh lines on open instead of stale cached blobs
+// from a prior session.
+//
+// Clean up any cache leftovers from previous versions so legacy data
+// can't bleed into the new no-cache flow.
+try {
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith("coreprop:cache:")) localStorage.removeItem(k);
   }
-}
+} catch (e) { /* storage disabled — ignore */ }
 
-function cacheSave(patch) {
-  try {
-    const existing = cacheLoad();
-    const merged = { ...existing, ...patch, _saved_at: Date.now() };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(merged));
-  } catch (e) {
-    // Quota exceeded or storage disabled — not fatal.
-  }
-}
+function cacheLoad() { return {}; }
+function cacheSave(_patch) { /* no-op by design */ }
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -506,7 +500,6 @@ async function fetchBets() {
     const data = await resp.json();
     state.allBets = data.bets || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
-    cacheSave({ bets: state.allBets, last_refresh: state.lastRefresh });
     applyFilters();
   } catch (e) {
     console.error("Failed to fetch bets:", e);
@@ -730,7 +723,6 @@ async function fetchMatched() {
     const data = await resp.json();
     matchedState.allLines = data.matches || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
-    cacheSave({ matches: matchedState.allLines, last_refresh: state.lastRefresh });
     applyMatchedFilters();
   } catch (e) {
     console.error("Failed to fetch matched lines:", e);
@@ -743,7 +735,6 @@ async function fetchPP() {
     const data = await resp.json();
     ppState.allLines = data.lines || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
-    cacheSave({ pp_lines: ppState.allLines, last_refresh: state.lastRefresh });
     applyPPFilters();
   } catch (e) {
     console.error("Failed to fetch PrizePicks lines:", e);
@@ -756,7 +747,6 @@ async function fetchFD() {
     const data = await resp.json();
     fdState.allLines = data.lines || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
-    cacheSave({ fd_lines: fdState.allLines, last_refresh: state.lastRefresh });
     applyFDFilters();
   } catch (e) {
     console.error("Failed to fetch FanDuel lines:", e);
@@ -769,7 +759,6 @@ async function fetchDK() {
     const data = await resp.json();
     dkState.allLines = data.lines || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
-    cacheSave({ dk_lines: dkState.allLines, last_refresh: state.lastRefresh });
     applyDKFilters();
   } catch (e) {
     console.error("Failed to fetch DraftKings lines:", e);
@@ -782,7 +771,6 @@ async function fetchPin() {
     const data = await resp.json();
     pinState.allLines = data.lines || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
-    cacheSave({ pin_lines: pinState.allLines, last_refresh: state.lastRefresh });
     applyPinFilters();
   } catch (e) {
     console.error("Failed to fetch Pinnacle lines:", e);
@@ -790,9 +778,11 @@ async function fetchPin() {
 }
 
 // ── Bootstrap: single-request path for initial load / refresh ─────────────
+// Always fetches fresh — cache: 'no-store' + cache-buster query param so no
+// intermediate HTTP cache (service worker, CDN, browser) can serve stale data.
 async function fetchBootstrap() {
   try {
-    const resp = await fetch("/api/bootstrap");
+    const resp = await fetch("/api/bootstrap?t=" + Date.now(), { cache: "no-store" });
     if (!resp.ok) throw new Error("bootstrap HTTP " + resp.status);
     const data = await resp.json();
 
@@ -803,16 +793,6 @@ async function fetchBootstrap() {
     dkState.allLines        = data.dk_lines  || [];
     pinState.allLines       = data.pin_lines || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
-
-    cacheSave({
-      bets:       state.allBets,
-      matches:    matchedState.allLines,
-      pp_lines:   ppState.allLines,
-      fd_lines:   fdState.allLines,
-      dk_lines:   dkState.allLines,
-      pin_lines:  pinState.allLines,
-      last_refresh: state.lastRefresh,
-    });
 
     applyFilters();
     applyMatchedFilters();
@@ -827,43 +807,7 @@ async function fetchBootstrap() {
   }
 }
 
-// ── Initial render from localStorage (paints before network returns) ──────
-function hydrateFromCache() {
-  const cache = cacheLoad();
-  let hadAny = false;
-  if (Array.isArray(cache.bets) && cache.bets.length) {
-    state.allBets = cache.bets;
-    hadAny = true;
-    applyFilters();
-  }
-  if (Array.isArray(cache.matches) && cache.matches.length) {
-    matchedState.allLines = cache.matches;
-    hadAny = true;
-    applyMatchedFilters();
-  }
-  if (Array.isArray(cache.pp_lines) && cache.pp_lines.length) {
-    ppState.allLines = cache.pp_lines;
-    hadAny = true;
-    applyPPFilters();
-  }
-  if (Array.isArray(cache.fd_lines) && cache.fd_lines.length) {
-    fdState.allLines = cache.fd_lines;
-    hadAny = true;
-    applyFDFilters();
-  }
-  if (Array.isArray(cache.dk_lines) && cache.dk_lines.length) {
-    dkState.allLines = cache.dk_lines;
-    hadAny = true;
-    applyDKFilters();
-  }
-  if (Array.isArray(cache.pin_lines) && cache.pin_lines.length) {
-    pinState.allLines = cache.pin_lines;
-    hadAny = true;
-    applyPinFilters();
-  }
-  if (cache.last_refresh) state.lastRefresh = cache.last_refresh;
-  return hadAny;
-}
+// hydrateFromCache removed — no-cache flow now, see Init section below.
 
 // ── PrizePicks Lines ──────────────────────────────────────────────────────
 const ppState = {
@@ -1538,32 +1482,8 @@ $("bt-filter-league").addEventListener("change", () => {
   renderBacktest();
 });
 
-// Download CSV
-$("btn-bt-download").addEventListener("click", () => {
-  window.open("/api/backtest/download-csv", "_blank");
-});
-
-// Check results manually
-$("btn-bt-check-results").addEventListener("click", async () => {
-  const btn = $("btn-bt-check-results");
-  btn.disabled = true;
-  btn.textContent = "Checking...";
-  try {
-    await fetch("/api/backtest/check-results", { method: "POST" });
-    // Wait a few seconds then refresh
-    setTimeout(async () => {
-      await fetchBacktest();
-      btn.disabled = false;
-      btn.textContent = "Check Results (ESPN)";
-    }, 5000);
-  } catch (e) {
-    btn.disabled = false;
-    btn.textContent = "Check Results (ESPN)";
-  }
-});
-
-// Refresh button
-$("btn-bt-refresh").addEventListener("click", fetchBacktest);
+// Backtest action buttons (Refresh / Download CSV / Check Results) removed:
+// Supabase is authoritative and everything refreshes automatically now.
 
 // ── Slip Notification ──────────────────────────────────────────────────────
 
@@ -1672,14 +1592,20 @@ async function pollLatestSlip() {
 
 // ── Analytics / Calibration ────────────────────────────────────────────────
 
+// Chart.js instances — kept so we can destroy before redraw.
+const _charts = { pnl: null, cal: null, slipMix: null };
+
 async function fetchCalibration() {
+  // Retained name for backwards-compat with existing callers, but hits the
+  // richer /api/analytics endpoint now.
   try {
-    const resp = await fetch("/api/calibration");
+    const resp = await fetch("/api/analytics");
     if (!resp.ok) return;
     const data = await resp.json();
     renderCalibration(data);
+    renderAnalyticsExtras(data);
   } catch (e) {
-    console.error("Calibration fetch error:", e);
+    console.error("Analytics fetch error:", e);
   }
 }
 
@@ -1696,10 +1622,18 @@ function renderCalibration(data) {
     brierEl.className = "bt-card-value";
   }
 
+  const llEl = $("cal-logloss");
+  if (llEl) {
+    if (data.log_loss != null) {
+      llEl.textContent = data.log_loss.toFixed(4);
+      llEl.className = "bt-card-value" + (data.log_loss < 0.65 ? " positive" : data.log_loss < 0.70 ? "" : " negative");
+    } else {
+      llEl.textContent = "\u2014";
+      llEl.className = "bt-card-value";
+    }
+  }
 
   $("cal-resolved").textContent = data.n_resolved || 0;
-  $("cal-won").textContent = data.n_won || 0;
-  $("cal-lost").textContent = data.n_lost || 0;
 
   if (data.hit_rate != null) {
     $("cal-hitrate").textContent = (data.hit_rate * 100).toFixed(1) + "%";
@@ -1712,6 +1646,19 @@ function renderCalibration(data) {
     $("cal-avgpred").textContent = (data.avg_predicted_prob * 100).toFixed(1) + "%";
   } else {
     $("cal-avgpred").textContent = "\u2014";
+  }
+
+  // Hit Rate Delta: actual - expected, in percentage points
+  const deltaEl = $("cal-delta");
+  if (deltaEl) {
+    if (data.hit_rate != null && data.avg_predicted_prob != null) {
+      const d = (data.hit_rate - data.avg_predicted_prob) * 100;
+      deltaEl.textContent = (d >= 0 ? "+" : "") + d.toFixed(1) + "pp";
+      deltaEl.className = "bt-card-value" + (d > 0.5 ? " positive" : d < -0.5 ? " negative" : "");
+    } else {
+      deltaEl.textContent = "\u2014";
+      deltaEl.className = "bt-card-value";
+    }
   }
 
   // Calibration buckets table (50-80%)
@@ -1786,16 +1733,199 @@ function renderCalibration(data) {
 }
 
 
-// ── Init ───────────────────────────────────────────────────────────────────
-// 1) Paint cached data first — zero-latency on refresh / revisit.
-hydrateFromCache();
+// ── Analytics extras: charts + per-league/prop tables ─────────────────────
+function renderAnalyticsExtras(data) {
+  if (typeof Chart === "undefined") {
+    console.warn("Chart.js not loaded — skipping analytics charts.");
+    return;
+  }
+  _renderPnlChart(data);
+  _renderCalibrationPlot(data);
+  _renderSlipMixChart(data);
+  _renderPerfTable("league-perf-tbody", data.by_league || []);
+  _renderPerfTable("prop-perf-tbody",   data.by_prop   || []);
 
-// 2) Kick off bootstrap + secondary fetches in parallel so the UI replaces
-//    the cache with live data as soon as the network comes back. If the
-//    bootstrap endpoint is somehow unavailable, fall back to the old
-//    per-endpoint path so nothing is lost.
+  // PnL summary line
+  const subtitle = $("pnl-summary");
+  if (subtitle) {
+    const n = data.resolved_slips || 0;
+    const roi = data.roi_per_slip;
+    const total = (data.pnl_timeline && data.pnl_timeline.length)
+      ? data.pnl_timeline[data.pnl_timeline.length - 1].cum_pnl : 0;
+    subtitle.textContent = n > 0
+      ? `${n} resolved slips · net ${total >= 0 ? "+" : ""}${total.toFixed(2)}u · ROI/slip ${roi != null ? (roi * 100).toFixed(1) + "%" : "—"}`
+      : "No resolved slips yet.";
+  }
+
+  const mixSub = $("slip-mix-subtitle");
+  if (mixSub) {
+    const m = data.slip_mix || {};
+    mixSub.textContent = `Won ${m.won || 0} · Partial ${m.partial || 0} · Lost ${m.lost || 0} · Pending ${m.pending || 0}`;
+  }
+}
+
+function _renderPerfTable(tbodyId, rows) {
+  const tbody = $(tbodyId);
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">No resolved legs yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const actual = r.actual != null ? (r.actual * 100).toFixed(1) + "%" : "—";
+    const expect = r.expected != null ? (r.expected * 100).toFixed(1) + "%" : "—";
+    const d = r.delta;
+    const dTxt = d != null ? ((d >= 0 ? "+" : "") + (d * 100).toFixed(1) + "pp") : "—";
+    const dCls = d == null ? "" : d > 0.005 ? "positive" : d < -0.005 ? "negative" : "";
+    return `<tr>
+      <td>${r.key}</td>
+      <td>${r.legs}</td>
+      <td>${r.hits}</td>
+      <td>${actual}</td>
+      <td style="opacity:0.75">${expect}</td>
+      <td class="${dCls}">${dTxt}</td>
+    </tr>`;
+  }).join("");
+}
+
+function _chartTextColor() {
+  return getComputedStyle(document.body).getPropertyValue("--text") || "#ddd";
+}
+
+function _renderPnlChart(data) {
+  const ctx = document.getElementById("chart-pnl");
+  if (!ctx) return;
+  const points = data.pnl_timeline || [];
+  const labels = points.map((_, i) => i + 1);
+  const cum    = points.map(p => p.cum_pnl);
+
+  if (_charts.pnl) _charts.pnl.destroy();
+  _charts.pnl = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{
+        label: "Cumulative P&L (units)",
+        data: cum,
+        borderColor: "#4ade80",
+        backgroundColor: "rgba(74, 222, 128, 0.15)",
+        fill: true,
+        tension: 0.2,
+        pointRadius: 0,
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { title: { display: true, text: "Resolved slip #" }, ticks: { color: _chartTextColor() } },
+        y: { title: { display: true, text: "Units"   }, ticks: { color: _chartTextColor() } },
+      },
+    },
+  });
+}
+
+function _renderCalibrationPlot(data) {
+  const ctx = document.getElementById("chart-cal");
+  if (!ctx) return;
+  const buckets = (data.calibration_buckets || []).filter(b => b.count > 0);
+  const pts = buckets.map(b => ({ x: b.predicted_avg, y: b.actual_avg, r: Math.max(4, Math.sqrt(b.count) * 2) }));
+
+  if (_charts.cal) _charts.cal.destroy();
+  _charts.cal = new Chart(ctx, {
+    type: "bubble",
+    data: {
+      datasets: [
+        {
+          label: "Buckets",
+          data: pts,
+          backgroundColor: "rgba(96, 165, 250, 0.6)",
+          borderColor: "#60a5fa",
+        },
+        {
+          type: "line",
+          label: "Perfect",
+          data: [{ x: 0.5, y: 0.5 }, { x: 0.8, y: 0.8 }],
+          borderColor: "rgba(255,255,255,0.4)",
+          borderDash: [5, 5],
+          pointRadius: 0,
+          fill: false,
+          borderWidth: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { min: 0.45, max: 0.85, title: { display: true, text: "Predicted" }, ticks: { color: _chartTextColor() } },
+        y: { min: 0.30, max: 1.00, title: { display: true, text: "Actual"   }, ticks: { color: _chartTextColor() } },
+      },
+    },
+  });
+}
+
+function _renderSlipMixChart(data) {
+  const ctx = document.getElementById("chart-slip-mix");
+  if (!ctx) return;
+  const m = data.slip_mix || {};
+  const values = [m.won || 0, m.partial || 0, m.lost || 0, m.pending || 0];
+
+  if (_charts.slipMix) _charts.slipMix.destroy();
+  _charts.slipMix = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["Won", "Partial", "Lost", "Pending"],
+      datasets: [{
+        data: values,
+        backgroundColor: ["#4ade80", "#fbbf24", "#f87171", "#6b7280"],
+        borderWidth: 0,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: "bottom", labels: { color: _chartTextColor() } } },
+    },
+  });
+}
+
+
+// ── Loading overlay ────────────────────────────────────────────────────────
+// Shown on every open until the first bootstrap response arrives, so users
+// know data is coming instead of seeing stale-looking empty tables.
+function showLoadingOverlay(msg) {
+  const el = document.getElementById("loading-overlay");
+  if (!el) return;
+  if (msg) {
+    const t = el.querySelector(".loading-text") || document.getElementById("loading-overlay-text");
+    if (t) t.textContent = msg;
+  }
+  el.classList.remove("hidden");
+}
+function hideLoadingOverlay() {
+  const el = document.getElementById("loading-overlay");
+  if (el) el.classList.add("hidden");
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+// Always fetch fresh data from the backend on open — no localStorage cache.
+// Show a loading overlay until bootstrap completes so the user sees
+// progress rather than empty tables masquerading as "no data".
 (async () => {
-  const ok = await fetchBootstrap();
+  showLoadingOverlay("Loading latest lines…");
+
+  // Prime the backend: hit /api/bootstrap first (single request, all
+  // datasets). Retry once on network failure before falling back to the
+  // per-endpoint path. Cache-busting query param prevents any intermediate
+  // HTTP cache from serving stale data.
+  let ok = await fetchBootstrap();
+  if (!ok) {
+    // Brief retry with a clean cache-buster — gives transient network
+    // hiccups a second chance before the per-endpoint fan-out.
+    await new Promise(r => setTimeout(r, 400));
+    ok = await fetchBootstrap();
+  }
   if (!ok) {
     await Promise.all([
       fetchBets(),
@@ -1806,11 +1936,15 @@ hydrateFromCache();
       fetchPin(),
     ]);
   }
+
+  // Fetch secondary datasets (backtest, calibration) in parallel so the
+  // Analytics/Backtest tabs are ready the moment the user switches to them.
+  Promise.all([fetchBacktest(), fetchCalibration()]).catch(() => {});
+
+  hideLoadingOverlay();
 })();
 
 fetchStatus();
-fetchBacktest();
-fetchCalibration();
 setInterval(fetchStatus, 10_000);
 setInterval(pollLatestSlip, 10_000);
 pollLatestSlip();  // check immediately on load

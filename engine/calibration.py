@@ -204,3 +204,125 @@ def evaluate_calibration() -> dict:
         "clv_plus_rate": round(clv_plus_rate, 4) if clv_plus_rate is not None else None,
         "avg_clv_pct": round(avg_clv_pct, 4) if avg_clv_pct is not None else None,
     }
+
+
+def evaluate_analytics() -> dict:
+    """
+    Richer analytics payload for the Analytics tab.
+
+    Computes:
+      - All of evaluate_calibration()
+      - Per-league performance (legs, hits, actual vs expected rate)
+      - Per-prop-type performance (top 10 by volume)
+      - Slip outcome mix (hit / miss / pending counts)
+      - Cumulative P&L timeline (one point per resolved slip, using PrizePicks
+        payout tables and a 1-unit stake per slip — positive values = profit).
+    """
+    from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS
+
+    base = evaluate_calibration()
+    rows = _load_resolved_rows()
+
+    # --- Per-league ----------------------------------------------------------
+    def _group(rows, key):
+        agg: dict[str, dict] = {}
+        for r in rows:
+            k = (r.get(key) or "").strip() or "—"
+            g = agg.setdefault(k, {"key": k, "legs": 0, "hits": 0, "pred_sum": 0.0})
+            g["legs"]     += 1
+            g["hits"]     += r["outcome"]
+            g["pred_sum"] += r["true_prob"]
+        out = []
+        for g in agg.values():
+            legs = g["legs"]
+            out.append({
+                "key":      g["key"],
+                "legs":     legs,
+                "hits":     g["hits"],
+                "actual":   round(g["hits"] / legs, 4) if legs else None,
+                "expected": round(g["pred_sum"] / legs, 4) if legs else None,
+                "delta":    round(g["hits"] / legs - g["pred_sum"] / legs, 4) if legs else None,
+            })
+        out.sort(key=lambda x: x["legs"], reverse=True)
+        return out
+
+    by_league = _group(rows, "league")
+    by_prop = _group(rows, "prop")[:10]
+
+    # --- Slip mix + cumulative P&L (needs full slip payload) -----------------
+    db = get_db()
+    slip_mix = {"won": 0, "lost": 0, "pending": 0, "partial": 0}
+    pnl_timeline: list[dict] = []
+    resolved_slips = won_slips = 0
+
+    if db:
+        try:
+            slips_res = db.table("slips").select("*").order("timestamp", desc=False).execute()
+            legs_res  = db.table("legs").select("*").execute()
+            legs_by_slip: dict[str, list] = {}
+            for l in (legs_res.data or []):
+                legs_by_slip.setdefault(l["slip_id"], []).append(l)
+
+            cum_pnl = 0.0
+            for s in (slips_res.data or []):
+                sid = s["id"]
+                legs = legs_by_slip.get(sid, [])
+                results = [str(l.get("result", "pending")).lower() for l in legs]
+                if not legs:
+                    continue
+                completed = all(r in ("hit", "miss", "push", "dnp", "won", "win", "lost", "loss") for r in results)
+                if not completed:
+                    slip_mix["pending"] += 1
+                    continue
+
+                effective = [r for r in results if r not in ("push", "dnp")]
+                n_eff = len(effective)
+                hits_eff = sum(1 for r in effective if r in ("hit", "won", "win"))
+
+                slip_type = (s.get("slip_type") or "").lower()
+                if n_eff < 2:
+                    payout = 1.0 if (n_eff == 0 or (n_eff == 1 and hits_eff == 1)) else 0.0
+                elif slip_type == "power":
+                    payout = POWER_PAYOUTS.get(n_eff, 0) if hits_eff == n_eff else 0
+                else:
+                    if n_eff == 2:
+                        payout = POWER_PAYOUTS.get(2, 0) if hits_eff == 2 else 0
+                    else:
+                        payout = FLEX_PAYOUTS.get(n_eff, {}).get(hits_eff, 0)
+
+                pnl = float(payout) - 1.0  # 1-unit stake per slip
+                cum_pnl += pnl
+                resolved_slips += 1
+                if payout > 1.0:
+                    won_slips += 1
+                    slip_mix["won"] += 1
+                elif hits_eff == n_eff and n_eff > 0:
+                    slip_mix["won"] += 1
+                elif hits_eff == 0:
+                    slip_mix["lost"] += 1
+                else:
+                    slip_mix["partial"] += 1
+
+                pnl_timeline.append({
+                    "slip_id":   sid,
+                    "timestamp": s.get("timestamp"),
+                    "pnl":       round(pnl, 4),
+                    "cum_pnl":   round(cum_pnl, 4),
+                })
+        except Exception as exc:
+            logger.warning("Analytics: slip aggregation failed: %s", exc)
+
+    roi = None
+    if resolved_slips > 0 and pnl_timeline:
+        roi = round(pnl_timeline[-1]["cum_pnl"] / resolved_slips, 4)
+
+    base.update({
+        "by_league":        by_league,
+        "by_prop":          by_prop,
+        "slip_mix":         slip_mix,
+        "pnl_timeline":     pnl_timeline,
+        "resolved_slips":   resolved_slips,
+        "won_slips":        won_slips,
+        "roi_per_slip":     roi,
+    })
+    return base

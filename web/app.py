@@ -4,7 +4,6 @@ FastAPI backend with APScheduler auto-refresh.
 Endpoints:
   GET  /api/bets        - All current +EV bets (sorted by ind_ev_pct desc)
   GET  /api/status      - Scrape status, last/next refresh time
-  POST /api/refresh     - Manually trigger a re-scrape
   POST /api/slip        - Calculate slip EV for selected bet IDs
   GET  /api/config      - Current runtime config
   POST /api/config      - Update config (interval, min_ev, leagues)
@@ -155,6 +154,41 @@ def _display_odds(book, side: str, book_overround: float = 0.07):
 # ---------------------------------------------------------------------------
 # Core pipeline
 # ---------------------------------------------------------------------------
+
+def _auto_create_backtest_slip(serialized_bets: list) -> Optional[dict]:
+    """
+    Decoupled backtest slip writer.
+
+    Runs independently of the scrape pipeline — any caller with a fresh list
+    of +EV bets can invoke this to attempt logging a slip. BacktestLogger
+    enforces its own minimum-leg threshold (6 legs today) and 48h dedup
+    window, so this function is safe to call repeatedly.
+
+    Returns the newly logged slip dict, or None when nothing was written.
+    """
+    if not serialized_bets or len(serialized_bets) < 3:
+        return None
+    try:
+        backtest_bets = [{
+            "player_name":       d.get("player_name", ""),
+            "league":            d.get("league", ""),
+            "prop_type":         d.get("prop_type", ""),
+            "pp_line":           d.get("pp_line"),
+            "side":              d.get("side", "over"),
+            "true_prob":         d.get("true_prob"),
+            "individual_ev_pct": d.get("individual_ev_pct"),
+            "start_time":        d.get("start_time", ""),
+        } for d in serialized_bets]
+        new_slip = _backtest.try_log_slip(backtest_bets)
+        if new_slip:
+            with _lock:
+                _state["latest_slip"] = new_slip
+            logger.info("Backtest: new slip logged — %s", new_slip.get("slip_id"))
+            return new_slip
+    except Exception as bt_exc:
+        logger.warning("Backtest auto-log error: %s", bt_exc)
+    return None
+
 
 def run_pipeline():
     with _lock:
@@ -543,29 +577,10 @@ def run_pipeline():
         
         threading.Thread(target=_sync_all, daemon=True).start()
 
-        # ── Backtest: try to log a new slip from the freshly computed bets ──
-        if len(serialized_bets) >= 3:
-            try:
-                # Build the bet dicts expected by BacktestLogger
-                backtest_bets = []
-                for d in serialized_bets:
-                    backtest_bets.append({
-                        "player_name":      d.get("player_name", ""),
-                        "league":           d.get("league", ""),
-                        "prop_type":        d.get("prop_type", ""),
-                        "pp_line":          d.get("pp_line"),
-                        "side":             d.get("side", "over"),
-                        "true_prob":        d.get("true_prob"),
-                        "individual_ev_pct": d.get("individual_ev_pct"),
-                        "start_time":       d.get("start_time", ""),
-                    })
-                new_slip = _backtest.try_log_slip(backtest_bets)
-                if new_slip:
-                    with _lock:
-                        _state["latest_slip"] = new_slip
-                    logger.info("Backtest: new slip logged — %s", new_slip.get("slip_id"))
-            except Exception as bt_exc:
-                logger.warning("Backtest try_log_slip error: %s", bt_exc)
+        # ── Backtest slip creation is decoupled from the scrape pipeline ──
+        # It runs as its own step right after the bets are persisted, so that
+        # a new slip is attempted the moment enough +EV legs exist.
+        _auto_create_backtest_slip(serialized_bets)
 
         # ── CLV Tracker: update closing lines for pending bets non-blocking ──
         def _update_clv_bg():
@@ -653,14 +668,39 @@ def startup():
     threading.Thread(target=run_pipeline, daemon=True).start()
 
 
+# Any cached snapshot older than this is considered stale and ignored on
+# startup (and proactively purged from Supabase). Lines, matched bets and
+# book data all become meaningless within an hour — better to show an empty
+# tab for a few seconds than to render yesterday's numbers.
+_SEED_MAX_AGE_MIN = 30
+
+
+def _parse_updated_at(s: str | None):
+    if not s:
+        return None
+    try:
+        # Supabase returns UTC ISO with trailing '+00:00' or 'Z'
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
 def _seed_state_from_db_sync():
     """
     Load the last persisted snapshot from Supabase into in-memory state.
-    Only seeds keys that are still empty — never clobbers a freshly scraped
-    value (in case the pipeline finishes first on warm restart).
+
+    Only seeds keys that are still empty AND whose cached value is newer
+    than _SEED_MAX_AGE_MIN. Stale rows are deleted from app_state_cache so
+    they can't resurface on the next restart.
     """
+    from datetime import timezone
+    from engine.database import get_db
     logger.info("Startup: Seeding state from Supabase cache...")
     keys = ["bets", "matches", "pp_lines", "fd_lines", "dk_lines", "pin_lines", "last_refresh"]
+    now = datetime.now(timezone.utc)
+    db = get_db()
+
+    purged = []
     for k in keys:
         try:
             data, updated_at = load_state_from_supabase(k)
@@ -669,9 +709,26 @@ def _seed_state_from_db_sync():
             continue
         if data is None:
             continue
+
+        ts = _parse_updated_at(updated_at)
+        age_min = None
+        if ts is not None:
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age_min = (now - ts).total_seconds() / 60.0
+
+        # Stale (or un-timestamped) → skip and delete so we never see it again.
+        if ts is None or age_min > _SEED_MAX_AGE_MIN:
+            purged.append((k, age_min))
+            if db:
+                try:
+                    db.table("app_state_cache").delete().eq("key", k).execute()
+                except Exception as exc:
+                    logger.warning("Seed: failed to purge stale '%s': %s", k, exc)
+            continue
+
         with _lock:
             current = _state.get(k)
-            # Skip if a fresher value is already present.
             if k == "last_refresh":
                 if current is not None:
                     continue
@@ -683,6 +740,13 @@ def _seed_state_from_db_sync():
                 if current:  # non-empty list already — keep it
                     continue
                 _state[k] = data
+
+    if purged:
+        logger.info(
+            "Startup: purged %d stale cache key(s) (> %dmin old): %s",
+            len(purged), _SEED_MAX_AGE_MIN,
+            ", ".join(f"{k}({'?' if a is None else f'{a:.0f}m'})" for k, a in purged),
+        )
     logger.info("Startup: Seeding complete.")
 
 
@@ -780,15 +844,6 @@ def get_status():
             "interval_min":  _state["interval_min"],
             "total_bets":    len(_state["bets"]),
         }
-
-
-@app.post("/api/refresh")
-def manual_refresh():
-    with _lock:
-        if _state["is_scraping"]:
-            raise HTTPException(status_code=409, detail="Scrape already in progress.")
-    threading.Thread(target=run_pipeline, daemon=True).start()
-    return {"status": "refresh started"}
 
 
 class SlipRequest(BaseModel):
@@ -1241,6 +1296,16 @@ def get_calibration():
     return evaluate_calibration()
 
 
+@app.get("/api/analytics")
+def get_analytics():
+    """
+    Richer analytics payload: calibration + per-league / per-prop performance,
+    cumulative P&L timeline, and slip outcome mix.
+    """
+    from engine.calibration import evaluate_analytics
+    return evaluate_analytics()
+
+
 # ---------------------------------------------------------------------------
 # Backtest endpoints
 # ---------------------------------------------------------------------------
@@ -1540,84 +1605,4 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest):
 
 
 
-@app.get("/api/backtest/download-csv")
-def download_backtest_csv():
-    """Generate and download the backtest data as a CSV file from Supabase."""
-    import csv
-    import io
-    from fastapi.responses import StreamingResponse
-    from engine.database import get_db
-
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=500, detail="No database connection.")
-
-    try:
-        slips_res = db.table("slips").select("*").order("timestamp", desc=False).execute()
-        legs_res = db.table("legs").select("*").execute()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Database read failed: {exc}")
-
-    slips_map = {s["id"]: s for s in (slips_res.data or [])}
-
-    columns = [
-        "slip_id", "timestamp", "slip_type", "n_legs", "proj_slip_ev_pct",
-        "leg_num", "player", "league", "prop", "line", "side",
-        "true_prob", "ind_ev_pct", "game_start",
-        "closing_prob", "clv_pct", "result", "stat_actual",
-    ]
-
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=columns)
-    writer.writeheader()
-
-    # Sort legs by slip timestamp then leg_num
-    all_legs = sorted(
-        legs_res.data or [],
-        key=lambda l: (slips_map.get(l["slip_id"], {}).get("timestamp", ""), l.get("leg_num", 0))
-    )
-
-    for l in all_legs:
-        s = slips_map.get(l["slip_id"], {})
-        writer.writerow({
-            "slip_id":          l.get("slip_id", ""),
-            "timestamp":        s.get("timestamp", ""),
-            "slip_type":        s.get("slip_type", ""),
-            "n_legs":           s.get("n_legs", ""),
-            "proj_slip_ev_pct": s.get("proj_slip_ev_pct", ""),
-            "leg_num":          l.get("leg_num", ""),
-            "player":           l.get("player", ""),
-            "league":           l.get("league", ""),
-            "prop":             l.get("prop", ""),
-            "line":             l.get("line", ""),
-            "side":             l.get("side", ""),
-            "true_prob":        l.get("true_prob", ""),
-            "ind_ev_pct":       l.get("ind_ev_pct", ""),
-            "game_start":       l.get("game_start", ""),
-            "closing_prob":     l.get("closing_prob", ""),
-            "clv_pct":          l.get("clv_pct", ""),
-            "result":           l.get("result", "pending"),
-            "stat_actual":      l.get("stat_actual", ""),
-        })
-
-    output.seek(0)
-    return StreamingResponse(
-        output,
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=backtest.csv"}
-    )
-
-
-@app.post("/api/backtest/check-results")
-def trigger_result_check():
-    """Manually trigger ESPN result checking for pending backtest rows."""
-    def _run():
-        try:
-            updated = _results_checker.check_pending_results()
-            logger.info("Manual result check: %d rows updated", updated)
-        except Exception as exc:
-            logger.error("Manual result check error: %s", exc)
-
-    threading.Thread(target=_run, daemon=True).start()
-    return {"status": "result check started"}
 

@@ -10,6 +10,14 @@
 </head>
 
 <body>
+  <!-- ── Loading overlay (shown on first load / hard refresh) ── -->
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-overlay-inner">
+      <div class="loading-spinner"></div>
+      <div class="loading-text" id="loading-overlay-text">Loading latest lines…</div>
+    </div>
+  </div>
+
   <!-- ── Slip notification banner ── -->
   <div id="slip-banner" class="slip-banner hidden"></div>
 
@@ -450,13 +458,6 @@
 
       </div>
 
-      <!-- Actions -->
-      <div class="bt-actions">
-        <button class="btn btn-primary" id="btn-bt-refresh">Refresh</button>
-        <button class="btn btn-secondary" id="btn-bt-download">Download CSV</button>
-        <button class="btn btn-secondary" id="btn-bt-check-results">Check Results (ESPN)</button>
-      </div>
-
       <!-- Slips table -->
       <div class="table-section" style="flex:1;">
         <div class="table-wrapper">
@@ -485,7 +486,7 @@
 
     <!-- ── Analytics view ── -->
     <div class="backtest-view hidden" id="analytics-view">
-      <!-- Calibration summary cards -->
+      <!-- Top-level summary cards: the six numbers we want to grok at a glance -->
       <div class="bt-summary" id="cal-summary">
         <div class="bt-card">
           <div class="bt-card-label"
@@ -494,34 +495,53 @@
           <div class="bt-card-value" id="cal-brier">—</div>
         </div>
         <div class="bt-card">
+          <div class="bt-card-label" title="Lower is better. Rewards well-calibrated confident predictions; punishes confident wrong ones.">
+            Log Loss <span style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
+          <div class="bt-card-value" id="cal-logloss">—</div>
+        </div>
+        <div class="bt-card">
           <div class="bt-card-label">Resolved Legs</div>
           <div class="bt-card-value" id="cal-resolved">0</div>
-        </div>
-        <div class="bt-card">
-          <div class="bt-card-label">Won</div>
-          <div class="bt-card-value positive" id="cal-won">0</div>
-        </div>
-        <div class="bt-card">
-          <div class="bt-card-label">Lost</div>
-          <div class="bt-card-value negative" id="cal-lost">0</div>
         </div>
         <div class="bt-card">
           <div class="bt-card-label">Raw Hit Rate</div>
           <div class="bt-card-value" id="cal-hitrate">—</div>
         </div>
         <div class="bt-card">
-          <div class="bt-card-label">Avg Predicted Prob</div>
+          <div class="bt-card-label" title="Average true probability of all resolved legs.">Avg Predicted Prob</div>
           <div class="bt-card-value" id="cal-avgpred">—</div>
+        </div>
+        <div class="bt-card">
+          <div class="bt-card-label" title="Actual minus expected hit rate. Positive = overperforming model.">
+            Hit Rate Delta <span style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
+          <div class="bt-card-value" id="cal-delta">—</div>
         </div>
       </div>
 
+      <!-- Row: cumulative bankroll / ROI chart -->
+      <div class="analytics-row">
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <h3>Cumulative P&amp;L (Unit Stake / Slip)</h3>
+            <span class="analytics-subtitle" id="pnl-summary">—</span>
+          </div>
+          <div class="chart-wrap"><canvas id="chart-pnl"></canvas></div>
+        </div>
+      </div>
 
-
-      <!-- Main Content Container (Side-by-Side) -->
-      <div class="analytics-main-content">
-        <!-- Calibration buckets table (50-80%) -->
-        <div class="table-section cal-table-section">
-          <h3 style="margin: 0 16px 8px; font-size: 14px; color: var(--text);">High-Prop Calibration (50-79%)</h3>
+      <!-- Row: calibration plot + calibration table side by side -->
+      <div class="analytics-row">
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <h3>Calibration Plot (Predicted vs Actual)</h3>
+            <span class="analytics-subtitle">Diagonal = perfectly calibrated</span>
+          </div>
+          <div class="chart-wrap"><canvas id="chart-cal"></canvas></div>
+        </div>
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <h3>Calibration Buckets (50–79%)</h3>
+          </div>
           <div class="table-wrapper">
             <table id="cal-table">
               <thead>
@@ -534,37 +554,89 @@
                 </tr>
               </thead>
               <tbody id="cal-tbody">
-                <tr>
-                  <td colspan="5" class="empty-msg">Click "Refresh Calibration" to load data.</td>
-                </tr>
+                <tr><td colspan="5" class="empty-msg">No resolved legs yet.</td></tr>
               </tbody>
             </table>
           </div>
         </div>
+      </div>
 
-        <!-- CLV Tracking section -->
-        <div class="clv-section">
-          <h3 style="font-size: 14px; color: var(--text); margin-bottom: 8px;">Closing Line Value (CLV) Tracking</h3>
-          <div
-            style="padding: 14px 18px; background: var(--surface-2); border-radius: 8px; border: 1px solid var(--border); height: 100%;">
-            <div class="bt-summary" id="clv-summary" style="margin: 0 0 12px; padding: 0; border: none; gap: 8px;">
-              <div class="bt-card" style="min-width: 0; flex: 1; padding: 10px;">
-                <div class="bt-card-label" style="font-size: 10px;">Tracked</div>
-                <div class="bt-card-value" id="clv-count" style="font-size: 18px;">0</div>
-              </div>
-              <div class="bt-card" style="min-width: 0; flex: 1; padding: 10px;">
-                <div class="bt-card-label" title="How often your opening line beat the closing line." style="font-size: 10px;">CLV+ Rate</div>
-                <div class="bt-card-value" id="clv-positive-rate" style="font-size: 18px;">—</div>
-              </div>
-              <div class="bt-card" style="min-width: 0; flex: 1; padding: 10px;">
-                <div class="bt-card-label" title="Average percentage edge over the closing line." style="font-size: 10px;">Avg CLV%</div>
-                <div class="bt-card-value" id="clv-avg-pct" style="font-size: 18px;">—</div>
-              </div>
+      <!-- Row: league breakdown + prop-type breakdown -->
+      <div class="analytics-row">
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <h3>Performance by League</h3>
+          </div>
+          <div class="table-wrapper">
+            <table id="league-perf-table">
+              <thead>
+                <tr>
+                  <th>League</th>
+                  <th>Legs</th>
+                  <th>Hits</th>
+                  <th>Actual</th>
+                  <th>Expected</th>
+                  <th>Δ</th>
+                </tr>
+              </thead>
+              <tbody id="league-perf-tbody">
+                <tr><td colspan="6" class="empty-msg">No resolved legs yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <h3>Top Prop Types (by volume)</h3>
+          </div>
+          <div class="table-wrapper">
+            <table id="prop-perf-table">
+              <thead>
+                <tr>
+                  <th>Prop Type</th>
+                  <th>Legs</th>
+                  <th>Hits</th>
+                  <th>Actual</th>
+                  <th>Expected</th>
+                  <th>Δ</th>
+                </tr>
+              </thead>
+              <tbody id="prop-perf-tbody">
+                <tr><td colspan="6" class="empty-msg">No resolved legs yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row: CLV section -->
+      <div class="analytics-row">
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <h3>Closing Line Value (CLV)</h3>
+            <span class="analytics-subtitle">If CLV+ rate &gt; 50% and Avg CLV% &gt; 0, you're beating the market.</span>
+          </div>
+          <div class="bt-summary" id="clv-summary" style="margin:0; padding:0; border:none; gap:8px;">
+            <div class="bt-card" style="flex:1;">
+              <div class="bt-card-label">Tracked</div>
+              <div class="bt-card-value" id="clv-count">0</div>
             </div>
-            <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
-              <p style="margin: 0;"><strong>CLV tracks market edges.</strong> If your CLV+ rate > 50% and Avg CLV% is positive, you're beating the market.</p>
+            <div class="bt-card" style="flex:1;">
+              <div class="bt-card-label" title="How often your opening line beat the closing line.">CLV+ Rate</div>
+              <div class="bt-card-value" id="clv-positive-rate">—</div>
+            </div>
+            <div class="bt-card" style="flex:1;">
+              <div class="bt-card-label" title="Average percentage edge over the closing line.">Avg CLV%</div>
+              <div class="bt-card-value" id="clv-avg-pct">—</div>
             </div>
           </div>
+        </div>
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <h3>Slip Outcome Mix</h3>
+            <span class="analytics-subtitle" id="slip-mix-subtitle">—</span>
+          </div>
+          <div class="chart-wrap"><canvas id="chart-slip-mix"></canvas></div>
         </div>
       </div>
     </div>
@@ -573,7 +645,8 @@
   </main>
 
 
-  <script src="/static/app.js?v=15"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="/static/app.js?v=16"></script>
 </body>
 
 </html>

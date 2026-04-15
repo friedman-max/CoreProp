@@ -142,10 +142,38 @@ def match_props(
         norm_pp_name = normalize_name(pp.player_name)
 
         def _best_match(candidates):
+            """
+            Compare PP name against each book candidate using a composite
+            score that handles:
+              • exact token ordering         → token_sort_ratio
+              • inserted/dropped middle names → token_set_ratio
+                  ("Simeon Richardson" vs "Simeon Woods Richardson")
+              • prefix insertions (Da/De/Van) → token_set_ratio
+                  ("Tristan Silva" vs "Tristan Da Silva")
+
+            We keep a conservative bar (FUZZY_THRESHOLD) applied to the
+            *weakest* of (sort, set) — if either metric drops below the
+            threshold, we treat it as uncertain and reject. This prevents
+            common short-name collisions ("Miles McBride" vs "Mikal
+            Bridges") while still letting middle-name insertions through.
+            """
             best = None
             best_score = 0.0
             for c in candidates:
-                score = fuzz.token_sort_ratio(norm_pp_name, normalize_name(c.player_name))
+                norm_cand = normalize_name(c.player_name)
+                sort_score = fuzz.token_sort_ratio(norm_pp_name, norm_cand)
+                set_score  = fuzz.token_set_ratio(norm_pp_name, norm_cand)
+
+                # An exact subset match (set=100) where the sort score is
+                # also reasonably high should be accepted. We require the
+                # shorter name's tokens to all appear in the longer name,
+                # with sort_score >= 80 to reject accidental overlaps.
+                if set_score >= 100 and sort_score >= 80:
+                    score = set_score
+                else:
+                    # Otherwise fall back to the stricter sort-based score.
+                    score = sort_score
+
                 if score > best_score:
                     best_score = score
                     best = c
