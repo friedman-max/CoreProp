@@ -280,15 +280,30 @@ class ESPNResultsChecker:
     def _parse_box_score(summary: dict) -> dict:
         """
         Parse ESPN summary JSON → {player_name_lower: {stat_name: raw_value}}.
+
+        For MLB, the batting table exposes H and HR but not 2B or 3B.
+        We enrich each batter's stat_dict with singles/doubles/triples counts
+        derived from the ``plays`` array so prop grading (Singles, Doubles,
+        Triples, Total Bases) works correctly.
         """
         result: dict = {}
+        # athlete_id → player_name_lower (for enriching from plays)
+        athlete_id_to_name: dict[str, str] = {}
+        # Track which players appeared as MLB batters so we can default their
+        # singles/doubles/triples to 0 (a batter who didn't hit an extra-base
+        # hit must still have those fields set).
+        mlb_batters: set[str] = set()
+
         for section in summary.get("boxscore", {}).get("players", []):
             for stat_block in section.get("statistics", []):
                 field_names = [n.lower() for n in stat_block.get("names", [])]
                 if not field_names:
                     field_names = [k.lower() for k in stat_block.get("keys", [])]
+                block_name = (stat_block.get("name") or stat_block.get("type") or "").lower()
+                is_batting = block_name == "batting" or "h-ab" in field_names or "hits-atbats" in field_names
                 for entry in stat_block.get("athletes", []):
-                    display = entry.get("athlete", {}).get("displayName", "")
+                    athlete = entry.get("athlete", {}) or {}
+                    display = athlete.get("displayName", "")
                     raw     = entry.get("stats", [])
                     if not display or not raw:
                         continue
@@ -301,6 +316,54 @@ class ESPNResultsChecker:
                         result[display_lower].update(stat_dict)
                     else:
                         result[display_lower] = stat_dict
+
+                    a_id = athlete.get("id")
+                    if a_id is not None:
+                        athlete_id_to_name[str(a_id)] = display_lower
+                    if is_batting:
+                        mlb_batters.add(display_lower)
+
+        # Enrich MLB batters with hit-type counts parsed from plays.
+        plays = summary.get("plays") or []
+        if plays and mlb_batters:
+            # Default to 0 for every batter (so a batter with 0 doubles has d2=0
+            # rather than missing, which is needed for the singles formula).
+            for name in mlb_batters:
+                d = result.setdefault(name, {})
+                d.setdefault("singles", 0)
+                d.setdefault("2b", 0)
+                d.setdefault("3b", 0)
+                # Do NOT overwrite "hr" here — boxscore already supplies it.
+
+            type_to_key = {
+                "single": "singles",
+                "double": "2b",
+                "triple": "3b",
+                # Home runs are already counted in the boxscore HR column; we
+                # skip them here to avoid double-counting if both sources agree.
+            }
+            for play in plays:
+                t = play.get("type") or {}
+                ttext = (t.get("text") or "").strip().lower() if isinstance(t, dict) else ""
+                key = type_to_key.get(ttext)
+                if not key:
+                    continue
+                batter_id = None
+                for p in play.get("participants") or []:
+                    if (p.get("type") or "").lower() == "batter":
+                        ath = p.get("athlete") or {}
+                        batter_id = ath.get("id")
+                        if batter_id is None:
+                            # Some payloads nest athlete id one level up
+                            batter_id = p.get("athlete", {}).get("id") if isinstance(p.get("athlete"), dict) else None
+                        break
+                if batter_id is None:
+                    continue
+                name = athlete_id_to_name.get(str(batter_id))
+                if not name or name not in mlb_batters:
+                    continue
+                result[name][key] = (result[name].get(key) or 0) + 1
+
         return result
 
     @staticmethod
@@ -389,16 +452,20 @@ class ESPNResultsChecker:
             return r
         if prop_type == "Stolen Bases":
             return sb
+        # Prefer a direct "singles" count (e.g., tallied from ESPN plays) when
+        # present, since the MLB boxscore itself doesn't expose 2B/3B columns.
+        singles_direct = _num("singles", "1b")
         if prop_type == "Total Bases":
-            if h is None or hr is None: return None
-            singles = h - (d2 or 0) - (d3 or 0) - hr
-            return singles + 2*(d2 or 0) + 3*(d3 or 0) + 4*hr
+            if any(v is None for v in (h, d2, d3, hr)): return None
+            return h + d2 + (d3 * 2) + (hr * 3)
         if prop_type == "Hits+Runs+RBIs":
             return None if any(v is None for v in (h, r, rbi)) else h + r + rbi
         if prop_type == "Runs+RBIs":
             return None if any(v is None for v in (r, rbi)) else r + rbi
         if prop_type == "Singles":
-            return None if any(v is None for v in (h, d2, d3, hr)) else h - (d2 or 0) - (d3 or 0) - hr
+            if any(v is None for v in (h, d2, d3, hr)):
+                return None
+            return h - d2 - d3 - hr
         if prop_type == "Doubles":
             return d2
         if prop_type == "Triples":
