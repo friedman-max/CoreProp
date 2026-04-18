@@ -27,12 +27,13 @@ def _intern(s):
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import statistics
+from web.auth import get_current_user, get_current_user_optional
 
 import config as cfg
 from engine.ev_calculator import BetResult, calculate_slip, evaluate_match
@@ -57,8 +58,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="CoreProp")
 
-# Backtest / results-checker singletons
-_backtest         = BacktestLogger()
+# Results checker / CLV singletons (stateless, run in background via service role)
 _results_checker  = ESPNResultsChecker()
 _clv_tracker      = CLVTracker()
 
@@ -85,10 +85,8 @@ _state = {
     "is_scraping_pin": False,
     "scrape_errors": {},        # league -> error str | None
     "interval_min":  5,
-    "min_ev_pct":    -10.0,
-    "active_leagues": dict(cfg.ACTIVE_LEAGUES),
-    # Backtest: latest logged slip (for frontend notification)
-    "latest_slip":   None,
+    "min_ev_pct":    -10.0,         # fallback default
+    "active_leagues": dict(cfg.ACTIVE_LEAGUES), # fallback default
 }
 
 scheduler = BackgroundScheduler()
@@ -158,39 +156,9 @@ def _display_odds(book, side: str, book_overround: float = 0.07):
 # Core pipeline
 # ---------------------------------------------------------------------------
 
-def _auto_create_backtest_slip(serialized_bets: list) -> Optional[dict]:
-    """
-    Decoupled backtest slip writer.
+# Auto-logging has been removed to support multi-tenancy.
+# Users must manually log slips from the UI.
 
-    Runs independently of the scrape pipeline — any caller with a fresh list
-    of +EV bets can invoke this to attempt logging a slip. BacktestLogger
-    enforces its own minimum-leg threshold (6 legs today) and 48h dedup
-    window, so this function is safe to call repeatedly.
-
-    Returns the newly logged slip dict, or None when nothing was written.
-    """
-    if not serialized_bets or len(serialized_bets) < 3:
-        return None
-    try:
-        backtest_bets = [{
-            "player_name":       d.get("player_name", ""),
-            "league":            d.get("league", ""),
-            "prop_type":         d.get("prop_type", ""),
-            "pp_line":           d.get("pp_line"),
-            "side":              d.get("side", "over"),
-            "true_prob":         d.get("true_prob"),
-            "individual_ev_pct": d.get("individual_ev_pct"),
-            "start_time":        d.get("start_time", ""),
-        } for d in serialized_bets]
-        new_slip = _backtest.try_log_slip(backtest_bets)
-        if new_slip:
-            with _lock:
-                _state["latest_slip"] = new_slip
-            logger.info("Backtest: new slip logged — %s", new_slip.get("slip_id"))
-            return new_slip
-    except Exception as bt_exc:
-        logger.warning("Backtest auto-log error: %s", bt_exc)
-    return None
 
 
 def run_pipeline():
@@ -218,25 +186,42 @@ def _run_pipeline_body():
         with _lock:
             leagues = dict(_state["active_leagues"])
 
-        logger.info("Pipeline: scraping PrizePicks...")
-        pp_lines = scrape_prizepicks(active_leagues=leagues)
-        if len(pp_lines) == 0:
-            errors["prizepicks"] = "Empty response"
+        import concurrent.futures
+        
+        logger.info("Pipeline: kicking off scrapers concurrently...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            future_pp = executor.submit(scrape_prizepicks, active_leagues=leagues)
+            future_fd = executor.submit(scrape_fanduel, active_leagues=leagues)
+            future_dk = executor.submit(scrape_draftkings, active_leagues=leagues)
+            future_pin = executor.submit(scrape_pinnacle, active_leagues=leagues)
 
-        logger.info("Pipeline: scraping FanDuel...")
-        fd_props = scrape_fanduel(active_leagues=leagues)
-        if len(fd_props) == 0:
-            errors["fanduel"] = "Empty response"
+            try:
+                pp_lines = future_pp.result()
+                if len(pp_lines) == 0: errors["prizepicks"] = "Empty response"
+            except Exception as e:
+                logger.error(f"PrizePicks scraper failed: {e}")
+                pp_lines, errors["prizepicks"] = [], "Exception"
 
-        logger.info("Pipeline: scraping DraftKings...")
-        dk_props = scrape_draftkings(active_leagues=leagues)
-        if len(dk_props) == 0:
-            errors["draftkings"] = "Empty response"
+            try:
+                fd_props = future_fd.result()
+                if len(fd_props) == 0: errors["fanduel"] = "Empty response"
+            except Exception as e:
+                logger.error(f"FanDuel scraper failed: {e}")
+                fd_props, errors["fanduel"] = [], "Exception"
 
-        logger.info("Pipeline: scraping Pinnacle...")
-        pin_props = scrape_pinnacle(active_leagues=leagues)
-        if len(pin_props) == 0:
-            errors["pinnacle"] = "Empty response"
+            try:
+                dk_props = future_dk.result()
+                if len(dk_props) == 0: errors["draftkings"] = "Empty response"
+            except Exception as e:
+                logger.error(f"DraftKings scraper failed: {e}")
+                dk_props, errors["draftkings"] = [], "Exception"
+
+            try:
+                pin_props = future_pin.result()
+                if len(pin_props) == 0: errors["pinnacle"] = "Empty response"
+            except Exception as e:
+                logger.error(f"Pinnacle scraper failed: {e}")
+                pin_props, errors["pinnacle"] = [], "Exception"
 
         # If every source failed, skip the state update entirely so the UI
         # keeps the last good snapshot (avoids clearing screens on a bad cycle).
@@ -477,9 +462,6 @@ def _run_pipeline_body():
         # Sort by individual EV% descending
         bets.sort(key=lambda b: b.individual_ev_pct, reverse=True)
 
-        # Snapshot used_bets keys so we can flag already-logged legs in the UI
-        used_keys = _backtest.used_bet_keys()
-
         serialized_bets = []
         for b in bets:
             d = b.to_dict()
@@ -488,10 +470,6 @@ def _run_pipeline_body():
             d["dk_odds_book"] = extras.get("dk_odds")
             d["pin_odds_book"] = extras.get("pin_odds")
             d["start_time"]   = extras.get("start_time", "")
-            # Flag players already logged for this specific game
-            start_time = extras.get("start_time", "")
-            bet_key = make_bet_key(b.player_name, start_time)
-            d["in_backtest"] = bet_key in used_keys
             serialized_bets.append(d)
 
         # Free intermediate mapping before we hand off to Supabase + background
@@ -527,18 +505,16 @@ def _run_pipeline_body():
             sync_state_to_supabase("bets", serialized_bets)
             sync_state_to_supabase("matches", serialized_matches)
             sync_state_to_supabase("pp_lines", serialized_pp)
-            sync_state_to_supabase("fd_lines", serialized_fd)
-            sync_state_to_supabase("dk_lines", serialized_dk)
-            sync_state_to_supabase("pin_lines", serialized_pin)
+            # We explicitly do NOT sync fd_lines, dk_lines, pin_lines 
+            # because they each contain 10K+ objects (2-5MB JSON) which 
+            # triggers PostgREST Payload Too Large timeouts/errors and crashes 
+            # the sync thread. The raw tabs will just wait for the next scrape to complete.
             if _state["last_refresh"]:
                 sync_state_to_supabase("last_refresh", _state["last_refresh"].isoformat())
         
         threading.Thread(target=_sync_all, daemon=True).start()
 
-        # ── Backtest slip creation is decoupled from the scrape pipeline ──
-        # It runs as its own step right after the bets are persisted, so that
-        # a new slip is attempted the moment enough +EV legs exist.
-        _auto_create_backtest_slip(serialized_bets)
+        # Auto-backtest slip creation removed for multi-tenancy.
 
         # ── CLV Tracker: update closing lines for pending bets non-blocking ──
         # Pass the precomputed probs dict only — not the full matches list —
@@ -601,13 +577,6 @@ def startup():
 
     scheduler.start()
     _reschedule(_state["interval_min"])
-    # Midnight reset: clear used-bets pool every day at 00:00
-    scheduler.add_job(
-        _backtest.reset_daily,
-        trigger=CronTrigger(hour=0, minute=0),
-        id="midnight_reset",
-        replace_existing=True,
-    )
     logger.info("Scheduler started. Auto-refresh every %d min.", _state["interval_min"])
 
     # ── Startup recovery: finalize any missed CLV rows from when the app was down ──
@@ -626,10 +595,10 @@ def startup():
 
 
 # Any cached snapshot older than this is considered stale and ignored on
-# startup (and proactively purged from Supabase). Lines, matched bets and
-# book data all become meaningless within an hour — better to show an empty
-# tab for a few seconds than to render yesterday's numbers.
-_SEED_MAX_AGE_MIN = 30
+# startup (and proactively purged from Supabase). 
+# Set to 1440 (24h) so users can instantly load the UI with yesterday's lines 
+# while the background scrape runs, rather than facing a 60s loading screen.
+_SEED_MAX_AGE_MIN = 1440
 
 
 def _parse_updated_at(s: str | None):
@@ -652,18 +621,27 @@ def _seed_state_from_db_sync():
     """
     from datetime import timezone
     from engine.database import get_db
+    from engine.persistence import load_multiple_states_from_supabase
+    
     logger.info("Startup: Seeding state from Supabase cache...")
-    keys = ["bets", "matches", "pp_lines", "fd_lines", "dk_lines", "pin_lines", "last_refresh"]
+    keys = ["bets", "matches", "pp_lines", "last_refresh"]
     now = datetime.now(timezone.utc)
     db = get_db()
 
+    try:
+        states = load_multiple_states_from_supabase(keys)
+    except Exception as exc:
+        logger.warning(f"Seed: failed to load states: {exc}")
+        states = {}
+
     purged = []
+    
     for k in keys:
-        try:
-            data, updated_at = load_state_from_supabase(k)
-        except Exception as exc:
-            logger.warning("Seed: failed to load '%s': %s", k, exc)
+        if k not in states:
+            # Maybe log or just continue
             continue
+            
+        data, updated_at = states[k]
         if data is None:
             continue
 
@@ -746,15 +724,73 @@ def _last_refresh_iso():
     return None
 
 
+def _get_user_config(user: Optional[dict]) -> dict:
+    import config as cfg
+    base = {
+        "min_ev_pct": -10.0,
+        "active_leagues": dict(cfg.ACTIVE_LEAGUES),
+        "refresh_interval_min": 5
+    }
+    if not user:
+        return base
+        
+    try:
+        from engine.database import get_user_db
+        db = get_user_db(user["jwt"])
+        if db:
+            res = db.table("user_config").select("*").eq("user_id", user["id"]).execute()
+            if res.data:
+                row = res.data[0]
+                base["min_ev_pct"] = float(row.get("min_ev_pct", -10.0))
+                if row.get("active_leagues"):
+                    base["active_leagues"] = row["active_leagues"]
+                base["refresh_interval_min"] = int(row.get("refresh_interval_min", 5))
+    except Exception as e:
+        logger.warning(f"Failed to fetch user config for {user['id']}: {e}")
+        
+    return base
+
 @app.get("/api/bets")
-def get_bets():
+def get_bets(user: Optional[dict] = Depends(get_current_user_optional)):
     with _lock:
-        return {
-            "bets":         _state["bets"],
-            "total":        len(_state["bets"]),
-            "is_scraping":  _state["is_scraping"],
-            "last_refresh": _last_refresh_iso(),
-        }
+        state_bets = _state["bets"]
+        is_scraping = _state["is_scraping"]
+        last_refresh = _last_refresh_iso()
+
+    cfg = _get_user_config(user)
+    
+    # Optional flags for authenticated users to know which bets are already in their backtest
+    in_backtest_keys = set()
+    if user:
+        from engine.backtest import BacktestLogger
+        logger_inst = BacktestLogger(user["id"], user["jwt"])
+        in_backtest_keys = logger_inst._load_used_keys_from_db()
+
+    filtered_bets = []
+    for b in state_bets:
+        if float(b.get("individual_ev_pct", 0)) >= cfg["min_ev_pct"] and cfg["active_leagues"].get(b.get("league"), True):
+            # Flag players already logged for this specific game
+            from engine.backtest import make_bet_key
+            bet_key = make_bet_key(b.get("player_name", ""), b.get("start_time", ""))
+            copied = dict(b)
+            copied["in_backtest"] = bet_key in in_backtest_keys
+            filtered_bets.append(copied)
+
+    return {
+        "bets":         filtered_bets,
+        "total":        len(filtered_bets),
+        "is_scraping":  is_scraping,
+        "last_refresh": last_refresh,
+    }
+
+
+@app.get("/api/ui-config")
+def get_ui_config():
+    from engine.database import SUPABASE_URL, SUPABASE_ANON_KEY
+    return {
+        "supabase_url": SUPABASE_URL,
+        "supabase_anon_key": SUPABASE_ANON_KEY
+    }
 
 
 @app.get("/api/matched")
@@ -769,25 +805,48 @@ def get_matched():
 
 
 @app.get("/api/bootstrap")
-def get_bootstrap():
+def get_bootstrap(user: Optional[dict] = Depends(get_current_user_optional)):
     """
     Single-shot payload containing every dataset the UI needs on first load.
-    The frontend uses this to avoid firing 6+ parallel requests on every
-    page refresh — combined with localStorage caching, this makes the
-    initial paint effectively instant.
     """
     with _lock:
-        return {
-            "bets":          _state["bets"],
-            "matches":       _state.get("matches", []),
-            "pp_lines":      _state.get("pp_lines", []),
-            "fd_lines":      _state.get("fd_lines", []),
-            "dk_lines":      _state.get("dk_lines", []),
-            "pin_lines":     _state.get("pin_lines", []),
-            "is_scraping":   _state["is_scraping"],
-            "last_refresh":  _last_refresh_iso(),
-            "interval_min":  _state["interval_min"],
-        }
+        state_bets = _state["bets"]
+        matches = _state.get("matches", [])
+        pp_lines = _state.get("pp_lines", [])
+        fd_lines = _state.get("fd_lines", [])
+        dk_lines = _state.get("dk_lines", [])
+        pin_lines = _state.get("pin_lines", [])
+        is_scraping = _state["is_scraping"]
+        last_refresh = _last_refresh_iso()
+
+    cfg = _get_user_config(user)
+    
+    in_backtest_keys = set()
+    if user:
+        from engine.backtest import BacktestLogger
+        logger_inst = BacktestLogger(user["id"], user["jwt"])
+        in_backtest_keys = logger_inst._load_used_keys_from_db()
+
+    filtered_bets = []
+    for b in state_bets:
+        if float(b.get("individual_ev_pct", 0)) >= cfg["min_ev_pct"] and cfg["active_leagues"].get(b.get("league"), True):
+            from engine.backtest import make_bet_key
+            bet_key = make_bet_key(b.get("player_name", ""), b.get("start_time", ""))
+            copied = dict(b)
+            copied["in_backtest"] = bet_key in in_backtest_keys
+            filtered_bets.append(copied)
+
+    return {
+        "bets":          filtered_bets,
+        "matches":       matches,
+        "pp_lines":      pp_lines,
+        "fd_lines":      fd_lines,
+        "dk_lines":      dk_lines,
+        "pin_lines":     pin_lines,
+        "is_scraping":   is_scraping,
+        "last_refresh":  last_refresh,
+        "interval_min":  cfg["refresh_interval_min"],
+    }
 
 
 @app.get("/api/status")
@@ -809,7 +868,7 @@ class SlipRequest(BaseModel):
 
 
 @app.post("/api/slip")
-def build_slip(req: SlipRequest):
+def build_slip(req: SlipRequest, user: dict = Depends(get_current_user)):
     if not req.bet_ids:
         raise HTTPException(status_code=400, detail="No bet IDs provided.")
     if len(req.bet_ids) < 2 or len(req.bet_ids) > 6:
@@ -835,7 +894,7 @@ def build_slip(req: SlipRequest):
 
 
 @app.post("/api/slip/auto")
-def auto_build_slip(req: SlipRequest):
+def auto_build_slip(req: SlipRequest, user: dict = Depends(get_current_user)):
     if not req.bet_ids:
         raise HTTPException(status_code=400, detail="No bet IDs provided.")
     if len(req.bet_ids) < 2:
@@ -885,13 +944,13 @@ class ConfigUpdate(BaseModel):
 
 
 @app.get("/api/config")
-def get_config():
-    with _lock:
-        return {
-            "interval_min":   _state["interval_min"],
-            "min_ev_pct":     _state["min_ev_pct"],
-            "active_leagues": _state["active_leagues"],
-        }
+def get_config(user: dict = Depends(get_current_user)):
+    cfg = _get_user_config(user)
+    return {
+        "interval_min":   cfg["refresh_interval_min"],
+        "min_ev_pct":     cfg["min_ev_pct"],
+        "active_leagues": cfg["active_leagues"],
+    }
 
 
 @app.post("/api/config")
@@ -1239,20 +1298,20 @@ def _run_pin_scrape():
 # ---------------------------------------------------------------------------
 
 @app.get("/api/calibration")
-def get_calibration():
+def get_calibration(user: dict = Depends(get_current_user)):
     """Return Brier Score, Log-Loss, and calibration buckets from resolved backtest data."""
     from engine.calibration import evaluate_calibration
-    return evaluate_calibration()
+    return evaluate_calibration(user_jwt=user["jwt"])
 
 
 @app.get("/api/analytics")
-def get_analytics():
+def get_analytics(user: dict = Depends(get_current_user)):
     """
     Richer analytics payload: calibration + per-league / per-prop performance,
     cumulative P&L timeline, and slip outcome mix.
     """
     from engine.calibration import evaluate_analytics
-    return evaluate_analytics()
+    return evaluate_analytics(user_jwt=user["jwt"])
 
 
 # ---------------------------------------------------------------------------
@@ -1260,18 +1319,17 @@ def get_analytics():
 # ---------------------------------------------------------------------------
 
 @app.get("/api/backtest/latest-slip")
-def get_latest_slip():
-    """Return the most recently logged slip (for frontend polling / notification)."""
-    with _lock:
-        return {"slip": _state.get("latest_slip")}
+def get_latest_slip(user: dict = Depends(get_current_user)):
+    """Currently disabled as auto-logging was removed, returning None."""
+    return {"slip": None}
 
 
 @app.get("/api/backtest/slips")
-def get_backtest_slips():
+def get_backtest_slips(user: dict = Depends(get_current_user)):
     """Return the last 50 logged slips from Supabase."""
-    from engine.database import get_db
+    from engine.database import get_user_db
 
-    db = get_db()
+    db = get_user_db(user["jwt"])
     all_slips = []
 
     if not db:
@@ -1343,7 +1401,7 @@ class BacktestAddSlipRequest(BaseModel):
 
 
 @app.post("/api/backtest/add-slip")
-def add_slip_to_backtest(req: BacktestAddSlipRequest):
+def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_current_user)):
     """
     Manually log a slip from the currently selected +EV bets.
     bet_ids must refer to bets currently in _state['bet_map'].
@@ -1399,10 +1457,15 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest):
             ),
         )
 
+    from engine.backtest import BacktestLogger
+    _logger = BacktestLogger(user["id"], user["jwt"])
+
     # Cross-slip dedup: any (player, start_time) already used in another
     # slip within the last 48h blocks this whole slip. Same player in a
     # different game (different start_time) is fine.
-    conflicts = _backtest.find_conflicting_legs(backtest_bets)
+    
+    used_keys = _logger._load_used_keys_from_db()
+    conflicts = _logger.find_conflicting_legs(backtest_bets, used_keys=used_keys)
     if conflicts:
         detail_parts = [
             f"{c.get('player_name', '')} @ {c.get('start_time', '')}"
@@ -1418,7 +1481,7 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest):
 
     # Force the slip through — bypass the "enough bets" / EV gate by
     # calling try_log_slip with only these bets (already in correct format).
-    new_slip = _backtest.try_log_slip(backtest_bets)
+    new_slip = _logger.try_log_slip(backtest_bets, slip_type="Manual")
     if new_slip is None:
         # try_log_slip may reject due to EV or already-used bets;
         # for manual adds we force-log it anyway.
@@ -1426,7 +1489,8 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest):
         # Re-check for player conflicts one more time: if another process
         # inserted a conflicting leg between our top-of-endpoint check and
         # now, we want to surface that rather than silently force-insert.
-        late_conflicts = _backtest.find_conflicting_legs(backtest_bets)
+        late_used = _logger._load_used_keys_from_db()
+        late_conflicts = _logger.find_conflicting_legs(backtest_bets, used_keys=late_used)
         if late_conflicts:
             detail_parts = [
                 f"{c.get('player_name', '')} @ {c.get('start_time', '')}"

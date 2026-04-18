@@ -7,6 +7,7 @@
   <title>CoreProp</title>
   <link rel="icon" type="image/png" href="/static/logo.png" />
   <link rel="stylesheet" href="/static/style.css?v=101" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 
 <body>
@@ -21,6 +22,18 @@
   <!-- ── Slip notification banner ── -->
   <div id="slip-banner" class="slip-banner hidden"></div>
 
+  <!-- ── Auth overlay ── -->
+  <div id="auth-overlay" style="display: none; position: fixed; inset: 0; align-items: center; justify-content: center; z-index: 2000; background: rgba(0,0,0,0.85);">
+    <div style="width: 100%; max-width: 400px; padding: 2rem; background: var(--bg-2); border-radius: 8px; text-align: center; border: 1px solid var(--border); box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+      <img src="/static/logo_full.png" alt="CoreProp Logo" style="height: 48px; margin-bottom: 1.5rem;" />
+      <h2 style="margin-bottom: 1.5rem;">Login to CoreProp</h2>
+      <input type="email" id="auth-email" placeholder="Email" class="glass-input" style="width: 100%; box-sizing: border-box; margin-bottom: 1rem;" />
+      <input type="password" id="auth-password" placeholder="Password" class="glass-input" style="width: 100%; box-sizing: border-box; margin-bottom: 1.5rem;" />
+      <button id="btn-login" class="btn btn-primary" style="width: 100%; margin-bottom: 0.75rem;">Login / Sign Up</button>
+      <p id="auth-error" style="color: var(--loss-red); margin-top: 1rem;"></p>
+    </div>
+  </div>
+
   <!-- ── Tab bar ── -->
   <div class="tab-bar">
     <div class="sticky-logo-wrap">
@@ -34,6 +47,11 @@
     <button class="tab" data-tab="pin">Pinnacle Lines</button>
     <button class="tab" data-tab="backtest">Backtest</button>
     <button class="tab" data-tab="analytics">Analytics</button>
+    <div style="flex-grow: 1;"></div>
+    <div id="user-menu" style="display: none; align-items: center; gap: 10px; padding: 0 15px; color: var(--text-muted); font-size: 0.9rem;">
+      <span id="user-email"></span>
+      <button id="btn-logout" class="btn btn-secondary btn-sm">Logout</button>
+    </div>
   </div>
 
   <main class="app-content">
@@ -646,7 +664,7 @@
 
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="/static/app.js?v=16"></script>
+  <script src="/static/app.js?v=17"></script>
 </body>
 
 </html>

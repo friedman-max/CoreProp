@@ -1,3 +1,110 @@
+
+// The Supabase CDN exposes a global `supabase` (the module namespace) on
+// `window`. Using the same name as a `let` would throw SyntaxError and abort
+// the script entirely — so our authenticated client is named `sbClient`.
+let sbClient = null;
+let currentSession = null;
+
+async function initAuth() {
+    try {
+        // Fetch UI config which itself is an unauthenticated endpoint
+        const res = await fetch('/api/ui-config');
+        const config = await res.json();
+        sbClient = window.supabase.createClient(config.supabase_url, config.supabase_anon_key);
+
+        const { data: { session } } = await sbClient.auth.getSession();
+        currentSession = session;
+        handleSessionUpdate(session);
+
+        sbClient.auth.onAuthStateChange((_event, session) => {
+            currentSession = session;
+            handleSessionUpdate(session);
+        });
+
+        // Setup UI handlers
+        document.getElementById('btn-login').addEventListener('click', async () => {
+            const email = document.getElementById('auth-email').value;
+            const password = document.getElementById('auth-password').value;
+            const errorEl = document.getElementById('auth-error');
+            errorEl.textContent = 'Logging in...';
+
+            let { data, error } = await sbClient.auth.signInWithPassword({ email, password });
+            if (error) {
+                if (error.message.includes('Invalid login') || error.message.includes('credentials')) {
+                    errorEl.textContent = 'Sign up required. Creating account...';
+                    const { data: signUpData, error: signUpError } = await sbClient.auth.signUp({ email, password });
+                    if (signUpError) {
+                        errorEl.textContent = signUpError.message;
+                        return;
+                    }
+                    data = signUpData;
+                } else {
+                    errorEl.textContent = error.message;
+                    return;
+                }
+            }
+            errorEl.textContent = '';
+        });
+
+        document.getElementById('btn-logout').addEventListener('click', async () => {
+            await sbClient.auth.signOut();
+        });
+
+    } catch (e) {
+        console.error('Auth init failed', e);
+        document.getElementById('auth-overlay').style.display = 'flex';
+        const errEl = document.getElementById('auth-error');
+        if (errEl) {
+            errEl.style.display = 'block';
+            errEl.textContent = 'Auth Initialization Failed: ' + e.message;
+        }
+        hideLoadingOverlay();
+    }
+}
+
+let isDataLoaded = false;
+function handleSessionUpdate(session) {
+    if (!session) {
+        document.getElementById('auth-overlay').style.display = 'flex';
+        document.getElementById('user-menu').style.display = 'none';
+        hideLoadingOverlay();
+        // Hide tables
+        document.querySelectorAll('.app-content').forEach(e => e.style.display = 'none');
+        isDataLoaded = false;
+    } else {
+        document.getElementById('auth-overlay').style.display = 'none';
+        document.getElementById('user-menu').style.display = 'flex';
+        document.getElementById('user-email').textContent = session.user.email;
+        
+        // Show tables
+        document.querySelectorAll('.app-content').forEach(e => e.style.display = 'block');
+        
+        // Kick off fetch after login if not already loaded
+        if (!isDataLoaded) {
+            showLoadingOverlay("Loading latest lines…");
+            isDataLoaded = true;
+            // Safety: always hide overlay no matter what happens.
+            const safetyTimer = setTimeout(hideLoadingOverlay, 20000);
+            fetchBootstrap()
+                .catch(err => console.error("Bootstrap failed:", err))
+                .finally(() => {
+                    clearTimeout(safetyTimer);
+                    hideLoadingOverlay();
+                    Promise.all([fetchBacktest(), fetchCalibration()]).catch(() => {});
+                });
+        }
+    }
+}
+
+async function apiFetch(url, options = {}) {
+    if (!options.headers) options.headers = {};
+    if (currentSession) {
+        options.headers['Authorization'] = `Bearer ${currentSession.access_token}`;
+    }
+    const res = await fetch(url, options);
+    return res;
+}
+
 /**
  * PrizePicks +EV Finder — Frontend
  *
@@ -323,7 +430,7 @@ btnAddToBacktest.addEventListener("click", async () => {
   btnAddToBacktest.textContent = "Logging...";
 
   try {
-    const resp = await fetch("/api/backtest/add-slip", {
+    const resp = await apiFetch("/api/backtest/add-slip", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bet_ids: selected.map(b => b.bet_id) }),
@@ -397,7 +504,7 @@ btnCalculate.addEventListener("click", async () => {
   btnCalculate.textContent = "Calculating…";
 
   try {
-    const resp = await fetch("/api/slip", {
+    const resp = await apiFetch("/api/slip", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ bet_ids: betIds, bankroll }),
@@ -442,7 +549,7 @@ btnAutoBuild.addEventListener("click", async () => {
   btnAutoBuild.textContent = "Auto-Building...";
   
   try {
-    const resp = await fetch("/api/slip/auto", {
+    const resp = await apiFetch("/api/slip/auto", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ bet_ids: betIds, bankroll }),
@@ -496,7 +603,7 @@ function renderSlipResults(data) {
 // ── API calls ──────────────────────────────────────────────────────────────
 async function fetchBets() {
   try {
-    const resp = await fetch("/api/bets");
+    const resp = await apiFetch("/api/bets");
     const data = await resp.json();
     state.allBets = data.bets || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
@@ -508,15 +615,8 @@ async function fetchBets() {
 
 async function fetchStatus() {
   try {
-    const resp = await fetch("/api/status");
+    const resp = await apiFetch("/api/status");
     const data = await resp.json();
-
-// Add Slip Panel drawer toggle for mobile
-$("slip-panel").querySelector("h2").addEventListener("click", () => {
-    if (window.innerWidth <= 900) {
-        $("slip-panel").classList.toggle("open");
-    }
-});
     // UI updates removed
 
     // Detect scraping just finished → refresh every dataset in one shot.
@@ -719,7 +819,7 @@ function renderMatchedTable() {
 
 async function fetchMatched() {
   try {
-    const resp = await fetch("/api/matched");
+    const resp = await apiFetch("/api/matched");
     const data = await resp.json();
     matchedState.allLines = data.matches || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
@@ -731,7 +831,7 @@ async function fetchMatched() {
 
 async function fetchPP() {
   try {
-    const resp = await fetch("/api/prizepicks");
+    const resp = await apiFetch("/api/prizepicks");
     const data = await resp.json();
     ppState.allLines = data.lines || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
@@ -743,7 +843,7 @@ async function fetchPP() {
 
 async function fetchFD() {
   try {
-    const resp = await fetch("/api/fanduel");
+    const resp = await apiFetch("/api/fanduel");
     const data = await resp.json();
     fdState.allLines = data.lines || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
@@ -755,7 +855,7 @@ async function fetchFD() {
 
 async function fetchDK() {
   try {
-    const resp = await fetch("/api/draftkings");
+    const resp = await apiFetch("/api/draftkings");
     const data = await resp.json();
     dkState.allLines = data.lines || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
@@ -767,7 +867,7 @@ async function fetchDK() {
 
 async function fetchPin() {
   try {
-    const resp = await fetch("/api/pinnacle");
+    const resp = await apiFetch("/api/pinnacle");
     const data = await resp.json();
     pinState.allLines = data.lines || [];
     if (data.last_refresh) state.lastRefresh = data.last_refresh;
@@ -782,7 +882,7 @@ async function fetchPin() {
 // intermediate HTTP cache (service worker, CDN, browser) can serve stale data.
 async function fetchBootstrap() {
   try {
-    const resp = await fetch("/api/bootstrap?t=" + Date.now(), { cache: "no-store" });
+    const resp = await apiFetch("/api/bootstrap?t=" + Date.now(), { cache: "no-store" });
     if (!resp.ok) throw new Error("bootstrap HTTP " + resp.status);
     const data = await resp.json();
 
@@ -1269,7 +1369,7 @@ const btState = {
 
 async function fetchBacktest() {
   try {
-    const resp = await fetch("/api/backtest/slips");
+    const resp = await apiFetch("/api/backtest/slips");
     if (!resp.ok) return;
     const data = await resp.json();
     btSlips = data.slips || [];
@@ -1553,7 +1653,7 @@ function showSlipNotification(slip) {
 
 async function pollLatestSlip() {
   try {
-    const resp = await fetch("/api/backtest/latest-slip");
+    const resp = await apiFetch("/api/backtest/latest-slip");
     if (!resp.ok) return;
     const data = await resp.json();
     const slip = data.slip;
@@ -1599,7 +1699,7 @@ async function fetchCalibration() {
   // Retained name for backwards-compat with existing callers, but hits the
   // richer /api/analytics endpoint now.
   try {
-    const resp = await fetch("/api/analytics");
+    const resp = await apiFetch("/api/analytics");
     if (!resp.ok) return;
     const data = await resp.json();
     renderCalibration(data);
@@ -1912,39 +2012,22 @@ function hideLoadingOverlay() {
 // Always fetch fresh data from the backend on open — no localStorage cache.
 // Show a loading overlay until bootstrap completes so the user sees
 // progress rather than empty tables masquerading as "no data".
-(async () => {
-  showLoadingOverlay("Loading latest lines…");
+// Initialize auth
+window.addEventListener('DOMContentLoaded', initAuth);
 
-  // Prime the backend: hit /api/bootstrap first (single request, all
-  // datasets). Retry once on network failure before falling back to the
-  // per-endpoint path. Cache-busting query param prevents any intermediate
-  // HTTP cache from serving stale data.
-  let ok = await fetchBootstrap();
-  if (!ok) {
-    // Brief retry with a clean cache-buster — gives transient network
-    // hiccups a second chance before the per-endpoint fan-out.
-    await new Promise(r => setTimeout(r, 400));
-    ok = await fetchBootstrap();
-  }
-  if (!ok) {
-    await Promise.all([
-      fetchBets(),
-      fetchMatched(),
-      fetchPP(),
-      fetchFD(),
-      fetchDK(),
-      fetchPin(),
-    ]);
-  }
-
-  // Fetch secondary datasets (backtest, calibration) in parallel so the
-  // Analytics/Backtest tabs are ready the moment the user switches to them.
-  Promise.all([fetchBacktest(), fetchCalibration()]).catch(() => {});
-
-  hideLoadingOverlay();
-})();
+// Slip panel drawer toggle for mobile (one-time binding)
+window.addEventListener('DOMContentLoaded', () => {
+    const sp = document.getElementById("slip-panel");
+    const h2 = sp && sp.querySelector("h2");
+    if (h2) {
+        h2.addEventListener("click", () => {
+            if (window.innerWidth <= 900) sp.classList.toggle("open");
+        });
+    }
+});
 
 fetchStatus();
 setInterval(fetchStatus, 10_000);
-setInterval(pollLatestSlip, 10_000);
-pollLatestSlip();  // check immediately on load
+// Auto-logging was removed, so polling latest slip is no longer needed
+// setInterval(pollLatestSlip, 10_000);
+// pollLatestSlip();
