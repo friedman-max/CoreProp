@@ -17,3 +17,12 @@ CREATE TABLE IF NOT EXISTS market_observatory (
 -- Index for resolution performance
 CREATE INDEX IF NOT EXISTS idx_observatory_pending ON market_observatory(result) WHERE result = 'pending';
 CREATE INDEX IF NOT EXISTS idx_observatory_calibration ON market_observatory(league, prop, result);
+
+-- Enable Row Level Security (RLS)
+ALTER TABLE market_observatory ENABLE ROW LEVEL SECURITY;
+
+-- Create policy to allow read access to everyone (Transparent Observatory)
+CREATE POLICY "Allow public read-only access" ON market_observatory
+    FOR SELECT USING (true);
+
+-- No public insert/update/delete policies needed as the engine uses the Service Role Key.
