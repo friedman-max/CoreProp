@@ -30,7 +30,6 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Depends
 from engine.dynamic_calibration import update_calibration_map, load_calibration_map
 from engine.ev_calculator import reload_calibration
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1489,11 +1488,6 @@ def get_analytics(user: dict = Depends(get_current_user)):
 # Backtest endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/api/backtest/latest-slip")
-def get_latest_slip(user: dict = Depends(get_current_user)):
-    """Currently disabled as auto-logging was removed, returning None."""
-    return {"slip": None}
-
 
 @app.get("/api/backtest/slips")
 def get_backtest_slips(user: dict = Depends(get_current_user)):
@@ -1755,7 +1749,7 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
         # Mark legs as used
         for b in backtest_bets:
             key = make_bet_key(b.get("player_name", ""), b.get("start_time", ""))
-            _backtest.used_bets.add(key)
+            _logger.used_bets.add(key)
 
         new_slip = {
             "slip_id":          slip_id,

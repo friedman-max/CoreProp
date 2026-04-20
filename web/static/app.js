@@ -764,7 +764,6 @@ async function fetchStatus() {
   try {
     const resp = await apiFetch("/api/status");
     const data = await resp.json();
-    // UI updates removed
 
     // Detect scraping just finished → refresh every dataset in one shot.
     if (state.isScrapingPrev && !data.is_scraping) {
@@ -777,7 +776,6 @@ async function fetchStatus() {
     }
     state.isScrapingPrev = data.is_scraping;
 
-    // UI updates removed
   } catch (e) {
     // Silent fail
   }
