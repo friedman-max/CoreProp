@@ -30,6 +30,7 @@ def _intern(s):
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.jobstores.base import JobLookupError
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -789,8 +790,15 @@ def _run_pipeline_body():
 
 
 def _reschedule(interval_min: int):
-    """Reschedule the auto-refresh job with a new interval."""
-    scheduler.remove_all_jobs()
+    """Reschedule the auto-refresh job with a new interval.
+
+    Only touches the auto_refresh job; leaves other jobs (e.g. daily_calibration)
+    intact so a user config change doesn't silently cancel the calibration cron.
+    """
+    try:
+        scheduler.remove_job("auto_refresh")
+    except JobLookupError:
+        pass
     scheduler.add_job(
         run_pipeline,
         trigger="interval",

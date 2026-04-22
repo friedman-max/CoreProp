@@ -5,6 +5,9 @@
 let sbClient = null;
 let currentSession = null;
 
+// Hoisted module state — referenced by functions defined throughout the file.
+const pinState = { allLines: [] };
+
 async function initAuth() {
     try {
         // Use server-injected config (no network round-trip)
@@ -1562,7 +1565,7 @@ setTimeout(() => {
 
 
 // ── Pinnacle Data ────────────────────────────────────────────────────────
-const pinState = { allLines: [] };
+// pinState is declared at the top of the file (hoisted above its consumers).
 
 
 // ── Backtest Dashboard ────────────────────────────────────────────────────
