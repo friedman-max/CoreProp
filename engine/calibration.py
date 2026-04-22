@@ -120,7 +120,7 @@ def log_loss(rows: list[dict]) -> Optional[float]:
     return -total / n
 
 
-def evaluate_calibration(user_jwt: str) -> dict:
+def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows: Optional[list] = None) -> dict:
     """
     Compute calibration metrics from resolved backtest data.
 
@@ -133,8 +133,11 @@ def evaluate_calibration(user_jwt: str) -> dict:
       - hit_rate: float | None (raw accuracy)
       - avg_predicted_prob: float | None
       - calibration_buckets: list of {bucket, predicted_avg, actual_avg, count}
+
+    `_rows` is an optimization: when a caller already loaded resolved rows
+    it can pass them in here to avoid a second round-trip to Supabase.
     """
-    rows = _load_resolved_rows(user_jwt)
+    rows = _rows if _rows is not None else _load_resolved_rows(user_jwt)
     n = len(rows)
 
     if n == 0:
@@ -180,7 +183,7 @@ def evaluate_calibration(user_jwt: str) -> dict:
         })
 
     # CLV
-    clv_rows = _load_clv_rows(user_jwt)
+    clv_rows = _clv_rows if _clv_rows is not None else _load_clv_rows(user_jwt)
     n_clv = len(clv_rows)
     clv_plus_rate = None
     avg_clv_pct = None
@@ -220,8 +223,56 @@ def evaluate_analytics(user_jwt: str) -> dict:
     """
     from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS
 
-    base = evaluate_calibration(user_jwt)
-    rows = _load_resolved_rows(user_jwt)
+    # Fetch EVERY leg once and derive resolved rows in-process. This collapses
+    # what used to be 3 separate Supabase legs queries (_load_resolved_rows x2
+    # + the slip-aggregation legs pull) into a single round trip.
+    db = get_user_db(user_jwt)
+    all_legs: list = []
+    if db:
+        try:
+            all_legs = (db.table("legs").select("*").execute().data) or []
+        except Exception as exc:
+            logger.warning("Analytics: legs fetch failed: %s", exc)
+            all_legs = []
+
+    _RESOLVED = {"won", "win", "hit", "1", "lost", "loss", "miss", "0"}
+    rows: list[dict] = []
+    for leg in all_legs:
+        r = str(leg.get("result") or "").lower()
+        if r not in _RESOLVED:
+            continue
+        try:
+            true_prob = float(leg.get("true_prob") or 0)
+        except (ValueError, TypeError):
+            continue
+        if true_prob <= 0 or true_prob >= 1:
+            continue
+        rows.append({
+            "true_prob": true_prob,
+            "outcome":   1 if r in ("won", "win", "hit", "1") else 0,
+            "player":    leg.get("player", ""),
+            "prop":      leg.get("prop", ""),
+            "side":      leg.get("side", ""),
+            "league":    leg.get("league", ""),
+            "slip_id":   leg.get("slip_id", ""),
+        })
+
+    # Derive CLV rows from the same single legs query.
+    clv_rows: list[dict] = []
+    _seen_start = False
+    _sorted_legs = sorted(all_legs, key=lambda x: x.get("slip_id", ""))
+    for leg in _sorted_legs:
+        if not _seen_start:
+            if leg.get("slip_id") == START_SLIP_ID:
+                _seen_start = True
+            else:
+                continue
+        cp = leg.get("closing_prob")
+        cv = leg.get("clv_pct")
+        if cp is not None and cv is not None:
+            clv_rows.append({"closing_prob": cp, "clv_pct": cv})
+
+    base = evaluate_calibration(user_jwt, _rows=rows, _clv_rows=clv_rows)
 
     # --- Per-league ----------------------------------------------------------
     def _group(rows, key):
@@ -250,7 +301,6 @@ def evaluate_analytics(user_jwt: str) -> dict:
     by_prop = _group(rows, "prop")[:10]
 
     # --- Slip mix + cumulative P&L (needs full slip payload) -----------------
-    db = get_user_db(user_jwt)
     slip_mix = {"won": 0, "lost": 0, "pending": 0, "partial": 0}
     pnl_timeline: list[dict] = []
     resolved_slips = won_slips = 0
@@ -258,9 +308,9 @@ def evaluate_analytics(user_jwt: str) -> dict:
     if db:
         try:
             slips_res = db.table("slips").select("*").order("timestamp", desc=False).execute()
-            legs_res  = db.table("legs").select("*").execute()
+            # Reuse `all_legs` from above — no second legs query.
             legs_by_slip: dict[str, list] = {}
-            for l in (legs_res.data or []):
+            for l in all_legs:
                 legs_by_slip.setdefault(l["slip_id"], []).append(l)
 
             cum_pnl = 0.0

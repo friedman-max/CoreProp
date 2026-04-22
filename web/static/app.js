@@ -651,6 +651,11 @@ btnAddToBacktest.addEventListener("click", async () => {
         showSlipNotification(data.slip);
       }
 
+      // Invalidate backtest + analytics caches so the next tab activation
+      // reflects the new slip instead of the stale snapshot.
+      try { localStorage.removeItem(BT_CACHE_KEY); } catch (_) {}
+      try { localStorage.removeItem(ANALYTICS_CACHE_KEY); } catch (_) {}
+
       setTimeout(() => {
         btnAddToBacktest.textContent = "+ Add to Backtest";
         btnAddToBacktest.style.background = "";
@@ -822,7 +827,13 @@ async function refreshActiveTab() {
   // Only revalidate whichever raw-line dataset is currently in view.
   if (activeTab === "matched") await fetchMatched();
   else if (activeTab === "pp") await fetchPP();
-  else if (activeTab === "books") await Promise.all([fetchFD(), fetchDK(), fetchPin()]);
+  else if (activeTab === "books") {
+    const sel = document.getElementById("books-book-select");
+    const active = (sel && sel.value) || "fd";
+    if (active === "fd")       await fetchFD();
+    else if (active === "dk")  await fetchDK();
+    else if (active === "pin") await fetchPin();
+  }
   // ev / backtest / analytics / observatory don't need the raw line datasets.
 
   if (currentSession) {
@@ -867,17 +878,24 @@ async function loadTabData(target) {
     await fetchPP();
     loadedDatasets.add("pp");
   } else if (target === "books") {
-    // Books view unions FD/DK/Pin — fetch any that haven't loaded yet.
-    const needed = [];
-    if (!loadedDatasets.has("fd"))  needed.push(fetchFD().then(() => loadedDatasets.add("fd")));
-    if (!loadedDatasets.has("dk"))  needed.push(fetchDK().then(() => loadedDatasets.add("dk")));
-    if (!loadedDatasets.has("pin")) needed.push(fetchPin().then(() => loadedDatasets.add("pin")));
-    if (needed.length) {
-      renderSkeletonRows(booksTbody, "books", 10);
-      await Promise.all(needed);
-    }
+    // Books view shows ONE book at a time (FD/DK/Pin) — only fetch the
+    // currently selected one. Each book payload is ~500KB-1.6MB raw, so
+    // fetching all three up front was blowing out memory and stalling
+    // the tab on slow connections.
+    const sel = document.getElementById("books-book-select");
+    const active = (sel && sel.value) || "fd";
+    await loadBook(active);
     applyBooksFilters();
   }
+}
+
+async function loadBook(book) {
+  if (loadedDatasets.has(book)) return;
+  renderSkeletonRows(booksTbody, "books", 10);
+  if (book === "fd")        await fetchFD();
+  else if (book === "dk")   await fetchDK();
+  else if (book === "pin")  await fetchPin();
+  loadedDatasets.add(book);
 }
 
 document.querySelectorAll(".tab").forEach(tab => {
@@ -1418,10 +1436,7 @@ function applyBooksFilters() {
   let source = [];
   if (book === "fd") source = fdState.allLines;
   else if (book === "dk") source = dkState.allLines;
-  else if (book === "pin") {
-    source = pinState.allLines;
-    if (source.length === 0) fetchPin(); 
-  }
+  else if (book === "pin") source = pinState.allLines;
 
   booksState.filteredLines = source.filter(l => {
     if (league && l.league !== league) return false;
@@ -1439,7 +1454,7 @@ function applyBooksFilters() {
  * Called once on page load (or after elements exist).
  */
 function initBooksListeners() {
-  const ids = ["books-book-select", "books-filter-league", "books-filter-stat", "books-filter-player"];
+  const ids = ["books-filter-league", "books-filter-stat", "books-filter-player"];
   ids.forEach(id => {
     const el = $(id);
     if (el) {
@@ -1447,6 +1462,15 @@ function initBooksListeners() {
       el.addEventListener("change", applyBooksFilters);
     }
   });
+
+  // Book dropdown: lazy-load the selected book before filtering.
+  const bookSel = $("books-book-select");
+  if (bookSel) {
+    bookSel.addEventListener("change", async () => {
+      await loadBook(bookSel.value);
+      applyBooksFilters();
+    });
+  }
 
   const clearBtn = $("btn-clear-books-filters");
   if (clearBtn) {
@@ -1549,13 +1573,57 @@ const btState = {
   pageSize: 100
 };
 
+// Per-user localStorage cache for backtest slips. Like analytics, the data
+// barely changes between tab activations — paint from cache first so the
+// user sees the full table immediately, and skip the fetch if still fresh.
+const BT_CACHE_KEY = "coreprop_backtest_cache_v1";
+const BT_CACHE_FRESH_SEC = 300;
+
+function saveBacktestCache(slips) {
+  try {
+    localStorage.setItem(BT_CACHE_KEY, JSON.stringify({ ts: Date.now(), slips }));
+  } catch (_) {}
+}
+function loadBacktestCache() {
+  try {
+    const raw = localStorage.getItem(BT_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return { ageSec: (Date.now() - parsed.ts) / 1000, slips: parsed.slips };
+  } catch (_) { return null; }
+}
+
+function renderBacktestSkeleton() {
+  const tbody = $("bt-tbody");
+  if (!tbody) return;
+  // 11 columns in the backtest table; render 8 skeleton rows.
+  const cells = Array.from({ length: 11 })
+    .map((_, i) => `<td><div class="skeleton-bar" style="width:${i === 0 ? 60 : 45}%"></div></td>`)
+    .join("");
+  tbody.innerHTML = Array.from({ length: 8 }).map(() => `<tr class="skeleton-row">${cells}</tr>`).join("");
+}
+
 async function fetchBacktest() {
+  // Paint from localStorage cache if we have any. If it's still fresh, skip
+  // the network round-trip — the server's backtest endpoint takes ~500ms
+  // because it joins legs to slips on Supabase.
+  const cached = loadBacktestCache();
+  const freshFromCache = cached && cached.ageSec < BT_CACHE_FRESH_SEC;
+  if (cached) {
+    btSlips = cached.slips || [];
+    renderBacktest();
+    if (freshFromCache) return;
+  } else {
+    renderBacktestSkeleton();
+  }
+
   try {
     const resp = await apiFetch("/api/backtest/slips");
     if (!resp.ok) return;
     const data = await resp.json();
     btSlips = data.slips || [];
     renderBacktest();
+    saveBacktestCache(btSlips);
   } catch (e) { console.error("Backtest fetch error:", e); }
 }
 
@@ -1766,8 +1834,9 @@ function renderBacktest() {
       if (!confirm(`Delete slip ${slipId}? This cannot be undone.`)) return;
 
       // Optimistic removal: instantly strip from local data and re-render
-      btState.allLegs = btState.allLegs.filter(l => l.slip_id !== slipId);
+      btSlips = btSlips.filter(s => s.slip_id !== slipId);
       renderBacktest();
+      saveBacktestCache(btSlips);
 
       // Fire the server delete in the background
       try {
@@ -1776,13 +1845,16 @@ function renderBacktest() {
           const err = await resp.json();
           alert("Delete failed: " + (err.detail || resp.statusText));
           // Re-fetch to restore if delete failed
+          try { localStorage.removeItem(BT_CACHE_KEY); } catch (_) {}
           await fetchBacktest();
           return;
         }
-        // Silently refresh analytics in background to update charts
+        // Invalidate analytics cache too — the deleted slip's legs affect charts
+        try { localStorage.removeItem(ANALYTICS_CACHE_KEY); } catch (_) {}
         fetchCalibration();
       } catch (err) {
         alert("Delete error: " + err.message);
+        try { localStorage.removeItem(BT_CACHE_KEY); } catch (_) {}
         await fetchBacktest();
       }
     });
@@ -1915,7 +1987,7 @@ const _charts = { pnl: null, cal: null, slipMix: null };
 // Client-side cache of the last analytics payload so a page refresh (or tab
 // re-click) can paint instantly from memory while the server response arrives.
 const ANALYTICS_CACHE_KEY = "coreprop_analytics_cache_v1";
-const ANALYTICS_CACHE_FRESH_SEC = 25;
+const ANALYTICS_CACHE_FRESH_SEC = 300;
 
 function saveAnalyticsCache(data) {
   try {
@@ -1975,13 +2047,16 @@ function renderAnalyticsIncremental(data) {
 
 async function fetchCalibration() {
   // First, paint from localStorage cache if we have anything recent.
+  // If the cache is still fresh, skip the network hit entirely — the server
+  // cache is also 5min so a fetch here would just re-serve the same bytes.
   const cached = loadAnalyticsCache();
-  if (cached && cached.ageSec < ANALYTICS_CACHE_FRESH_SEC) {
+  const freshFromCache = cached && cached.ageSec < ANALYTICS_CACHE_FRESH_SEC;
+  if (freshFromCache) {
     renderAnalyticsIncremental(cached.data);
-  } else {
-    renderAnalyticsSkeleton();
+    return;
   }
 
+  renderAnalyticsSkeleton();
   try {
     const resp = await apiFetch("/api/analytics");
     if (!resp.ok) return;

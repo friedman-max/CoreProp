@@ -124,7 +124,7 @@ _payload_lock = threading.Lock()
 # to tab clicks. A short TTL makes repeat access essentially free.
 _analytics_cache: dict = {}       # user_id -> (monotonic_ts, data_dict)
 _analytics_cache_lock = threading.Lock()
-_ANALYTICS_TTL_SEC = 30.0
+_ANALYTICS_TTL_SEC = 300.0
 
 
 def _invalidate_analytics_cache(user_id: Optional[str] = None):
@@ -1942,15 +1942,17 @@ def delete_backtest_slip(slip_id: str, user: dict = Depends(get_current_user)):
 
 @app.get("/api/observatory")
 def get_observatory_data():
-    """Returns the latest observations from the market_observatory table."""
+    """Returns the latest *resolved* observations from the market_observatory
+    table — pending rows are excluded so the feed only ever shows settled
+    outcomes (hit / miss / push / dnp)."""
     try:
         from engine.database import get_db
         db = get_db()
         if not db:
             return []
-        # Return last 100 rows, showing latest first
         res = db.table("market_observatory") \
             .select("*") \
+            .neq("result", "pending") \
             .order("created_at", desc=True) \
             .limit(100) \
             .execute()
