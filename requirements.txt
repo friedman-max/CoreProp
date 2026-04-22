@@ -9,6 +9,6 @@ python-dotenv
 unidecode
 requests
 postgrest
-PyJWT>=2.8.0
+PyJWT[crypto]>=2.8.0
 pandas
 numpy
