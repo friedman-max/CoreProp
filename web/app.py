@@ -890,28 +890,48 @@ def startup():
 
     threading.Thread(target=_startup_clv_recovery, daemon=True).start()
 
-    # ── Daily calibration job ──
-    def _run_daily_calibration():
+    # ── Hourly calibration + correlation refit ──
+    # Updated from daily → hourly: calibration multipliers and leg-pair
+    # correlations both benefit from faster feedback as the backtest log
+    # grows. Each run is a single aggregation query on resolved observations
+    # (no scraping), so the load is negligible.
+    def _run_periodic_models():
         try:
             from engine.dynamic_calibration import update_calibration_map
             from engine.ev_calculator import reload_calibration
-            result = update_calibration_map()
-            if result:
+            cal = update_calibration_map()
+            if cal:
                 reload_calibration()
-                logger.info("Daily calibration: updated %d prop multipliers", len(result))
+                logger.info("Hourly refit: %d prop multipliers reloaded", len(cal))
             else:
-                logger.info("Daily calibration: no mature data yet, skipping")
+                logger.info("Hourly refit: calibration — no mature data yet")
         except Exception as exc:
-            logger.error("Daily calibration error: %s", exc)
+            logger.error("Hourly refit: calibration error: %s", exc)
+
+        try:
+            from engine.correlation import update_correlation_map, reload_correlation, MIN_PAIR_OBS
+            corr = update_correlation_map()
+            if corr:
+                n_trusted = reload_correlation()
+                logger.info(
+                    "Hourly refit: %d correlation buckets total, %d above %d-pair threshold",
+                    len(corr.get("buckets", {})), n_trusted, MIN_PAIR_OBS,
+                )
+            else:
+                logger.info("Hourly refit: correlation — no data yet")
+        except Exception as exc:
+            logger.error("Hourly refit: correlation error: %s", exc)
 
     scheduler.add_job(
-        _run_daily_calibration,
-        trigger="cron",
-        hour=6,  # Run at 6 AM UTC daily
-        id="daily_calibration",
+        _run_periodic_models,
+        trigger="interval",
+        hours=1,
+        id="periodic_models",
+        next_run_time=datetime.now() + timedelta(minutes=1),
+        replace_existing=True,
     )
-    # Also run calibration once on startup
-    threading.Thread(target=_run_daily_calibration, daemon=True).start()
+    # Also run once on startup (off-thread so we don't block boot).
+    threading.Thread(target=_run_periodic_models, daemon=True).start()
 
     # Run pipeline immediately on startup so data is ready
     threading.Thread(target=run_pipeline, daemon=True).start()
