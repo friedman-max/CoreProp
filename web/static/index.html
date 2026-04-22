@@ -72,6 +72,7 @@
     <button class="tab" data-tab="backtest">Backtest</button>
     <button class="tab" data-tab="analytics">Analytics</button>
     <button class="tab" data-tab="observatory">Observatory</button>
+    <button class="tab" data-tab="sandbox">Sandbox</button>
     <div class="sticky-user-wrap">
       <!-- Skeleton placeholder — reserves space until auth resolves -->
       <div id="user-skeleton" class="user-avatar-skeleton"></div>
@@ -660,6 +661,78 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Strategy Sandbox view ── -->
+    <div class="backtest-view hidden" id="sandbox-view">
+      <div class="analytics-row">
+        <div class="analytics-panel" style="flex: 0 0 300px;">
+          <div class="analytics-panel-header">
+            <h3>Strategy Settings</h3>
+          </div>
+          <div class="sandbox-controls">
+            <div class="control-group">
+              <label>Leagues</label>
+              <div class="league-chips" id="sb-league-chips">
+                <button class="chip active" data-val="NBA">NBA</button>
+                <button class="chip active" data-val="MLB">MLB</button>
+                <button class="chip active" data-val="NHL">NHL</button>
+                <button class="chip" data-val="NCAAB">NCAAB</button>
+                <button class="chip" data-val="SOCCER">SOCCER</button>
+              </div>
+            </div>
+            <div class="control-group">
+              <label>Min True Prob: <span id="sb-val-prob">54.1%</span></label>
+              <input type="range" id="sb-range-prob" min="0.50" max="0.65" step="0.005" value="0.541" />
+            </div>
+            <div class="control-group">
+              <label>Slip Size</label>
+              <select id="sb-select-size">
+                <option value="2">2-Leg</option>
+                <option value="3">3-Leg</option>
+                <option value="4">4-Leg</option>
+                <option value="5">5-Leg</option>
+                <option value="6" selected>6-Leg</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label>Slip Type</label>
+              <select id="sb-select-type">
+                <option value="power">Power</option>
+                <option value="flex" selected>Flex</option>
+              </select>
+            </div>
+            <button class="btn btn-accent btn-full" id="btn-run-sandbox" style="margin-top:20px;">Run Simulation</button>
+          </div>
+        </div>
+
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <h3>Cumulative Performance</h3>
+            <span class="analytics-subtitle" id="sb-subtitle">Historical ROI based on your strategy</span>
+          </div>
+          <div class="chart-wrap" style="height:350px;"><canvas id="chart-sandbox-equity"></canvas></div>
+        </div>
+      </div>
+
+      <div class="bt-summary" id="sb-metrics" style="margin-top:20px; display:none;">
+        <div class="bt-card">
+          <div class="bt-card-label">Total Slips</div>
+          <div class="bt-card-value" id="sb-metric-slips">0</div>
+        </div>
+        <div class="bt-card">
+          <div class="bt-card-label">Total Profit</div>
+          <div class="bt-card-value" id="sb-metric-profit">$0.00</div>
+        </div>
+        <div class="bt-card">
+          <div class="bt-card-label">ROI %</div>
+          <div class="bt-card-value" id="sb-metric-roi">0%</div>
+        </div>
+        <div class="bt-card">
+          <div class="bt-card-label">Win Rate</div>
+          <div class="bt-card-value" id="sb-metric-winrate">0%</div>
         </div>
       </div>
     </div>

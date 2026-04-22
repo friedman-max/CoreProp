@@ -921,8 +921,8 @@ document.querySelectorAll(".tab").forEach(tab => {
     const target = tab.dataset.tab;
     activeTab = target;
 
-    // Auth guard for Backtest and Analytics tabs
-    if ((target === "backtest" || target === "analytics") && !currentSession) {
+    // Auth guard for Backtest, Analytics, and Sandbox tabs
+    if ((target === "backtest" || target === "analytics" || target === "sandbox") && !currentSession) {
       document.getElementById('auth-overlay').style.display = 'flex';
       return;
     }
@@ -940,6 +940,7 @@ document.querySelectorAll(".tab").forEach(tab => {
     $("backtest-filters").classList.add("hidden");
     $("analytics-view").classList.add("hidden");
     $("observatory-view").classList.add("hidden");
+    $("sandbox-view").classList.add("hidden");
 
     if (target === "ev") {
       $("ev-view").classList.remove("hidden");
@@ -966,6 +967,9 @@ document.querySelectorAll(".tab").forEach(tab => {
     } else if (target === "observatory") {
       $("observatory-view").classList.remove("hidden");
       refreshObservatory();
+    } else if (target === "sandbox") {
+      $("sandbox-view").classList.remove("hidden");
+      initSandbox();
     }
   });
 });
@@ -2494,3 +2498,116 @@ async function fetchUserConfig() {
 fetchStatus();
 setInterval(fetchStatus, 10_000);
 // Auto-logging was removed globally, handled per-user now
+
+// ── Sandbox Logic ────────────────────────────────────────────────────────
+let sandboxChart = null;
+let sandboxInitialized = false;
+
+function initSandbox() {
+    if (sandboxInitialized) return;
+    sandboxInitialized = true;
+
+    // 1. League chip toggles
+    document.querySelectorAll("#sb-league-chips .chip").forEach(chip => {
+        chip.addEventListener("click", () => {
+            chip.classList.toggle("active");
+        });
+    });
+
+    // 2. Prob range slider
+    const probRange = $("sb-range-prob");
+    const probLabel = $("sb-val-prob");
+    if (probRange && probLabel) {
+        probRange.addEventListener("input", (e) => {
+            probLabel.textContent = (parseFloat(e.target.value) * 100).toFixed(1) + "%";
+        });
+    }
+
+    // 3. Run button
+    const btnRun = $("btn-run-sandbox");
+    if (btnRun) {
+        btnRun.onclick = runSandbox;
+    }
+}
+
+async function runSandbox() {
+    const btnRun = $("btn-run-sandbox");
+    const leagues = [...document.querySelectorAll("#sb-league-chips .chip.active")].map(c => c.dataset.val);
+    const minProb = parseFloat($("sb-range-prob").value);
+    const slipSize = parseInt($("sb-select-size").value);
+    const slipType = $("sb-select-type").value;
+
+    btnRun.disabled = true;
+    btnRun.textContent = "Simulating...";
+
+    try {
+        const res = await apiFetch("/api/sandbox/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                leagues,
+                min_prob: minProb,
+                slip_size: slipSize,
+                slip_type: slipType,
+                bet_size: 1.0
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            alert("Simulation error: " + (err.detail || "Unknown error"));
+            return;
+        }
+
+        const data = await res.json();
+        renderSandboxResults(data);
+    } catch (e) {
+        alert("Network error: " + e.message);
+    } finally {
+        btnRun.disabled = false;
+        btnRun.textContent = "Run Simulation";
+    }
+}
+
+function renderSandboxResults(data) {
+    const s = data.summary;
+    $("sb-metrics").style.display = "flex";
+    $("sb-metric-slips").textContent = s.total_slips;
+    $("sb-metric-profit").textContent = fmt.dollar(s.total_profit);
+    $("sb-metric-profit").className = "bt-card-value " + (s.total_profit >= 0 ? "positive" : "negative");
+    $("sb-metric-roi").textContent = s.roi_pct + "%";
+    $("sb-metric-roi").className = "bt-card-value " + (s.roi_pct >= 0 ? "positive" : "negative");
+    $("sb-metric-winrate").textContent = s.win_rate_pct + "%";
+
+    // Update Chart
+    const ctx = $("chart-sandbox-equity").getContext("2d");
+    if (sandboxChart) sandboxChart.destroy();
+
+    sandboxChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.equity_curve.map(p => new Date(p.x).toLocaleDateString()),
+            datasets: [{
+                label: 'Cumulative P&L ($)',
+                data: data.equity_curve.map(p => p.y),
+                borderColor: s.total_profit >= 0 ? '#22c55e' : '#ef4444',
+                borderWidth: 2,
+                fill: true,
+                backgroundColor: s.total_profit >= 0 ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                tension: 0.1,
+                pointRadius: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: { grid: { color: '#2a2f42' }, ticks: { color: '#7a80a0' } },
+                x: { grid: { display: false }, ticks: { color: '#7a80a0', maxRotation: 45, autoSkip: true } }
+            },
+            plugins: {
+                legend: { display: false }
+            }
+        }
+    });
+}

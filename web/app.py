@@ -1286,8 +1286,28 @@ def auto_build_slip(req: SlipRequest, user: Optional[dict] = Depends(get_current
     if not best_result:
         raise HTTPException(status_code=400, detail="Could not calculate any valid slip.")
         
-    best_result["optimal_bet_ids"] = best_subset
-    return best_result
+class SandboxRequest(BaseModel):
+    leagues:    list[str] = []
+    min_prob:   float     = 0.5408
+    slip_size:  int       = 6
+    slip_type:  str       = "flex"
+    bet_size:   float     = 1.0
+
+@app.post("/api/sandbox/run")
+def run_sandbox_simulation(req: SandboxRequest, user: dict = Depends(get_current_user)):
+    from engine.strategy_tester import StrategyTester, StrategyConfig
+    tester = StrategyTester()
+    config = StrategyConfig(
+        leagues=req.leagues,
+        min_prob=req.min_prob,
+        slip_size=req.slip_size,
+        slip_type=req.slip_type,
+        bet_size=req.bet_size
+    )
+    result = tester.run_simulation(config)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 class ConfigUpdate(BaseModel):
