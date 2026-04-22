@@ -1236,7 +1236,7 @@ def get_config(user: dict = Depends(get_current_user)):
 
 
 @app.post("/api/config")
-def update_config(update: ConfigUpdate):
+def update_config(update: ConfigUpdate, user: dict = Depends(get_current_user)):
     with _lock:
         if update.interval_min is not None:
             if update.interval_min < 1:

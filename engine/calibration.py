@@ -189,9 +189,7 @@ def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows:
     avg_clv_pct = None
     if n_clv > 0:
         n_plus = sum(1 for r in clv_rows if r["clv_pct"] > 0)
-        n_minus = sum(1 for r in clv_rows if r["clv_pct"] < 0)
-        clv_den = n_plus + n_minus
-        clv_plus_rate = n_plus / clv_den if clv_den > 0 else None
+        clv_plus_rate = n_plus / n_clv
         avg_clv_pct = sum(r["clv_pct"] for r in clv_rows) / n_clv
 
     return {
