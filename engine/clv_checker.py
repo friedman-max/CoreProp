@@ -18,9 +18,9 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from engine.consensus import compute_true_probability, books_from_match
 from engine.database import get_db
 from engine.dynamic_calibration import load_calibration_map
+from engine.ev_calculator import compute_bet_true_prob_raw
 
 logger = logging.getLogger(__name__)
 
@@ -239,40 +239,44 @@ class CLVTracker:
 
     def _build_current_probs(self, matches: list[Any]) -> dict[tuple[str, str, str, float], float]:
         """
-        Build a lookup: (player_lower, prop_lower, side, line) -> worst_case_probability.
-        
-        Only books that match the current PrizePicks line are used in the calculation.
-        Worst-case probability is used to ensure consistency with the 'True Prob' 
-        shown on the main dashboard and used for initial entry.
+        Build a lookup: (player_lower, prop_lower, side, line) -> raw_true_prob.
+
+        Uses the **same devig methodology as live bet placement**
+        (`compute_bet_true_prob_raw`), so closing probs are directly comparable
+        to the `true_prob` recorded at bet-log time. Previously this used the
+        consensus engine's `worst_case_prob`, while bet placement uses `max()`
+        across books — that structural mismatch guaranteed near-negative CLV
+        even with zero line movement.
         """
         current_probs: dict[tuple[str, str, str, float], float] = {}
         for m in matches:
             if not getattr(m, "pp", None):
                 continue
 
-            # Core identifying fields from PrizePicks
             player = m.pp.player_name.lower().strip()
             prop = m.pp.stat_type.lower().strip()
             line = float(m.pp.line_score)
             sides = ["over", "under"] if getattr(m.pp, "side", "both") == "both" else [m.pp.side]
 
-            # Line consistency check: only use books that agree with the PP line.
-            # This ensures that if FD moved the line but DK didn't, we only use
-            # the books that are still quoting the line we care about.
+            # Drop books that no longer quote the same line we care about so the
+            # closing prob reflects the same contract the bet was placed on.
             valid_fd = m.fd if (m.fd and abs(m.fd.line - line) < 1e-4) else None
             valid_dk = m.dk if (m.dk and abs(m.dk.line - line) < 1e-4) else None
-            valid_pin = m.pin if (m.pin and abs(m.pin.line - line) < 1e-4) else None
-
-            # Only proceed if at least one book matches the PrizePicks line
-            if not any([valid_fd, valid_dk, valid_pin]):
+            if valid_fd is None and valid_dk is None:
                 continue
 
-            match_books = books_from_match(valid_fd, valid_dk, valid_pin)
+            # Shallow proxy that exposes just the fields compute_bet_true_prob_raw
+            # reads (.pp, .fd, .dk). Avoids mutating the caller's MatchedProp.
+            class _Proxy:
+                __slots__ = ("pp", "fd", "dk")
+            proxy = _Proxy()
+            proxy.pp = m.pp
+            proxy.fd = valid_fd
+            proxy.dk = valid_dk
 
             for side in sides:
-                # Use worst_case_prob for consistency with the rest of the app
-                consensus_prob, worst_case_prob, meta = compute_true_probability(match_books, side)
-                if worst_case_prob is not None:
-                    current_probs[(player, prop, side, line)] = worst_case_prob
+                raw_prob = compute_bet_true_prob_raw(proxy, side)
+                if raw_prob is not None:
+                    current_probs[(player, prop, side, line)] = raw_prob
 
         return current_probs

@@ -152,7 +152,7 @@ def _get_true_prob_for_side(match: MatchedProp, side: str) -> Optional[float]:
     """De-vig and return true probability for a specific side from the best available book."""
     fd = match.fd
     dk = match.dk
-    
+
     probs = []
     for book in [fd, dk]:
         if book is None: continue
@@ -163,8 +163,43 @@ def _get_true_prob_for_side(match: MatchedProp, side: str) -> Optional[float]:
             probs.append(devig_single_sided(book.over_odds))
         elif side == "under" and book.under_odds is not None:
             probs.append(devig_single_sided(book.under_odds))
-            
+
     return max(probs) if probs else None
+
+
+def compute_bet_true_prob_raw(match: MatchedProp, side: str) -> Optional[float]:
+    """
+    Return the RAW (uncalibrated) true probability for a bet on (match, side),
+    using the **same methodology as `evaluate_match`** so that CLV tracking and
+    other downstream consumers produce probabilities directly comparable to the
+    one recorded at bet-log time.
+
+    - Same-line (pp.line == book.line): devig directly from the best available
+      book (FD, else DK).
+    - Diff-line: max of devigged probs across FD and DK.
+
+    Callers apply the calibration multiplier themselves, so this function
+    returns the pre-calibration value.
+    """
+    pp = match.pp
+    best_book = match.fd or match.dk
+    if pp is None or best_book is None:
+        return None
+
+    if pp.line_score == best_book.line:
+        # Same-line: devig directly from the matched book (mirrors
+        # _evaluate_same_line's selection logic).
+        if best_book.both_sided and best_book.over_odds is not None and best_book.under_odds is not None:
+            t_o, t_u = devig_power(best_book.over_odds, best_book.under_odds)
+            return t_o if side == "over" else t_u
+        if side == "over" and best_book.over_odds is not None:
+            return devig_single_sided(best_book.over_odds)
+        if side == "under" and best_book.under_odds is not None:
+            return devig_single_sided(best_book.under_odds)
+        return None
+
+    # Diff-line: same max-across-books logic the live evaluator uses.
+    return _get_true_prob_for_side(match, side)
 
 
 def evaluate_match(match: MatchedProp, min_ev_pct: float = 0.01) -> list[BetResult]:
