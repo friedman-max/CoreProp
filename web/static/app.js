@@ -893,6 +893,18 @@ async function loadTabData(target) {
 }
 
 async function loadBook(book) {
+  // Free the previously-loaded book before fetching the new one. Each book
+  // payload is ~500KB–1.6MB JSON; holding all three resident after the user
+  // toggles the dropdown was blowing out memory on low-RAM devices.
+  const BOOKS = ["fd", "dk", "pin"];
+  for (const other of BOOKS) {
+    if (other !== book && loadedDatasets.has(other)) {
+      if (other === "fd") fdState.allLines = [];
+      else if (other === "dk") dkState.allLines = [];
+      else if (other === "pin") pinState.allLines = [];
+      loadedDatasets.delete(other);
+    }
+  }
   if (loadedDatasets.has(book)) return;
   renderSkeletonRows(booksTbody, "books", 10);
   if (book === "fd")        await fetchFD();

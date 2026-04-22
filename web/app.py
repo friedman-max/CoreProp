@@ -151,6 +151,19 @@ def _json_bytes(obj) -> bytes:
     return json.dumps(obj, separators=(",", ":"), default=str).encode("utf-8")
 
 
+def _serialize_one(key: str, data, last_iso: str, interval_min=None) -> bytes:
+    """Encode a single dataset's response body as JSON bytes."""
+    if key == "bets":
+        payload = {"bets": data, "total": len(data), "is_scraping": False, "last_refresh": last_iso}
+    elif key == "matches":
+        payload = {"matches": data, "total": len(data), "is_scraping": False, "last_refresh": last_iso}
+    elif key == "core":
+        payload = {"bets": data, "total": len(data), "is_scraping": False, "last_refresh": last_iso, "interval_min": interval_min}
+    else:  # pp_lines / fd_lines / dk_lines / pin_lines — line datasets
+        payload = {"lines": data, "total": len(data), "is_scraping": False, "last_refresh": last_iso}
+    return _json_bytes(payload)
+
+
 def _refresh_payload_cache(
     serialized_bets,
     serialized_matches,
@@ -166,28 +179,43 @@ def _refresh_payload_cache(
     last_iso = last_refresh.isoformat() if isinstance(last_refresh, datetime) else last_refresh
     etag = _build_etag(last_refresh)
 
-    core = {
-        "bets":         serialized_bets,
-        "total":        len(serialized_bets),
-        "is_scraping":  False,
-        "last_refresh": last_iso,
-        "interval_min": interval_min,
-    }
+    # Serialize outside the lock — encoding is CPU-bound and doesn't touch
+    # shared state. Holding _payload_lock across six dumps() on the 512MB tier
+    # was serializing concurrent GETs against the cache swap.
+    bets_bytes    = _serialize_one("bets", serialized_bets, last_iso)
+    matches_bytes = _serialize_one("matches", serialized_matches, last_iso)
+    pp_bytes      = _serialize_one("pp_lines", serialized_pp, last_iso)
+    fd_bytes      = _serialize_one("fd_lines", serialized_fd, last_iso)
+    dk_bytes      = _serialize_one("dk_lines", serialized_dk, last_iso)
+    pin_bytes     = _serialize_one("pin_lines", serialized_pin, last_iso)
+    core_bytes    = _serialize_one("core", serialized_bets, last_iso, interval_min)
 
     with _payload_lock:
-        _payload_cache["bets"]     = _json_bytes({"bets": serialized_bets, "total": len(serialized_bets), "is_scraping": False, "last_refresh": last_iso})
-        _payload_cache["matches"]  = _json_bytes({"matches": serialized_matches, "total": len(serialized_matches), "is_scraping": False, "last_refresh": last_iso})
-        _payload_cache["pp_lines"] = _json_bytes({"lines": serialized_pp, "total": len(serialized_pp), "is_scraping": False, "last_refresh": last_iso})
-        _payload_cache["fd_lines"] = _json_bytes({"lines": serialized_fd, "total": len(serialized_fd), "is_scraping": False, "last_refresh": last_iso})
-        _payload_cache["dk_lines"] = _json_bytes({"lines": serialized_dk, "total": len(serialized_dk), "is_scraping": False, "last_refresh": last_iso})
-        _payload_cache["pin_lines"] = _json_bytes({"lines": serialized_pin, "total": len(serialized_pin), "is_scraping": False, "last_refresh": last_iso})
-        _payload_cache["core"]     = _json_bytes(core)
-        _payload_cache["etag"]     = etag
+        _payload_cache["bets"]      = bets_bytes
+        _payload_cache["matches"]   = matches_bytes
+        _payload_cache["pp_lines"]  = pp_bytes
+        _payload_cache["fd_lines"]  = fd_bytes
+        _payload_cache["dk_lines"]  = dk_bytes
+        _payload_cache["pin_lines"] = pin_bytes
+        _payload_cache["core"]      = core_bytes
+        _payload_cache["etag"]      = etag
+
+
+def _update_one_payload(key: str, data, last_refresh):
+    """Serialize and swap a single cache entry. Used by per-book refresh
+    endpoints so they don't re-encode the other five datasets (which was
+    allocating ~3–5MB transient buffers per unrelated book refresh)."""
+    last_iso = last_refresh.isoformat() if isinstance(last_refresh, datetime) else last_refresh
+    body = _serialize_one(key, data, last_iso)
+    etag = _build_etag(last_refresh)
+    with _payload_lock:
+        _payload_cache[key] = body
+        _payload_cache["etag"] = etag
 
 
 def _rebuild_cache_from_state():
-    """Rebuild the payload cache from whatever's currently in _state. Used by
-    the per-book refresh endpoints that only update one dataset at a time."""
+    """Rebuild the payload cache from whatever's currently in _state. Used
+    at startup after seeding from Supabase."""
     with _lock:
         _refresh_payload_cache(
             _state["bets"],
@@ -667,6 +695,14 @@ def _run_pipeline_body():
             last_refresh_snapshot,
             interval_min_snapshot,
         )
+        # Books bytes are now in the payload cache — the Python lists in
+        # _state are redundant (never read elsewhere). Releasing them here
+        # halves the resident memory footprint of book datasets, which on a
+        # full scrape is ~3-5MB per book.
+        with _lock:
+            _state["fd_lines"]  = []
+            _state["dk_lines"]  = []
+            _state["pin_lines"] = []
         logger.info("Pipeline complete: %d +EV bets found.", len(bets))
 
         # ── Supabase Sync: Persist the new state for instant load on restart ──
@@ -1338,9 +1374,12 @@ def _run_pp_scrape():
                     "start_time": l.start_time,
                 })
         with _lock:
-            _state["pp_lines"] = serialized
-        _rebuild_cache_from_state()
+            _state["last_refresh"] = datetime.now()
+            last_ref = _state["last_refresh"]
+        _update_one_payload("pp_lines", serialized, last_ref)
         sync_state_to_supabase("pp_lines", serialized)
+        with _lock:
+            _state["pp_lines"] = []
         logger.info("PrizePicks-only scrape complete: %d lines.", len(serialized))
     except Exception as e:
         logger.exception("PrizePicks scrape error: %s", e)
@@ -1416,9 +1455,16 @@ def _run_fd_scrape():
                     "start_time": getattr(p, "start_time", None),
                 })
         with _lock:
-            _state["fd_lines"] = serialized
-        _rebuild_cache_from_state()
-        sync_state_to_supabase("fd_lines", serialized)
+            _state["last_refresh"] = datetime.now()
+            last_ref = _state["last_refresh"]
+        # Only swap the fd_lines cache slot — the other five (bets, matches,
+        # pp_lines, dk_lines, pin_lines, core) are untouched, so re-encoding
+        # them would just churn memory.
+        _update_one_payload("fd_lines", serialized, last_ref)
+        # Drop the Python list: the bytes cache is now authoritative for GETs,
+        # and _state[fd_lines] isn't read anywhere else.
+        with _lock:
+            _state["fd_lines"] = []
         logger.info("FanDuel scrape complete: %d lines.", len(serialized))
     except Exception as e:
         logger.exception("FanDuel scrape error: %s", e)
@@ -1495,9 +1541,11 @@ def _run_dk_scrape():
                     "start_time": getattr(p, "start_time", None),
                 })
         with _lock:
-            _state["dk_lines"] = serialized
-        _rebuild_cache_from_state()
-        sync_state_to_supabase("dk_lines", serialized)
+            _state["last_refresh"] = datetime.now()
+            last_ref = _state["last_refresh"]
+        _update_one_payload("dk_lines", serialized, last_ref)
+        with _lock:
+            _state["dk_lines"] = []
         logger.info("DraftKings scrape complete: %d lines.", len(serialized))
     except Exception as e:
         logger.exception("DraftKings scrape error: %s", e)
@@ -1574,9 +1622,11 @@ def _run_pin_scrape():
                     "start_time": getattr(p, "start_time", None),
                 })
         with _lock:
-            _state["pin_lines"] = serialized
-        _rebuild_cache_from_state()
-        sync_state_to_supabase("pin_lines", serialized)
+            _state["last_refresh"] = datetime.now()
+            last_ref = _state["last_refresh"]
+        _update_one_payload("pin_lines", serialized, last_ref)
+        with _lock:
+            _state["pin_lines"] = []
         logger.info("Pinnacle scrape complete: %d lines.", len(serialized))
     except Exception as e:
         logger.exception("Pinnacle scrape error: %s", e)
