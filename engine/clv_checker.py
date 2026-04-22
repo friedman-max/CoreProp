@@ -153,12 +153,15 @@ class CLVTracker:
 
     def finalize_missed(self) -> int:
         """
-        Recovery pass: for pending bets where the game started long ago
-        (MISSED_CUTOFF_HOURS) and closing_prob was never captured, set
-        closing_prob = true_prob and clv_pct = 0.0 so they aren't stuck empty.
+        Recovery pass: for legs where a `closing_prob` was captured but the
+        derived `clv_pct` never got written (partial-write state), fill in the
+        diff against the recorded `true_prob`.
 
-        This should be called on startup and periodically to clean up rows
-        that were missed because the app wasn't running.
+        We intentionally do NOT write a placeholder when closing_prob itself is
+        missing — there's no way to recover the market's closing line after the
+        fact, and writing `closing_prob = true_prob, clv_pct = 0` injects fake
+        zeros that bias the CLV+ rate metric downward. Rows whose closing was
+        never captured stay null, which the analytics loader correctly excludes.
 
         Returns the number of rows finalized.
         """
@@ -167,7 +170,6 @@ class CLVTracker:
             return 0
 
         try:
-            # Fetch all legs (pending or resolved) that might have missing CLV data
             res = db.table("legs").select("*").execute()
             rows = res.data or []
         except Exception as exc:
@@ -182,9 +184,9 @@ class CLVTracker:
         finalized = 0
 
         for row in rows:
-            # Only target rows with missing CLV data
-            if row.get("closing_prob") is not None and row.get("clv_pct") is not None:
-                continue 
+            # Only target partial-write rows: closing_prob present but clv_pct missing.
+            if row.get("closing_prob") is None or row.get("clv_pct") is not None:
+                continue
 
             game_start_str = row.get("game_start", "")
             if not game_start_str:
@@ -197,41 +199,27 @@ class CLVTracker:
             except Exception:
                 continue
 
-            # If the game started more than MISSED_CUTOFF_HOURS ago and we still
-            # have no/incomplete CLV data, finalize it.
-            if (now_utc - gs) > cutoff:
+            if (now_utc - gs) <= cutoff:
+                continue
+
+            try:
+                cp = float(row["closing_prob"])
                 orig_true_prob = float(row.get("true_prob", 0))
-                
-                # If we have a closing_prob but no clv_pct, just compute the diff
-                if row.get("closing_prob") is not None:
-                    try:
-                        cp = float(row["closing_prob"])
-                        clv_pct = round(cp - orig_true_prob, 4)
-                        closing_prob = cp
-                    except (ValueError, TypeError):
-                        closing_prob = round(orig_true_prob, 4)
-                        clv_pct = 0.0
-                else:
-                    # Fallback: closing_prob = true_prob, clv_pct = 0
-                    # This means "no line movement captured — CLV unknown"
-                    closing_prob = round(orig_true_prob, 4)
-                    clv_pct = 0.0
-                
-                try:
-                    sid = row.get("slip_id")
-                    l_num = int(row.get("leg_num", 0))
-                    db.table("legs").update({
-                        "closing_prob": closing_prob,
-                        "clv_pct":      clv_pct
-                    }).eq("slip_id", sid).eq("leg_num", l_num).execute()
-                    finalized += 1
-                except Exception as db_exc:
-                    logger.error("CLVTracker DB finalization failed: %s", db_exc)
+                clv_pct = round(cp - orig_true_prob, 4)
+            except (ValueError, TypeError):
+                continue
+
+            try:
+                sid = row.get("slip_id")
+                l_num = int(row.get("leg_num", 0))
+                db.table("legs").update({"clv_pct": clv_pct}) \
+                    .eq("slip_id", sid).eq("leg_num", l_num).execute()
+                finalized += 1
+            except Exception as db_exc:
+                logger.error("CLVTracker DB finalization failed: %s", db_exc)
 
         if finalized:
-            logger.info(
-                "CLVTracker: finalized %d missed bets (closing_prob = true_prob)", finalized
-            )
+            logger.info("CLVTracker: finalized clv_pct on %d partial-write rows", finalized)
 
         return finalized
 
