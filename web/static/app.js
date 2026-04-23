@@ -2645,8 +2645,6 @@ async function optimizeSandboxThreshold() {
         probRange.value = bestVal;
         probLabel.textContent = (bestVal * 100).toFixed(1) + "%";
         
-        alert(`Optimal threshold found: ${(bestVal * 100).toFixed(1)}% (ROI: ${data.best_roi}%)`);
-        
         // Automatically run the simulation with the new value
         runSandbox();
 
