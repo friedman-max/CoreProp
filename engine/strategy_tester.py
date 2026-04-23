@@ -20,10 +20,47 @@ class StrategyConfig:
     bet_size: float = 1.0     # Fixed bet size per slip
     excluded_props: List[str] = field(default_factory=list)
     use_calibration: bool = True
+    use_kelly: bool = False
 
 class StrategyTester:
     def __init__(self):
         self.db = get_db()
+
+    def _calculate_kelly_fraction(self, probs: List[float], slip_size: int, slip_type: str) -> float:
+        import itertools
+        outcomes = list(itertools.product([0, 1], repeat=slip_size))
+        
+        ev = 0.0
+        ev_sq = 0.0
+        
+        for outcome in outcomes:
+            prob = 1.0
+            for i in range(slip_size):
+                prob *= probs[i] if outcome[i] == 1 else (1.0 - probs[i])
+            
+            hits = sum(outcome)
+            mult = 0.0
+            if slip_type == "power":
+                if hits == slip_size:
+                    mult = POWER_PAYOUTS.get(slip_size, 0.0)
+            else:
+                mult = FLEX_PAYOUTS.get(slip_size, {}).get(hits, 0.0)
+                
+            net_profit = mult - 1.0
+            ev += prob * net_profit
+            ev_sq += prob * (net_profit ** 2)
+            
+        if ev <= 0:
+            return 0.0
+            
+        variance = ev_sq - (ev ** 2)
+        if variance <= 0:
+            return 0.0
+            
+        # Quarter-Kelly is standard practice to manage drawdown risk
+        kelly = (ev / variance) * 0.25 
+        return max(0.0, min(kelly, 1.0))
+
 
     def run_simulation(self, config: StrategyConfig) -> Dict:
         """
@@ -60,13 +97,16 @@ class StrategyTester:
             if df.empty:
                 return {"error": "No legs found above the probability threshold."}
 
-            # 3. Group into Slates (League + Game Start)
-            # A slate represents a window of time where legs were available together.
-            df['slate_id'] = df['league'] + "|" + df['game_start'].astype(str)
+            # 3. Group into Slates (By Day)
+            # A slate represents all legs available on a given calendar day.
+            df['game_start_dt'] = pd.to_datetime(df['game_start'])
+            df['slate_id'] = df['game_start_dt'].dt.date.astype(str)
             slates = df.groupby('slate_id')
 
             sim_slips = []
             cumulative_profit = 0.0
+            total_bet = 0.0
+            bankroll = config.bankroll
             equity_curve = []
             
             # Sort slates by time to simulate chronological betting
@@ -75,46 +115,54 @@ class StrategyTester:
             for sid in sorted_slate_ids:
                 slate_df = slates.get_group(sid)
                 
-                # We need at least 'slip_size' legs to form a slip from this slate
-                if len(slate_df) < config.slip_size:
-                    continue
+                # Sort legs by true_prob to pick the best ones first
+                sorted_legs = slate_df.sort_values('true_prob', ascending=False)
+                
+                # Build as many slips of 'slip_size' as possible from this day's pool
+                for i in range(0, len(sorted_legs) - config.slip_size + 1, config.slip_size):
+                    selected_legs = sorted_legs.iloc[i : i + config.slip_size]
+                    
+                    if config.use_kelly:
+                        probs = selected_legs['true_prob'].tolist()
+                        k_frac = self._calculate_kelly_fraction(probs, config.slip_size, config.slip_type)
+                        bet_size = bankroll * k_frac
+                    else:
+                        bet_size = config.bet_size
+                        
+                    # Calculate result
+                    hits = int(selected_legs['outcome_bit'].sum())
+                    payout_mult = 0.0
+                    
+                    if config.slip_type == "power":
+                        if hits == config.slip_size:
+                            payout_mult = POWER_PAYOUTS.get(config.slip_size, 0.0)
+                    else: # flex
+                        payout_mult = FLEX_PAYOUTS.get(config.slip_size, {}).get(hits, 0.0)
 
-                # PICK LOGIC: Pick the top N legs by true_prob
-                # This simulates a user picking the "best" available plays at that time.
-                selected_legs = slate_df.sort_values('true_prob', ascending=False).head(config.slip_size)
-                
-                # Calculate result
-                hits = int(selected_legs['outcome_bit'].sum())
-                payout_mult = 0.0
-                
-                if config.slip_type == "power":
-                    if hits == config.slip_size:
-                        payout_mult = POWER_PAYOUTS.get(config.slip_size, 0.0)
-                else: # flex
-                    payout_mult = FLEX_PAYOUTS.get(config.slip_size, {}).get(hits, 0.0)
-
-                profit = (config.bet_size * payout_mult) - config.bet_size
-                cumulative_profit += profit
-                
-                sim_slips.append({
-                    "timestamp": selected_legs['game_start'].iloc[0],
-                    "league": selected_legs['league'].iloc[0],
-                    "hits": hits,
-                    "n_legs": config.slip_size,
-                    "payout": config.bet_size * payout_mult,
-                    "profit": profit,
-                    "legs": selected_legs[['player', 'prop', 'true_prob', 'result']].to_dict('records')
-                })
-                equity_curve.append({
-                    "x": selected_legs['game_start'].iloc[0],
-                    "y": round(cumulative_profit, 2)
-                })
+                    profit = (bet_size * payout_mult) - bet_size
+                    bankroll += profit
+                    cumulative_profit += profit
+                    total_bet += bet_size
+                    
+                    sim_slips.append({
+                        "timestamp": selected_legs['game_start'].iloc[0],
+                        "league": selected_legs['league'].iloc[0],
+                        "hits": hits,
+                        "n_legs": config.slip_size,
+                        "payout": bet_size * payout_mult,
+                        "bet_size": bet_size,
+                        "profit": profit,
+                        "legs": selected_legs[['player', 'prop', 'true_prob', 'result']].to_dict('records')
+                    })
+                    equity_curve.append({
+                        "x": selected_legs['game_start'].iloc[0],
+                        "y": round(cumulative_profit, 2)
+                    })
 
             if not sim_slips:
                 return {"error": f"Could not form any {config.slip_size}-leg slips from history."}
 
             # 4. Aggregate Results
-            total_bet = len(sim_slips) * config.bet_size
             roi = (cumulative_profit / total_bet) if total_bet > 0 else 0
             win_rate = sum(1 for s in sim_slips if s['profit'] > 0) / len(sim_slips)
 

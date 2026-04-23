@@ -2523,7 +2523,25 @@ function initSandbox() {
         });
     }
 
-    // 3. Run button
+    // 3. Validation: Disable 2-Leg option for Flex
+    const selectType = $("sb-select-type");
+    const selectSize = $("sb-select-size");
+    if (selectType && selectSize) {
+        const updateValidation = () => {
+            const isFlex = selectType.value === "flex";
+            const opt2 = selectSize.querySelector('option[value="2"]');
+            if (isFlex) {
+                if (selectSize.value === "2") selectSize.value = "3";
+                if (opt2) opt2.disabled = true;
+            } else {
+                if (opt2) opt2.disabled = false;
+            }
+        };
+        selectType.addEventListener("change", updateValidation);
+        updateValidation(); // Run on init
+    }
+
+    // 4. Run button
     const btnRun = $("btn-run-sandbox");
     if (btnRun) {
         btnRun.onclick = runSandbox;
@@ -2536,6 +2554,7 @@ async function runSandbox() {
     const minProb = parseFloat($("sb-range-prob").value);
     const slipSize = parseInt($("sb-select-size").value);
     const slipType = $("sb-select-type").value;
+    const useKelly = $("sb-use-kelly") ? $("sb-use-kelly").checked : false;
 
     btnRun.disabled = true;
     btnRun.textContent = "Simulating...";
@@ -2549,7 +2568,8 @@ async function runSandbox() {
                 min_prob: minProb,
                 slip_size: slipSize,
                 slip_type: slipType,
-                bet_size: 1.0
+                bet_size: 1.0,
+                use_kelly: useKelly
             })
         });
 

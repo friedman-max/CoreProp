@@ -1292,6 +1292,7 @@ class SandboxRequest(BaseModel):
     slip_size:  int       = 6
     slip_type:  str       = "flex"
     bet_size:   float     = 1.0
+    use_kelly:  bool      = False
 
 @app.post("/api/sandbox/run")
 def run_sandbox_simulation(req: SandboxRequest, user: dict = Depends(get_current_user)):
@@ -1302,7 +1303,8 @@ def run_sandbox_simulation(req: SandboxRequest, user: dict = Depends(get_current
         min_prob=req.min_prob,
         slip_size=req.slip_size,
         slip_type=req.slip_type,
-        bet_size=req.bet_size
+        bet_size=req.bet_size,
+        use_kelly=req.use_kelly
     )
     result = tester.run_simulation(config)
     if "error" in result:

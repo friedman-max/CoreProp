@@ -666,7 +666,26 @@
     </div>
 
     <!-- ── Strategy Sandbox view ── -->
-    <div class="backtest-view hidden" id="sandbox-view">
+    <div class="backtest-view hidden" id="sandbox-view" style="overflow-y: auto;">
+      <div class="bt-summary" id="sb-metrics" style="display:none;">
+        <div class="bt-card">
+          <div class="bt-card-label">Total Slips</div>
+          <div class="bt-card-value" id="sb-metric-slips">0</div>
+        </div>
+        <div class="bt-card">
+          <div class="bt-card-label">Total Profit</div>
+          <div class="bt-card-value" id="sb-metric-profit">$0.00</div>
+        </div>
+        <div class="bt-card">
+          <div class="bt-card-label">ROI %</div>
+          <div class="bt-card-value" id="sb-metric-roi">0%</div>
+        </div>
+        <div class="bt-card">
+          <div class="bt-card-label">Win Rate</div>
+          <div class="bt-card-value" id="sb-metric-winrate">0%</div>
+        </div>
+      </div>
+
       <div class="analytics-row">
         <div class="analytics-panel" style="flex: 0 0 300px;">
           <div class="analytics-panel-header">
@@ -704,6 +723,13 @@
                 <option value="flex" selected>Flex</option>
               </select>
             </div>
+            <div class="control-group">
+              <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text); cursor: pointer;">
+                <input type="checkbox" id="sb-use-kelly" style="width: 16px; height: 16px; cursor: pointer;" />
+                Use Kelly Sizing
+                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Mathematically optimal sizing based on EV and bankroll. Slips with negative Expected Value will be bet at $0.00, resulting in flat lines on the graph.">ⓘ</span>
+              </label>
+            </div>
             <button class="btn btn-accent btn-full" id="btn-run-sandbox" style="margin-top:20px;">Run Simulation</button>
           </div>
         </div>
@@ -714,25 +740,6 @@
             <span class="analytics-subtitle" id="sb-subtitle">Historical ROI based on your strategy</span>
           </div>
           <div class="chart-wrap" style="height:350px;"><canvas id="chart-sandbox-equity"></canvas></div>
-        </div>
-      </div>
-
-      <div class="bt-summary" id="sb-metrics" style="margin-top:20px; display:none;">
-        <div class="bt-card">
-          <div class="bt-card-label">Total Slips</div>
-          <div class="bt-card-value" id="sb-metric-slips">0</div>
-        </div>
-        <div class="bt-card">
-          <div class="bt-card-label">Total Profit</div>
-          <div class="bt-card-value" id="sb-metric-profit">$0.00</div>
-        </div>
-        <div class="bt-card">
-          <div class="bt-card-label">ROI %</div>
-          <div class="bt-card-value" id="sb-metric-roi">0%</div>
-        </div>
-        <div class="bt-card">
-          <div class="bt-card-label">Win Rate</div>
-          <div class="bt-card-value" id="sb-metric-winrate">0%</div>
         </div>
       </div>
     </div>
