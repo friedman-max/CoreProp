@@ -2553,6 +2553,12 @@ function initSandbox() {
     if (btnRun) {
         btnRun.onclick = runSandbox;
     }
+
+    // 5. Optimize button
+    const btnOptimize = $("btn-optimize-prob");
+    if (btnOptimize) {
+        btnOptimize.onclick = optimizeSandboxThreshold;
+    }
 }
 
 async function runSandbox() {
@@ -2595,6 +2601,60 @@ async function runSandbox() {
     } finally {
         btnRun.disabled = false;
         btnRun.textContent = "Run Simulation";
+    }
+}
+
+async function optimizeSandboxThreshold() {
+    const btnOpt = $("btn-optimize-prob");
+    const leagues = [...document.querySelectorAll("#sb-league-chips .chip.active")].map(c => c.dataset.val);
+    const includedProps = [...document.querySelectorAll("#sb-prop-chips .chip.active")].map(c => c.dataset.val);
+    const slipSize = parseInt($("sb-select-size").value);
+    const slipType = $("sb-select-type").value;
+    const useKelly = $("sb-use-kelly") ? $("sb-use-kelly").checked : false;
+
+    const originalText = btnOpt.textContent;
+    btnOpt.disabled = true;
+    btnOpt.textContent = "Searching...";
+
+    try {
+        const res = await apiFetch("/api/sandbox/optimize", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                leagues,
+                slip_size: slipSize,
+                slip_type: slipType,
+                bet_size: 1.0,
+                use_kelly: useKelly,
+                included_props: includedProps
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            alert("Optimization error: " + (err.detail || "Unknown error"));
+            return;
+        }
+
+        const data = await res.json();
+        const bestVal = data.best_threshold;
+        
+        // Update slider
+        const probRange = $("sb-range-prob");
+        const probLabel = $("sb-val-prob");
+        probRange.value = bestVal;
+        probLabel.textContent = (bestVal * 100).toFixed(1) + "%";
+        
+        showNotification(`Optimal threshold found: ${(bestVal * 100).toFixed(1)}% (ROI: ${data.best_roi}%)`, "success");
+        
+        // Automatically run the simulation with the new value
+        runSandbox();
+
+    } catch (e) {
+        alert("Network error: " + e.message);
+    } finally {
+        btnOpt.disabled = false;
+        btnOpt.textContent = originalText;
     }
 }
 

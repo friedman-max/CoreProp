@@ -1313,6 +1313,23 @@ def run_sandbox_simulation(req: SandboxRequest, user: dict = Depends(get_current
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
+@app.post("/api/sandbox/optimize")
+def optimize_sandbox_threshold(req: SandboxRequest, user: dict = Depends(get_current_user)):
+    from engine.strategy_tester import StrategyTester, StrategyConfig
+    tester = StrategyTester()
+    config = StrategyConfig(
+        leagues=req.leagues,
+        slip_size=req.slip_size,
+        slip_type=req.slip_type,
+        bet_size=req.bet_size,
+        use_kelly=req.use_kelly,
+        included_props=req.included_props
+    )
+    result = tester.optimize_threshold(config)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
 
 class ConfigUpdate(BaseModel):
     interval_min:    Optional[int]   = None

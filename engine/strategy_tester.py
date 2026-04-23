@@ -194,7 +194,99 @@ class StrategyTester:
                 "equity_curve": equity_curve,
                 "slips": sim_slips[-50:] # Return last 50 for the UI log
             }
-
         except Exception as e:
             logger.exception("Simulation failed")
+            return {"error": str(e)}
+
+    def optimize_threshold(self, config: StrategyConfig) -> Dict:
+        """
+        Sweeps through min_prob thresholds to find the one that maximizes ROI.
+        """
+        try:
+            # Fetch base data once
+            query = self.db.table("market_observatory").select("*").neq("result", "pending")
+            if config.leagues:
+                query = query.in_("league", config.leagues)
+            res = query.execute()
+            base_df = pd.DataFrame(res.data)
+
+            if base_df.empty:
+                return {"error": "No resolved data found matching filters."}
+
+            # Apply stat filters once
+            base_df = base_df[base_df['result'].isin(['hit', 'miss'])].copy()
+            base_df['outcome_bit'] = base_df['result'].map({'hit': 1, 'miss': 0})
+            if config.excluded_props:
+                base_df = base_df[~base_df['prop'].isin(config.excluded_props)]
+            if config.included_props:
+                base_df = base_df[base_df['prop'].isin(config.included_props)]
+
+            best_roi = -float('inf')
+            best_threshold = config.min_prob
+            results = []
+
+            # Test thresholds from 53% to 58% in 0.1% steps
+            for t in np.arange(0.53, 0.581, 0.001):
+                config.min_prob = float(t)
+                
+                # Sub-simulation logic (optimized)
+                df = base_df[base_df['true_prob'] >= config.min_prob].copy()
+                if df.empty or len(df) < config.slip_size:
+                    continue
+
+                df['game_start_dt'] = pd.to_datetime(df['game_start'])
+                df['slate_id'] = df['game_start_dt'].dt.date.astype(str)
+                slates = df.groupby('slate_id')
+                
+                total_bet = 0.0
+                total_profit = 0.0
+                n_slips = 0
+                bankroll = config.bankroll
+
+                sorted_slate_ids = df.sort_values('game_start')['slate_id'].unique()
+                for sid in sorted_slate_ids:
+                    slate_df = slates.get_group(sid)
+                    sorted_legs = slate_df.sort_values('true_prob', ascending=False)
+                    
+                    for i in range(0, len(sorted_legs) - config.slip_size + 1, config.slip_size):
+                        selected_legs = sorted_legs.iloc[i : i + config.slip_size]
+                        
+                        if config.use_kelly:
+                            probs = selected_legs['true_prob'].tolist()
+                            k_frac = self._calculate_kelly_fraction(probs, config.slip_size, config.slip_type)
+                            bet_size = bankroll * k_frac
+                        else:
+                            bet_size = config.bet_size
+
+                        hits = int(selected_legs['outcome_bit'].sum())
+                        payout_mult = 0.0
+                        if config.slip_type == "power":
+                            if hits == config.slip_size:
+                                payout_mult = POWER_PAYOUTS.get(config.slip_size, 0.0)
+                        else:
+                            payout_mult = FLEX_PAYOUTS.get(config.slip_size, {}).get(hits, 0.0)
+
+                        profit = (bet_size * payout_mult) - bet_size
+                        total_profit += profit
+                        total_bet += bet_size
+                        bankroll += profit
+                        n_slips += 1
+
+                if total_bet > 0:
+                    roi = (total_profit / total_bet) * 100
+                    results.append({"threshold": t, "roi": roi, "slips": n_slips})
+                    if roi > best_roi:
+                        best_roi = roi
+                        best_threshold = t
+
+            if not results:
+                return {"error": "Could not find any profitable thresholds with enough volume."}
+
+            return {
+                "best_threshold": round(float(best_threshold), 4),
+                "best_roi": round(best_roi, 2),
+                "all_results": results
+            }
+        except Exception as e:
+            logger.exception("Optimization failed")
             return {"error": str(e)}
