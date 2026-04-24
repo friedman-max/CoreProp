@@ -643,6 +643,26 @@
             <h3>Market Feed (Verified Lines)</h3>
             <span class="analytics-subtitle">Global observations used to verify model accuracy</span>
           </div>
+          <div class="sandbox-controls" style="display:flex; flex-wrap:wrap; gap:16px; padding:8px 0 12px;">
+            <div class="control-group" style="flex:1; min-width:220px;">
+              <label>Leagues</label>
+              <div class="league-chips" id="obs-league-chips">
+                <button class="chip active" data-val="NBA">NBA</button>
+                <button class="chip active" data-val="MLB">MLB</button>
+                <button class="chip active" data-val="NHL">NHL</button>
+                <button class="chip active" data-val="NCAAB">NCAAB</button>
+                <button class="chip active" data-val="SOCCER">SOCCER</button>
+              </div>
+            </div>
+            <div class="control-group" style="flex:1; min-width:220px;">
+              <label>Result</label>
+              <div class="league-chips" id="obs-result-chips">
+                <button class="chip active" data-val="pending">Pending</button>
+                <button class="chip active" data-val="hit">Hit</button>
+                <button class="chip active" data-val="miss">Miss</button>
+              </div>
+            </div>
+          </div>
           <div class="table-wrapper">
             <table>
               <thead>
@@ -741,23 +761,23 @@
             <div class="control-group">
               <label>Slip Size</label>
               <select id="sb-select-size">
-                <option value="2">2-Leg</option>
+                <option value="2" selected>2-Leg</option>
                 <option value="3">3-Leg</option>
                 <option value="4">4-Leg</option>
                 <option value="5">5-Leg</option>
-                <option value="6" selected>6-Leg</option>
+                <option value="6">6-Leg</option>
               </select>
             </div>
             <div class="control-group">
               <label>Slip Type</label>
               <select id="sb-select-type">
-                <option value="power">Power</option>
-                <option value="flex" selected>Flex</option>
+                <option value="power" selected>Power</option>
+                <option value="flex">Flex</option>
               </select>
             </div>
             <div class="control-group">
               <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text); cursor: pointer;">
-                <input type="checkbox" id="sb-use-kelly" style="width: 16px; height: 16px; cursor: pointer;" />
+                <input type="checkbox" id="sb-use-kelly" checked style="width: 16px; height: 16px; cursor: pointer;" />
                 Use Kelly Sizing
                 <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Mathematically optimal sizing based on EV and bankroll. Slips with negative Expected Value will be bet at $0.00, resulting in flat lines on the graph.">ⓘ</span>
               </label>

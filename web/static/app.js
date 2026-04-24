@@ -969,7 +969,9 @@ document.querySelectorAll(".tab").forEach(tab => {
       refreshObservatory();
     } else if (target === "sandbox") {
       $("sandbox-view").classList.remove("hidden");
+      const firstOpen = !sandboxInitialized;
       initSandbox();
+      if (firstOpen) runSandbox();
     }
   });
 });
@@ -1049,16 +1051,46 @@ function renderObservatoryMultipliers(multipliers) {
   }).join("");
 }
 
+let _obsFeedCache = [];
+let _obsFiltersWired = false;
+
+function _wireObsFilters() {
+  if (_obsFiltersWired) return;
+  _obsFiltersWired = true;
+  const rerender = () => renderObservatoryFeed(_obsFeedCache);
+  document.querySelectorAll("#obs-league-chips .chip, #obs-result-chips .chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      chip.classList.toggle("active");
+      rerender();
+    });
+  });
+}
+
 function renderObservatoryFeed(observations) {
   const tbody = $("obs-feed-tbody");
   if (!tbody) return;
-  
-  if (observations.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="empty-msg">No observations logged yet. Data arrives every 15m.</td></tr>`;
+  _obsFeedCache = observations;
+  _wireObsFilters();
+
+  const activeLeagues = new Set(
+    [...document.querySelectorAll("#obs-league-chips .chip.active")].map(c => c.dataset.val)
+  );
+  const activeResults = new Set(
+    [...document.querySelectorAll("#obs-result-chips .chip.active")].map(c => c.dataset.val)
+  );
+  const filtered = observations.filter(o =>
+    activeLeagues.has(o.league) && activeResults.has(o.result)
+  );
+
+  if (filtered.length === 0) {
+    const msg = observations.length === 0
+      ? "No observations logged yet. Data arrives every 15m."
+      : "No observations match the current filter.";
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-msg">${msg}</td></tr>`;
     return;
   }
-  
-  tbody.innerHTML = observations.map(obs => {
+
+  tbody.innerHTML = filtered.map(obs => {
     const resClass = obs.result === "hit" ? "hit" : (obs.result === "miss" ? "miss" : "pending");
     const loggedDate = new Date(obs.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     
@@ -2530,22 +2562,25 @@ function initSandbox() {
         });
     }
 
-    // 3. Validation: Disable 2-Leg option for Flex
+    // 3. Reciprocal Size/Type validation:
+    //    - 2-leg is always selectable.
+    //    - Selecting 2-leg while Flex is active auto-switches type → Power.
+    //    - Switching to Flex while size=2 auto-bumps size → 3 (allow the switch).
     const selectType = $("sb-select-type");
     const selectSize = $("sb-select-size");
     if (selectType && selectSize) {
-        const updateValidation = () => {
-            const isFlex = selectType.value === "flex";
-            const opt2 = selectSize.querySelector('option[value="2"]');
-            if (isFlex) {
-                if (selectSize.value === "2") selectSize.value = "3";
-                if (opt2) opt2.disabled = true;
-            } else {
-                if (opt2) opt2.disabled = false;
+        const opt2 = selectSize.querySelector('option[value="2"]');
+        if (opt2) opt2.disabled = false;
+        selectType.addEventListener("change", () => {
+            if (selectType.value === "flex" && selectSize.value === "2") {
+                selectSize.value = "3";
             }
-        };
-        selectType.addEventListener("change", updateValidation);
-        updateValidation(); // Run on init
+        });
+        selectSize.addEventListener("change", () => {
+            if (selectSize.value === "2" && selectType.value === "flex") {
+                selectType.value = "power";
+            }
+        });
     }
 
     // 4. Run button

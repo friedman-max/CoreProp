@@ -19,8 +19,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from engine.database import get_db
-from engine.dynamic_calibration import load_calibration_map
-from engine.ev_calculator import compute_bet_true_prob_raw
+from engine.consensus import books_from_match, compute_true_probability
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,12 @@ MISSED_CUTOFF_HOURS = 1
 
 class CLVTracker:
     def __init__(self):
-        self._calibration_map = load_calibration_map()
+        # CLV compares closing_prob to the true_prob recorded at bet-log time.
+        # That stored value is the raw, uncalibrated `worst_case_prob` from the
+        # consensus engine (see web/app.py:_run_pipeline_body). We therefore do
+        # NOT apply a calibration multiplier here — doing so would make every
+        # bet look CLV-negative immediately whenever multiplier < 1.
+        pass
 
     def update_closing_lines(self, matches: list[Any]) -> int:
         """
@@ -118,23 +122,18 @@ class CLVTracker:
                 # Update if this is a new value or different from the old value.
                 if old_cp_val is None or abs(new_cp_val - old_cp_val) > 1e-4:
                     orig_true_prob = float(row.get("true_prob", 0))
-                    
-                    # Apply dynamic calibration multiplier to the CLOSING prob
-                    # to keep it consistent with the already-calibrated opening prob.
-                    league = row.get("league")
-                    prop   = row.get("prop")
-                    cal_key = f"{league}|{prop}"
-                    multiplier = self._calibration_map.get(cal_key, 1.0)
-                    calibrated_cp = min(new_cp_val * multiplier, 0.999)
 
-                    # CLV edge: (Calibrated Closing Prob - Original Calibrated True Prob)
-                    clv_pct = calibrated_cp - orig_true_prob
+                    # closing_prob is the raw consensus worst_case_prob — the
+                    # same quantity stored as true_prob at bet-log time. CLV
+                    # therefore measures pure line movement.
+                    closing_prob = min(new_cp_val, 0.999)
+                    clv_pct = closing_prob - orig_true_prob
 
                     try:
                         sid = row.get("slip_id")
                         l_num = int(row.get("leg_num", 0))
                         db.table("legs").update({
-                            "closing_prob": round(calibrated_cp, 4),
+                            "closing_prob": round(closing_prob, 4),
                             "clv_pct":      round(clv_pct, 4)
                         }).eq("slip_id", sid).eq("leg_num", l_num).execute()
                         updated_count += 1
@@ -227,14 +226,15 @@ class CLVTracker:
 
     def _build_current_probs(self, matches: list[Any]) -> dict[tuple[str, str, str, float], float]:
         """
-        Build a lookup: (player_lower, prop_lower, side, line) -> raw_true_prob.
+        Build a lookup: (player_lower, prop_lower, side, line) -> worst_case_prob.
 
-        Uses the **same devig methodology as live bet placement**
-        (`compute_bet_true_prob_raw`), so closing probs are directly comparable
-        to the `true_prob` recorded at bet-log time. Previously this used the
-        consensus engine's `worst_case_prob`, while bet placement uses `max()`
-        across books — that structural mismatch guaranteed near-negative CLV
-        even with zero line movement.
+        Uses the **exact same pipeline as live bet placement** in
+        `_run_pipeline_body`: `compute_true_probability(books_from_match(
+        m.fd, m.dk, m.pin), side)` → worst_case_prob. This guarantees that
+        when the lines haven't moved, closing_prob == stored true_prob and
+        clv_pct == 0. Previous versions dropped Pinnacle from the book set
+        and/or used a different estimator, which produced instantly-negative
+        CLV on every bet.
         """
         current_probs: dict[tuple[str, str, str, float], float] = {}
         for m in matches:
@@ -248,23 +248,16 @@ class CLVTracker:
 
             # Drop books that no longer quote the same line we care about so the
             # closing prob reflects the same contract the bet was placed on.
-            valid_fd = m.fd if (m.fd and abs(m.fd.line - line) < 1e-4) else None
-            valid_dk = m.dk if (m.dk and abs(m.dk.line - line) < 1e-4) else None
-            if valid_fd is None and valid_dk is None:
+            valid_fd  = m.fd  if (m.fd  and abs(m.fd.line  - line) < 1e-4) else None
+            valid_dk  = m.dk  if (m.dk  and abs(m.dk.line  - line) < 1e-4) else None
+            valid_pin = m.pin if (m.pin and abs(m.pin.line - line) < 1e-4) else None
+            if valid_fd is None and valid_dk is None and valid_pin is None:
                 continue
 
-            # Shallow proxy that exposes just the fields compute_bet_true_prob_raw
-            # reads (.pp, .fd, .dk). Avoids mutating the caller's MatchedProp.
-            class _Proxy:
-                __slots__ = ("pp", "fd", "dk")
-            proxy = _Proxy()
-            proxy.pp = m.pp
-            proxy.fd = valid_fd
-            proxy.dk = valid_dk
-
+            books = books_from_match(valid_fd, valid_dk, valid_pin)
             for side in sides:
-                raw_prob = compute_bet_true_prob_raw(proxy, side)
-                if raw_prob is not None:
-                    current_probs[(player, prop, side, line)] = raw_prob
+                _consensus, worst_case, _meta = compute_true_probability(books, side)
+                if worst_case is not None:
+                    current_probs[(player, prop, side, line)] = worst_case
 
         return current_probs
