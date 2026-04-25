@@ -57,6 +57,21 @@ SHARPNESS_WEIGHTS = {
 # Default weight for any unknown sportsbook
 _DEFAULT_WEIGHT = 0.80
 
+# Empirical weights take precedence when they exist. Refreshed by
+# `update_sharpness_weights()` in the hourly model-refit job; reload via
+# `reload_sharpness()` so live consensus picks up new weights without restart.
+from engine.sharpness_calibration import load_sharpness_weights as _load_sharp_weights
+
+_empirical_sharpness: dict[str, float] = _load_sharp_weights()
+
+
+def reload_sharpness() -> int:
+    """Re-read sharpness_weights.json from disk. Returns the number of books
+    with empirical weights now active."""
+    global _empirical_sharpness
+    _empirical_sharpness = _load_sharp_weights()
+    return len(_empirical_sharpness)
+
 # Minimum market width (overround %) to avoid division-by-zero.
 # A market with lower overround than this is already extremely efficient.
 _MIN_MARKET_WIDTH = 1.0  # 1% overround
@@ -80,8 +95,17 @@ class BookOdds:
 # ---------------------------------------------------------------------------
 
 def _get_sharpness_weight(book_name: str) -> float:
-    """Look up the sharpness weight for a book."""
-    return SHARPNESS_WEIGHTS.get(book_name.lower(), _DEFAULT_WEIGHT)
+    """Look up the sharpness weight for a book.
+
+    Prefers an empirical weight from CLV-based fitting when available; falls
+    back to the hardcoded prior if the fit is missing or doesn't cover this
+    book yet (i.e. fewer than `MIN_BOOK_OBS` data points).
+    """
+    name = book_name.lower()
+    empirical = _empirical_sharpness.get(name)
+    if empirical is not None:
+        return empirical
+    return SHARPNESS_WEIGHTS.get(name, _DEFAULT_WEIGHT)
 
 
 def _has_direct_odds(book: BookOdds, side: str) -> bool:

@@ -34,7 +34,6 @@ from apscheduler.jobstores.base import JobLookupError
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from engine.dynamic_calibration import update_calibration_map, load_calibration_map
 from engine.ev_calculator import reload_calibration
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -517,6 +516,28 @@ def _run_pipeline_body():
             # Build book odds list for the consensus engine
             match_books = books_from_match(m.fd, m.dk, m.pin)
 
+            def _per_book_probs(side: str) -> dict:
+                """Snapshot each book's devigged probability for `side` so the
+                sharpness fitter (engine/sharpness_calibration.py) can later
+                compare each book's price to the eventual closing line.
+                Returns e.g. {"fanduel": 0.62, "draftkings": 0.61}."""
+                from engine.devig import devig_power as _dp, devig_single_sided_scaled as _dss
+                out: dict[str, float] = {}
+                for name, bk in (("fanduel", m.fd), ("draftkings", m.dk), ("pinnacle", m.pin)):
+                    if bk is None:
+                        continue
+                    prob = None
+                    if bk.both_sided and bk.over_odds is not None and bk.under_odds is not None:
+                        t_o, t_u = _dp(bk.over_odds, bk.under_odds)
+                        prob = t_o if side == "over" else t_u
+                    elif side == "over" and bk.over_odds is not None:
+                        prob = _dss(bk.over_odds)
+                    elif side == "under" and bk.under_odds is not None:
+                        prob = _dss(bk.under_odds)
+                    if prob is not None and 0.0 < prob < 1.0:
+                        out[name] = round(float(prob), 4)
+                return out
+
             def get_combined_true_odds(side):
                 """Compute consensus true probability via the VWAP engine."""
                 consensus_prob, worst_case_prob, meta = compute_true_probability(match_books, side)
@@ -585,6 +606,7 @@ def _run_pipeline_body():
                                 "dk_odds":    _display_odds(m.dk, "over", dk_margin),
                                 "pin_odds":   _display_odds(m.pin, "over", pin_margin),
                                 "start_time": base.get("start_time", ""),
+                                "books_probs": _per_book_probs("over"),
                             }
 
             # Process Under side
@@ -625,6 +647,7 @@ def _run_pipeline_body():
                                 "dk_odds":    _display_odds(m.dk, "under", dk_margin),
                                 "pin_odds":   _display_odds(m.pin, "under", pin_margin),
                                 "start_time": base.get("start_time", ""),
+                                "books_probs": _per_book_probs("under"),
                             }
 
         # Deduplicate bets based on bet_id, keeping the one with highest EV
@@ -637,6 +660,12 @@ def _run_pipeline_body():
         # Sort by individual EV% descending
         bets.sort(key=lambda b: b.individual_ev_pct, reverse=True)
 
+        # Sidecar map (not serialized to the client) so the market_observatory
+        # background worker can attach per-book devigged probs to each row.
+        # The empirical sharpness fitter uses these vs the eventual closing
+        # line to refit consensus weights.
+        bet_books_probs: dict[str, dict] = {}
+
         serialized_bets = []
         for b in bets:
             d = b.to_dict()
@@ -644,6 +673,7 @@ def _run_pipeline_body():
             d["fd_odds_book"] = extras.get("fd_odds")
             d["dk_odds_book"] = extras.get("dk_odds")
             d["pin_odds_book"] = extras.get("pin_odds")
+            bet_books_probs[b.bet_id] = extras.get("books_probs") or {}
             start_time = extras.get("start_time", "")
             d["start_time"] = start_time
             # Precompute the backtest-dedup key so the client can join
@@ -746,13 +776,16 @@ def _run_pipeline_body():
         threading.Thread(target=_auto_log_bg, daemon=True).start()
 
         # ── Market Observatory: log ALL high-prob lines for global calibration ──
-        def _log_observatory_bg(bets=serialized_bets):
+        def _log_observatory_bg(bets=serialized_bets, books_probs_map=bet_books_probs):
             try:
                 from engine.database import get_db as _get_db
                 obs_db = _get_db()
                 if not obs_db:
                     return
                 rows_to_upsert = []
+                # Track whether the `books` column exists; if a write fails we
+                # retry once without it for older schemas (pre-migration_003).
+                _books_supported = True
                 for b in bets:
                     tp = float(b.get("true_prob") or 0)
                     if tp < 0.50:
@@ -764,7 +797,7 @@ def _run_pipeline_body():
                     side   = b.get("side", "")
                     start  = b.get("start_time", "")
                     market_key = f"{player}|{league}|{prop}|{line}|{side}|{start}"
-                    rows_to_upsert.append({
+                    row = {
                         "market_key":  market_key,
                         "player":      player,
                         "league":      league,
@@ -774,15 +807,41 @@ def _run_pipeline_body():
                         "true_prob":   round(tp, 4),
                         "game_start":  start if start else None,
                         "result":      "pending",
-                    })
+                    }
+                    bp = books_probs_map.get(b.get("bet_id")) if books_probs_map else None
+                    if bp:
+                        row["books"] = bp
+                    rows_to_upsert.append(row)
                 if rows_to_upsert:
-                    # Batch upsert, skip duplicates via market_key unique constraint
-                    obs_db.table("market_observatory").upsert(
-                        rows_to_upsert,
-                        on_conflict="market_key",
-                        ignore_duplicates=True
-                    ).execute()
-                    logger.info("Observatory: logged %d observations", len(rows_to_upsert))
+                    try:
+                        # Batch upsert, skip duplicates via market_key unique constraint
+                        obs_db.table("market_observatory").upsert(
+                            rows_to_upsert,
+                            on_conflict="market_key",
+                            ignore_duplicates=True
+                        ).execute()
+                        logger.info("Observatory: logged %d observations", len(rows_to_upsert))
+                    except Exception as upsert_exc:
+                        # Pre-migration_003: the `books` column doesn't exist.
+                        # Strip it and retry once. This keeps the pipeline
+                        # working for users who haven't applied the migration.
+                        if any("books" in r for r in rows_to_upsert):
+                            for r in rows_to_upsert:
+                                r.pop("books", None)
+                            try:
+                                obs_db.table("market_observatory").upsert(
+                                    rows_to_upsert,
+                                    on_conflict="market_key",
+                                    ignore_duplicates=True
+                                ).execute()
+                                logger.info(
+                                    "Observatory: logged %d observations (without per-book data — apply migration_003.sql to enable sharpness fitting)",
+                                    len(rows_to_upsert),
+                                )
+                            except Exception as exc2:
+                                logger.error("Observatory logging retry failed: %s", exc2)
+                        else:
+                            logger.error("Observatory logging error: %s", upsert_exc)
             except Exception as e:
                 logger.error("Observatory logging error: %s", e)
 
@@ -897,16 +956,34 @@ def startup():
     # (no scraping), so the load is negligible.
     def _run_periodic_models():
         try:
-            from engine.dynamic_calibration import update_calibration_map
+            from engine.isotonic_calibration import update_isotonic_calibration
             from engine.ev_calculator import reload_calibration
-            cal = update_calibration_map()
-            if cal:
+            curves = update_isotonic_calibration()
+            if curves:
                 reload_calibration()
-                logger.info("Hourly refit: %d prop multipliers reloaded", len(cal))
+                logger.info(
+                    "Hourly refit: isotonic curves reloaded — %d leagues, %d (league,prop) buckets",
+                    len(curves.get("leagues") or {}), len(curves.get("props") or {}),
+                )
             else:
                 logger.info("Hourly refit: calibration — no mature data yet")
         except Exception as exc:
             logger.error("Hourly refit: calibration error: %s", exc)
+
+        try:
+            from engine.sharpness_calibration import update_sharpness_weights
+            from engine.consensus import reload_sharpness
+            sharp = update_sharpness_weights()
+            if sharp:
+                n_books = reload_sharpness()
+                logger.info("Hourly refit: sharpness weights refit for %d books", n_books)
+            else:
+                logger.info(
+                    "Hourly refit: sharpness — no per-book CLV data yet "
+                    "(apply migration_003.sql once observations accumulate)",
+                )
+        except Exception as exc:
+            logger.error("Hourly refit: sharpness error: %s", exc)
 
         try:
             from engine.correlation import update_correlation_map, reload_correlation, MIN_PAIR_OBS
@@ -1238,8 +1315,25 @@ def build_slip(req: SlipRequest, user: Optional[dict] = Depends(get_current_user
     return result
 
 
+#  Candidate pool cap for /api/slip/auto. Limits combinatorial blow-up of the
+#  subset search: Σ C(12, k) for k=2..6 is 2,497 subsets — each scored via the
+#  exact independence-based EV formulas (microseconds each) before the single
+#  winning subset gets the full correlation-aware Monte Carlo.
+_AUTO_SLIP_MAX_CANDIDATES = 12
+
+
 @app.post("/api/slip/auto")
 def auto_build_slip(req: SlipRequest, user: Optional[dict] = Depends(get_current_user_optional)):
+    """Pick the best 2–6-leg slip from a candidate pool.
+
+    Unlike the prior implementation (which only tried EV-sorted prefixes),
+    this enumerates *every* subset of size K ∈ [2, 6] from the deduplicated
+    candidate pool and scores each under the exact independence formulas —
+    significantly more accurate for Flex slips where a low-probability leg
+    can hurt despite having positive individual EV. The winner is then
+    re-scored with correlation-aware Monte Carlo so same-game stacks aren't
+    penalised for picking up latent positive correlation.
+    """
     if not req.bet_ids:
         raise HTTPException(status_code=400, detail="No bet IDs provided.")
     if len(req.bet_ids) < 2:
@@ -1248,44 +1342,56 @@ def auto_build_slip(req: SlipRequest, user: Optional[dict] = Depends(get_current
     with _lock:
         bet_map = _state["bet_map"]
 
-    selected = []
-    seen = set()
+    # Dedupe by (player, game_day). Input order is preserved — the client sorts
+    # by EV before sending, so the cap keeps the most promising candidates.
+    candidates: list[BetResult] = []
+    seen: set[tuple[str, str]] = set()
     for bid in req.bet_ids:
-        if bid in bet_map:
-            bet = bet_map[bid]
-            key = make_bet_key(bet.player_name, bet.start_time)
-            if key in seen:
-                continue
-            selected.append(bet)
-            seen.add(key)
-            if len(selected) == 6:
-                break
-            
-    if len(selected) < 2:
-        raise HTTPException(status_code=400, detail="Not enough unique bets found.")
-
-    best_ev = -float('inf')
-    best_k = 0
-    best_result = None
-    best_subset = []
-    
-    for k in range(2, len(selected) + 1):
-        subset = selected[:k]
-        result = calculate_slip(subset, req.bankroll)
-        
-        ev = result.get("best_ev_pct")
-        if ev is None: 
+        bet = bet_map.get(bid)
+        if bet is None:
             continue
-        
-        if ev > best_ev + 0.00001:
-            best_ev = ev
-            best_k = k
-            best_result = result
-            best_subset = [b.bet_id for b in subset]
+        key = make_bet_key(bet.player_name, bet.start_time)
+        if key in seen:
+            continue
+        candidates.append(bet)
+        seen.add(key)
+        if len(candidates) >= _AUTO_SLIP_MAX_CANDIDATES:
+            break
 
-    if not best_result:
+    if len(candidates) < 2:
+        raise HTTPException(status_code=400, detail="Not enough unique bets after dedup.")
+
+    from itertools import combinations
+    from engine.ev_calculator import power_slip_ev, flex_slip_ev
+
+    best_ev = -float("inf")
+    best_subset: list[BetResult] = []
+    max_k = min(6, len(candidates))
+    for k in range(2, max_k + 1):
+        for combo in combinations(candidates, k):
+            probs = [b.true_prob for b in combo]
+            p_ev = power_slip_ev(probs)
+            f_ev = flex_slip_ev(probs)
+            evs = [ev for ev in (p_ev, f_ev) if ev is not None]
+            if not evs:
+                continue
+            ev = max(evs)
+            if ev > best_ev + 1e-9:
+                best_ev = ev
+                best_subset = list(combo)
+
+    if not best_subset:
         raise HTTPException(status_code=400, detail="Could not calculate any valid slip.")
-        
+
+    # Final evaluation with correlation-aware Monte Carlo for the returned metrics.
+    final = calculate_slip(best_subset, req.bankroll)
+    return {
+        **final,
+        "optimal_k":       len(best_subset),
+        "optimal_bet_ids": [b.bet_id for b in best_subset],
+    }
+
+
 class SandboxRequest(BaseModel):
     leagues:        list[str] = []
     min_prob:       float     = 0.5408
@@ -1935,6 +2041,8 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
 
         true_probs = [float(b.get("true_prob") or 0) for b in backtest_bets]
         k = len(backtest_bets)
+        # Compute the better of Power/Flex for the projected EV, but always
+        # tag the row as "Manual" so the backtest view reflects user intent.
         try:
             import numpy as _np
             from engine.ev_calculator import (
@@ -1949,10 +2057,11 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
             else:
                 power_ev = power_slip_ev(true_probs)
                 flex_ev  = flex_slip_ev(true_probs)
-            best_ev   = max(power_ev, flex_ev) if flex_ev is not None else power_ev
-            best_type = "Power" if power_ev >= (flex_ev or -999) else "Flex"
+            candidates = [ev for ev in (power_ev, flex_ev) if ev is not None]
+            best_ev = max(candidates) if candidates else 0.0
         except Exception:
-            best_ev, best_type = 0.0, "Power"
+            best_ev = 0.0
+        best_type = "Manual"
 
         slip_id   = str(uuid.uuid4())[:8].upper()
         timestamp = _dt.now().isoformat(timespec="seconds")
@@ -2016,10 +2125,10 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
             logger.error("Backtest: manual slip write failed: %s", db_exc)
             raise HTTPException(status_code=500, detail=f"Database write failed: {db_exc}")
 
-        # Mark legs as used
-        for b in backtest_bets:
-            key = make_bet_key(b.get("player_name", ""), b.get("start_time", ""))
-            _logger.used_bets.add(key)
+        # No in-memory "used" set to update — BacktestLogger reads fresh
+        # conflicts from Supabase on every call via _load_used_keys_from_db(),
+        # so the newly-inserted legs are picked up automatically on the next
+        # dedup check.
 
         new_slip = {
             "slip_id":          slip_id,
@@ -2105,32 +2214,64 @@ def get_observatory_data():
 
 @app.get("/api/observatory/multipliers")
 def get_calibration_map_api():
-    """Returns every (league, prop) combination the system tracks, with its
-    current calibration multiplier if one has matured (>=30 observations),
-    or a neutral 1.0 default with calibrated=False if not."""
-    try:
-        from engine.dynamic_calibration import load_calibration_map
-        from engine.constants import PROP_TYPE_MAP
-        calibrated = load_calibration_map() or {}
+    """Per-league calibration summary for the Observatory tab.
 
-        # Build the universe of (league, prop) pairs from the canonical map.
-        # Dedupe by taking the set of PrizePicks labels per league.
-        out = {}
-        for league, mapping in PROP_TYPE_MAP.items():
-            for prop in sorted(set(mapping.values())):
-                key = f"{league}|{prop}"
-                if key in calibrated:
-                    out[key] = {"value": float(calibrated[key]), "calibrated": True}
-                else:
-                    out[key] = {"value": 1.0, "calibrated": False}
-        # Also surface any calibrated keys that aren't in PROP_TYPE_MAP (defensive).
-        for key, val in calibrated.items():
-            if key not in out:
-                out[key] = {"value": float(val), "calibrated": True}
+    Each entry reports the *effective* shrinkage applied at the p=0.60
+    anchor — i.e. the post-Bayesian-shrinkage calibrated probability divided
+    by 0.60. A value of 1.00 means no shrinkage; 0.95 means a 5% haircut,
+    etc. Leagues without any data report `calibrated: false`.
+
+    The shape matches the legacy multiplier endpoint
+    (`{key: {value, calibrated}}`) so the existing UI renderer keeps working
+    without changes.
+    """
+    try:
+        from engine.isotonic_calibration import load_isotonic_calibration, calibrate, DISPLAY_ANCHOR
+        from engine.constants import PROP_TYPE_MAP
+        curves = load_isotonic_calibration()
+
+        out: dict = {}
+        for league in sorted(PROP_TYPE_MAP.keys()):
+            key = f"{league}|Calibration @ p={DISPLAY_ANCHOR:.2f}"
+            calibrated_at_anchor = calibrate(curves, league, None, DISPLAY_ANCHOR)
+            # A league with NO fitted curve passes through identity (== anchor),
+            # which we surface as "Awaiting data" rather than "1.00x".
+            has_data = curves.get("leagues", {}).get(league) is not None or curves.get("global") is not None
+            ratio = calibrated_at_anchor / DISPLAY_ANCHOR if DISPLAY_ANCHOR > 0 else 1.0
+            out[key] = {"value": round(ratio, 4), "calibrated": bool(has_data)}
+
+        # Surface any fitted league not in PROP_TYPE_MAP (e.g. NCAAF).
+        for league in (curves.get("leagues") or {}).keys():
+            key = f"{league}|Calibration @ p={DISPLAY_ANCHOR:.2f}"
+            if key in out:
+                continue
+            calibrated_at_anchor = calibrate(curves, league, None, DISPLAY_ANCHOR)
+            out[key] = {"value": round(calibrated_at_anchor / DISPLAY_ANCHOR, 4), "calibrated": True}
+
         return out
     except Exception as e:
         logger.error("API: calibration fetch error: %s", e)
         return {}
+
+
+@app.get("/api/calibration/curves")
+def get_calibration_curves_api():
+    """Full hierarchical calibration state for diagnostics / debugging.
+
+    Returns the global, per-league, and per-(league, prop) curves with their
+    effective sample sizes, plus the empirical book sharpness weights when
+    available. Intended for power users; not currently surfaced in the UI.
+    """
+    try:
+        from engine.isotonic_calibration import load_isotonic_calibration
+        from engine.sharpness_calibration import load_sharpness_weights
+        return {
+            "isotonic":  load_isotonic_calibration(),
+            "sharpness": load_sharpness_weights(),
+        }
+    except Exception as e:
+        logger.error("API: calibration curves fetch error: %s", e)
+        return {"isotonic": {}, "sharpness": {}}
 
 
 

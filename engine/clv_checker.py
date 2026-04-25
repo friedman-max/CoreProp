@@ -20,7 +20,7 @@ from typing import Any
 
 from engine.database import get_db
 from engine.consensus import books_from_match, compute_true_probability
-from engine.dynamic_calibration import load_calibration_map
+from engine.isotonic_calibration import load_isotonic_calibration, calibrate as _apply_isotonic
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +39,11 @@ MISSED_CUTOFF_HOURS = 1
 class CLVTracker:
     def __init__(self):
         # CLV compares closing_prob against the true_prob stored at bet-log
-        # time. That stored value is ALREADY calibrated by
-        # BetResult.__init__ (raw worst_case_prob × calibration_multiplier),
-        # so the closing side must apply the identical multiplier — otherwise
-        # CLV shows a phantom jump the size of the multiplier gap the moment
-        # the bet is logged.
-        self._calibration_map = load_calibration_map()
+        # time. That stored value is ALREADY calibrated by BetResult.__init__
+        # (raw worst_case_prob -> isotonic curve), so the closing side must
+        # apply the identical calibration or CLV shows a phantom jump the
+        # size of the calibration gap the moment the bet is logged.
+        self._isotonic_curves = load_isotonic_calibration()
 
     def update_closing_lines(self, matches: list[Any]) -> int:
         """
@@ -83,6 +82,13 @@ class CLVTracker:
 
         now_utc = datetime.now(timezone.utc)
         updated_count = 0
+
+        # Pending: (player, league, prop, line, side, game_start) → raw closing
+        # prob. Flushed at the end of the loop to market_observatory so the
+        # calibration refit has CLV signal data to work with. We write the
+        # *raw* value (pre-isotonic) here to avoid the circular dependency
+        # where calibrated closing_prob would be used to refit calibration.
+        observatory_writes: dict[tuple, float] = {}
 
         for row in rows:
             game_start_str = row.get("game_start", "")
@@ -129,9 +135,10 @@ class CLVTracker:
                 # stored true_prob and CLV reflects only line movement.
                 league = row.get("league")
                 prop_for_cal = row.get("prop")
-                cal_key = f"{league}|{prop_for_cal}"
-                multiplier = self._calibration_map.get(cal_key, 1.0)
-                calibrated_cp = min(new_cp_val * multiplier, 0.999)
+                calibrated_cp = min(
+                    _apply_isotonic(self._isotonic_curves, league, prop_for_cal, new_cp_val),
+                    0.999,
+                )
 
                 # Update only when the calibrated value has moved materially
                 # from whatever was last written.
@@ -151,13 +158,51 @@ class CLVTracker:
                     except Exception as db_exc:
                         logger.error("CLVTracker DB update failed: %s", db_exc)
 
+                    # Stage the *raw* closing prob for market_observatory so
+                    # the calibration refit can use it as a CLV signal without
+                    # the bias of double-calibration.
+                    leg_player = row.get("player") or ""
+                    leg_league = row.get("league") or ""
+                    leg_prop = row.get("prop") or ""
+                    leg_side = row.get("side") or ""
+                    leg_game_start = row.get("game_start") or ""
+                    if leg_player and leg_league and leg_game_start:
+                        obs_key = (leg_player, leg_league, leg_prop, line, leg_side, leg_game_start)
+                        observatory_writes[obs_key] = float(new_cp_val)
+
                     logger.debug(
-                        "CLVTracker: Update %s %s %s @%s -> %.4f", 
+                        "CLVTracker: Update %s %s %s @%s -> %.4f",
                         player, prop, side, line, new_cp_val
                     )
 
         if updated_count:
             logger.info("CLVTracker: updated %d pending bets", updated_count)
+
+        # Flush observatory writes. If migration_003 hasn't been applied the
+        # column won't exist; we swallow the error after the first failure
+        # since it'll just keep failing for the rest of this batch.
+        if observatory_writes:
+            obs_failed = False
+            for (p_, lg_, pr_, ln_, sd_, gs_), raw_cp in observatory_writes.items():
+                if obs_failed:
+                    break
+                try:
+                    db.table("market_observatory").update({
+                        "closing_prob": round(raw_cp, 4)
+                    }) \
+                        .eq("player", p_) \
+                        .eq("league", lg_) \
+                        .eq("prop", pr_) \
+                        .eq("line", ln_) \
+                        .eq("side", sd_) \
+                        .eq("game_start", gs_) \
+                        .execute()
+                except Exception as exc:
+                    logger.debug(
+                        "CLVTracker: market_observatory closing_prob write failed "
+                        "(migration_003 not applied?): %s", exc,
+                    )
+                    obs_failed = True
 
         return updated_count
 

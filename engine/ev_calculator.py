@@ -19,11 +19,11 @@ from engine.constants import (
 )
 from engine.devig import devig_power, devig_single_sided, prob_to_american
 from engine.matcher import MatchedProp
-from engine.dynamic_calibration import load_calibration_map
+from engine.isotonic_calibration import load_isotonic_calibration, calibrate as _apply_isotonic
 from engine.correlation import build_correlation_matrix, legs_metadata_from_bets
 
-# Module-level calibration map (refreshed on import or by calling reload_calibration)
-_calibration_map: dict = load_calibration_map()
+# Module-level calibration curves (refreshed on import or by calling reload_calibration)
+_isotonic_curves: dict = load_isotonic_calibration()
 
 
 # ---------------------------------------------------------------------------
@@ -31,9 +31,9 @@ _calibration_map: dict = load_calibration_map()
 # ---------------------------------------------------------------------------
 
 def reload_calibration():
-    """Reload the calibration map from disk (called after daily recalibration)."""
-    global _calibration_map
-    _calibration_map = load_calibration_map()
+    """Reload the isotonic curves from disk (called after each recalibration)."""
+    global _isotonic_curves
+    _isotonic_curves = load_isotonic_calibration()
 
 
 class BetResult:
@@ -75,10 +75,9 @@ class BetResult:
         self.pp_player_id = pp_player_id
         self.start_time = start_time
 
-        # Apply dynamic calibration multiplier
-        cal_key = f"{league}|{prop_type}"
-        multiplier = _calibration_map.get(cal_key, 1.0)
-        calibrated_prob = min(true_prob * multiplier, 0.999)
+        # Hierarchical isotonic calibration (global → league → prop) with
+        # Bayesian shrinkage; conservative cap so the output never inflates.
+        calibrated_prob = min(_apply_isotonic(_isotonic_curves, league, prop_type, true_prob), 0.999)
         self.true_prob = calibrated_prob
         self.true_odds = prob_to_american(calibrated_prob)
 

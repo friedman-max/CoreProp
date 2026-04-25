@@ -317,6 +317,50 @@ function hydrateFromCache() {
   }
 }
 
+// ── Toast notifications ────────────────────────────────────────────────────
+// Non-blocking replacement for alert(). Stacks top-right, auto-dismisses after
+// `duration` ms (0 to keep until clicked). Types: "error" | "success" |
+// "warning" | "info" — selects the accent color on the left border.
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function showToast(message, type = "info", duration = 4500) {
+  let container = document.getElementById("toast-container");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "toast-container";
+    container.className = "toast-container";
+    container.setAttribute("role", "status");
+    container.setAttribute("aria-live", "polite");
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML =
+    `<div class="toast-message">${escapeHtml(message)}</div>` +
+    `<button class="toast-close" aria-label="Dismiss">&times;</button>`;
+
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    toast.classList.add("toast-exit");
+    toast.addEventListener("animationend", () => toast.remove(), { once: true });
+  };
+
+  toast.querySelector(".toast-close").addEventListener("click", dismiss);
+  container.appendChild(toast);
+  if (duration > 0) setTimeout(dismiss, duration);
+  return dismiss;
+}
+
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const tbody           = $("bets-tbody");
@@ -640,7 +684,7 @@ btnAddToBacktest.addEventListener("click", async () => {
     const data = await resp.json();
 
     if (!resp.ok) {
-      alert("Failed to log slip: " + (data.detail || "Unknown error"));
+      showToast("Failed to log slip: " + (data.detail || "Unknown error"), "error");
     } else {
       // Flash the button green briefly
       btnAddToBacktest.textContent = "✓ Logged!";
@@ -667,7 +711,7 @@ btnAddToBacktest.addEventListener("click", async () => {
       }, 2500);
     }
   } catch (e) {
-    alert("Error logging slip: " + e.message);
+    showToast("Error logging slip: " + e.message, "error");
     btnAddToBacktest.textContent = "+ Add to Backtest";
     btnAddToBacktest.disabled = (state.selected.size < 2 || state.selected.size > 6);
   }
@@ -718,35 +762,42 @@ btnCalculate.addEventListener("click", async () => {
     });
     if (!resp.ok) {
       const err = await resp.json();
-      alert("Slip error: " + (err.detail || resp.statusText));
+      showToast("Slip error: " + (err.detail || resp.statusText), "error");
       return;
     }
     const data = await resp.json();
     renderSlipResults(data);
   } catch (e) {
-    alert("Network error: " + e.message);
+    showToast("Network error: " + e.message, "error");
   } finally {
     btnCalculate.disabled = false;
     btnCalculate.textContent = "Calculate EV";
   }
 });
 
+// Must match _AUTO_SLIP_MAX_CANDIDATES in web/app.py — the backend caps the
+// search pool at this size, so sending more would be wasted bytes.
+const AUTO_SLIP_CANDIDATE_POOL = 12;
+
 btnAutoBuild.addEventListener("click", async () => {
   const sorted = [...state.filteredBets].sort((a, b) => (b.individual_ev_pct || 0) - (a.individual_ev_pct || 0));
-  
+
+  // Dedupe by player — the backend also dedupes by (player, game_day), but
+  // trimming here means we can fit ~12 distinct players into the cap instead
+  // of wasting slots on the same player across games.
   const pickedPlayers = new Set();
   const betIds = [];
-  
+
   for (const b of sorted) {
     if (!pickedPlayers.has(b.player_name)) {
       pickedPlayers.add(b.player_name);
       betIds.push(b.bet_id);
-      if (betIds.length === 6) break;
+      if (betIds.length === AUTO_SLIP_CANDIDATE_POOL) break;
     }
   }
 
   if (betIds.length < 2) {
-    alert("Not enough valid unique players matching the current filters to build a slip.");
+    showToast("Not enough valid unique players matching the current filters to build a slip.", "warning");
     return;
   }
 
@@ -763,7 +814,7 @@ btnAutoBuild.addEventListener("click", async () => {
     });
     if (!resp.ok) {
       const err = await resp.json();
-      alert("Auto-Slip error: " + (err.detail || resp.statusText));
+      showToast("Auto-Slip error: " + (err.detail || resp.statusText), "error");
       return;
     }
     const data = await resp.json();
@@ -779,7 +830,7 @@ btnAutoBuild.addEventListener("click", async () => {
     renderSlipResults(data);
     
   } catch (e) {
-    alert("Network error: " + e.message);
+    showToast("Network error: " + e.message, "error");
   } finally {
     btnAutoBuild.disabled = false;
     btnAutoBuild.textContent = "Auto-Build Best Slip";
@@ -988,6 +1039,17 @@ async function refreshObservatory() {
     console.warn("Calibration fetch failed:", e);
   }
 
+  // Hierarchical calibration curves (global + per-league fitted curves).
+  try {
+    const curvesResp = await apiFetch("/api/calibration/curves");
+    if (curvesResp.ok) {
+      const data = await curvesResp.json();
+      renderCalibrationCurves(data.isotonic || {});
+    }
+  } catch (e) {
+    console.warn("Calibration curves fetch failed:", e);
+  }
+
   // Fetch observatory feed (requires market_observatory table)
   try {
     const obsResp = await apiFetch("/api/observatory");
@@ -997,6 +1059,170 @@ async function refreshObservatory() {
     }
   } catch (e) {
     console.warn("Observatory fetch failed:", e);
+  }
+}
+
+// League color palette — matches existing league-tag styles where reasonable.
+const _LEAGUE_COLORS = {
+  NBA:    "#fb923c",
+  NFL:    "#22c55e",
+  MLB:    "#3b82f6",
+  NHL:    "#a855f7",
+  NCAAB:  "#f97316",
+  NCAAF:  "#ec4899",
+  WNBA:   "#facc15",
+  SOCCER: "#10b981",
+  EUROLEAGUE: "#6366f1",
+  NBL:    "#06b6d4",
+};
+const _FALLBACK_COLORS = ["#94a3b8", "#f87171", "#34d399", "#a78bfa", "#fbbf24"];
+
+function _leagueColor(league, idx) {
+  return _LEAGUE_COLORS[league] || _FALLBACK_COLORS[idx % _FALLBACK_COLORS.length];
+}
+
+function renderCalibrationCurves(isotonic) {
+  const canvas = document.getElementById("chart-calibration-curves");
+  const empty  = document.getElementById("cal-curves-empty");
+  const sub    = document.getElementById("cal-curves-subtitle");
+  if (!canvas) return;
+
+  const global = isotonic.global;
+  const leagues = isotonic.leagues || {};
+  const props = isotonic.props || {};
+  const leagueNames = Object.keys(leagues).sort();
+
+  if (!global && leagueNames.length === 0) {
+    if (_charts.calibrationCurves) { _charts.calibrationCurves.destroy(); _charts.calibrationCurves = null; }
+    canvas.style.display = "none";
+    if (empty) empty.style.display = "block";
+    if (sub)   sub.textContent = "No fitted curves yet.";
+    return;
+  }
+
+  canvas.style.display = "";
+  if (empty) empty.style.display = "none";
+
+  // Identity (perfect calibration) reference line — drawn first so it sits behind.
+  // Using {x,y} parsing for everything so we can mix line types cleanly.
+  const datasets = [{
+    type: "line",
+    label: "Perfect calibration",
+    data: [{ x: 0.5, y: 0.5 }, { x: 0.85, y: 0.85 }],
+    borderColor: "rgba(255,255,255,0.30)",
+    borderDash: [5, 4],
+    borderWidth: 1,
+    pointRadius: 0,
+    fill: false,
+    tension: 0,
+    order: 99,
+    // Carried in tooltips; we suppress the identity line's tooltip below.
+    _meta: { neff: null, kind: "identity" },
+  }];
+
+  if (global && global.curve && global.curve.length) {
+    datasets.push({
+      type: "line",
+      label: "Global",
+      data: global.curve.map(([x, y]) => ({ x, y })),
+      borderColor: "#ffffff",
+      borderWidth: 2.5,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      fill: false,
+      // PAV is piecewise-linear; tension:0 plots the actual interpolant.
+      tension: 0,
+      order: 1,
+      _meta: { neff: global.n_eff, kind: "global" },
+    });
+  }
+
+  leagueNames.forEach((lg, i) => {
+    const lvl = leagues[lg];
+    if (!lvl || !lvl.curve || !lvl.curve.length) return;
+    const c = _leagueColor(lg, i);
+    datasets.push({
+      type: "line",
+      label: lg,
+      data: lvl.curve.map(([x, y]) => ({ x, y })),
+      borderColor: c,
+      borderWidth: 1.75,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      fill: false,
+      tension: 0,
+      order: 2,
+      _meta: { neff: lvl.n_eff, kind: "league" },
+    });
+  });
+
+  if (_charts.calibrationCurves) _charts.calibrationCurves.destroy();
+  _charts.calibrationCurves = new Chart(canvas, {
+    type: "line",
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      parsing: false,
+      interaction: { mode: "nearest", intersect: false, axis: "x" },
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: {
+            color: _chartTextColor(),
+            boxWidth: 12,
+            padding: 10,
+            usePointStyle: true,
+            // Drop the identity reference from the legend to reduce clutter —
+            // it's self-explanatory from the dashed line on the chart.
+            filter: (item, data) => {
+              const ds = data.datasets[item.datasetIndex];
+              return !(ds && ds._meta && ds._meta.kind === "identity");
+            },
+          },
+        },
+        tooltip: {
+          // Move the n_eff into the tooltip so legend stays clean.
+          callbacks: {
+            title: (items) => {
+              if (!items.length) return "";
+              return `Model ${(items[0].parsed.x * 100).toFixed(1)}%`;
+            },
+            label: (ctx) => {
+              const ds = ctx.dataset;
+              const meta = ds._meta || {};
+              if (meta.kind === "identity") return null; // hide identity line tooltip
+              const neff = meta.neff != null ? `  ·  n_eff ${Math.round(meta.neff).toLocaleString()}` : "";
+              return `${ds.label}: ${(ctx.parsed.y * 100).toFixed(1)}%${neff}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: "linear",
+          min: 0.5, max: 0.85,
+          title: { display: true, text: "Model probability", color: _chartTextColor() },
+          ticks: { color: _chartTextColor(), callback: (v) => (v * 100).toFixed(0) + "%" },
+          grid: { color: "rgba(255,255,255,0.06)" },
+        },
+        y: {
+          type: "linear",
+          min: 0.3, max: 1.0,
+          title: { display: true, text: "Observed hit rate", color: _chartTextColor() },
+          ticks: { color: _chartTextColor(), callback: (v) => (v * 100).toFixed(0) + "%" },
+          grid: { color: "rgba(255,255,255,0.06)" },
+        },
+      },
+    },
+  });
+
+  // Subtitle: summary of what's fitted + freshness.
+  const propBucketCount = Object.keys(props).length;
+  const fitted = isotonic.fitted_at ? new Date(isotonic.fitted_at) : null;
+  const fittedTxt = fitted ? fitted.toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "—";
+  if (sub) {
+    sub.textContent = `${leagueNames.length} league curve${leagueNames.length !== 1 ? "s" : ""} · ${propBucketCount} (league, prop) bucket${propBucketCount !== 1 ? "s" : ""} · last fit ${fittedTxt}`;
   }
 }
 
@@ -1035,16 +1261,17 @@ function renderObservatoryMultipliers(multipliers) {
     const val = m.value;
     if (!m.calibrated) {
       return `<tr class="obs-neutral">
-        <td><strong>${league}</strong> ${prop}</td>
+        <td><strong>${league}</strong> ${prop || ""}</td>
         <td class="line-value">1.00x</td>
-        <td class="obs-neutral-text">Awaiting data (≥30 obs)</td>
+        <td class="obs-neutral-text">Awaiting data (≥100 resolved legs)</td>
       </tr>`;
     }
-    const strengthClass = val >= 1 ? "ev-high" : (val > 0.8 ? "ev-mid" : "ev-low");
-    const strengthPct = Math.round((val - 1) * 100);
-    const strengthText = strengthPct >= 0 ? `+${strengthPct}% Edge` : `${strengthPct}% Haircut`;
+    // val is calibrated_prob / raw_prob at the anchor: 1.00 = no change, 0.95 = 5% haircut.
+    const strengthClass = val >= 0.99 ? "ev-mid" : (val >= 0.9 ? "ev-low" : "ev-low");
+    const shrinkagePct = Math.round((1 - val) * 100);
+    const strengthText = shrinkagePct <= 0 ? "No shrinkage" : `−${shrinkagePct}% shrinkage`;
     return `<tr>
-      <td><strong>${league}</strong> ${prop}</td>
+      <td><strong>${league}</strong> ${prop || ""}</td>
       <td class="line-value ${strengthClass}">${val.toFixed(2)}x</td>
       <td class="${strengthClass}">${strengthText}</td>
     </tr>`;
@@ -1929,7 +2156,7 @@ function renderBacktest() {
         const resp = await apiFetch(`/api/backtest/slip/${slipId}`, { method: "DELETE" });
         if (!resp.ok) {
           const err = await resp.json();
-          alert("Delete failed: " + (err.detail || resp.statusText));
+          showToast("Delete failed: " + (err.detail || resp.statusText), "error");
           // Re-fetch to restore if delete failed
           try { localStorage.removeItem(BT_CACHE_KEY); } catch (_) {}
           await fetchBacktest();
@@ -1939,7 +2166,7 @@ function renderBacktest() {
         try { localStorage.removeItem(ANALYTICS_CACHE_KEY); } catch (_) {}
         fetchCalibration();
       } catch (err) {
-        alert("Delete error: " + err.message);
+        showToast("Delete error: " + err.message, "error");
         try { localStorage.removeItem(BT_CACHE_KEY); } catch (_) {}
         await fetchBacktest();
       }
@@ -2068,7 +2295,7 @@ async function pollLatestSlip() {
 // ── Analytics / Calibration ────────────────────────────────────────────────
 
 // Chart.js instances — kept so we can destroy before redraw.
-const _charts = { pnl: null, cal: null, slipMix: null };
+const _charts = { pnl: null, cal: null, slipMix: null, calibrationCurves: null };
 
 // Client-side cache of the last analytics payload so a page refresh (or tab
 // re-click) can paint instantly from memory while the server response arrives.
@@ -2656,14 +2883,14 @@ async function runSandbox() {
 
         if (!res.ok) {
             const err = await res.json();
-            alert("Simulation error: " + (err.detail || "Unknown error"));
+            showToast("Simulation error: " + (err.detail || "Unknown error"), "error");
             return;
         }
 
         const data = await res.json();
         renderSandboxResults(data);
     } catch (e) {
-        alert("Network error: " + e.message);
+        showToast("Network error: " + e.message, "error");
     } finally {
         btnRun.disabled = false;
         btnRun.textContent = "Run Simulation";
@@ -2682,6 +2909,21 @@ async function optimizeSandboxThreshold() {
     btnOpt.disabled = true;
     btnOpt.textContent = "Searching...";
 
+    // Validate slip_size/slip_type up-front so we don't even hit the network
+    // for known-bad combinations.
+    if (!Number.isFinite(slipSize) || slipSize < 2 || slipSize > 6) {
+        showToast("Slip size must be between 2 and 6.", "warning");
+        btnOpt.disabled = false;
+        btnOpt.textContent = originalText;
+        return;
+    }
+    if (slipType === "flex" && slipSize < 3) {
+        showToast("Flex requires at least 3 legs — switch to Power for 2-leg.", "warning");
+        btnOpt.disabled = false;
+        btnOpt.textContent = originalText;
+        return;
+    }
+
     try {
         const res = await apiFetch("/api/sandbox/optimize", {
             method: "POST",
@@ -2697,25 +2939,41 @@ async function optimizeSandboxThreshold() {
         });
 
         if (!res.ok) {
-            const err = await res.json();
-            alert("Optimization error: " + (err.detail || "Unknown error"));
+            let detail = "Unknown error";
+            try {
+                const err = await res.json();
+                detail = err.detail || detail;
+            } catch (_) { /* response wasn't JSON */ }
+            showToast("Optimization error: " + detail, "error");
             return;
         }
 
         const data = await res.json();
-        const bestVal = data.best_threshold;
-        
-        // Update slider
+        const bestVal = Number(data && data.best_threshold);
+        if (!Number.isFinite(bestVal)) {
+            showToast("Optimization returned no usable threshold.", "warning");
+            return;
+        }
+
+        // Update slider — clamp into the slider's actual range so an
+        // out-of-band server response can't leave the input in a stuck state.
         const probRange = $("sb-range-prob");
         const probLabel = $("sb-val-prob");
-        probRange.value = bestVal;
-        probLabel.textContent = (bestVal * 100).toFixed(1) + "%";
-        
-        // Automatically run the simulation with the new value
+        if (probRange) {
+            const lo = parseFloat(probRange.min) || 0;
+            const hi = parseFloat(probRange.max) || 1;
+            const clamped = Math.max(lo, Math.min(hi, bestVal));
+            probRange.value = clamped;
+            if (probLabel) probLabel.textContent = (clamped * 100).toFixed(1) + "%";
+        }
+
+        // Automatically run the simulation with the new value. Surface any
+        // failure as a toast — the inner runSandbox handles its own button
+        // state, but its errors already toast, so we don't double-report.
         runSandbox();
 
     } catch (e) {
-        alert("Network error: " + e.message);
+        showToast("Network error: " + (e && e.message ? e.message : e), "error");
     } finally {
         btnOpt.disabled = false;
         btnOpt.textContent = originalText;

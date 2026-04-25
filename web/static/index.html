@@ -617,22 +617,35 @@
       <div class="analytics-row">
         <div class="analytics-panel">
           <div class="analytics-panel-header">
-            <h3>Smart Odds (Calibration Multipliers)</h3>
-            <span class="analytics-subtitle">Prop types sorted by best historical performance</span>
+            <h3>Per-League Calibration</h3>
+            <span class="analytics-subtitle">Isotonic shrinkage applied to each league's devigged probabilities</span>
           </div>
           <div class="table-wrapper">
             <table>
               <thead>
                 <tr>
-                  <th>Prop Type</th>
-                  <th>Multiplier</th>
-                  <th>Strength</th>
+                  <th>League</th>
+                  <th>Shrinkage @ p=0.60</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody id="obs-multiplier-tbody">
-                <tr><td colspan="3" class="empty-msg">Waiting for next daily calibration...</td></tr>
+                <tr><td colspan="3" class="empty-msg">Waiting for next hourly calibration refit...</td></tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="analytics-row">
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <h3>Calibration Curves</h3>
+            <span class="analytics-subtitle" id="cal-curves-subtitle">Loading…</span>
+          </div>
+          <div class="chart-wrap" style="height: 360px;"><canvas id="chart-calibration-curves"></canvas></div>
+          <div id="cal-curves-empty" class="empty-msg" style="display:none; padding: 32px 16px; text-align:center;">
+            No fitted curves yet. The hourly model job runs once enough observations have accumulated.
           </div>
         </div>
       </div>
