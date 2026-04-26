@@ -17,12 +17,22 @@ CoreProp is a local +EV betting dashboard that compares PrizePicks projections a
 
 **Backtest & Analytics:**
 - Manual slip logging with timestamp and selected legs.
+- **Auto-Backtest**: opt-in per-user, builds the best 6-leg slip each refresh with cross-slip exact-leg dedup, per-user serialization (no race-condition duplicates), and a max-3-legs-per-game cap to limit correlation.
 - Automatic result checking via ESPN API to resolve pending slips.
 - CSV export for historical analysis.
-- **Calibration metrics** (Brier score, log-loss, hit-rate) to audit probability accuracy.
+- **Calibration metrics** (Brier score, log-loss, hit-rate) plus hierarchical / isotonic / sharpness calibration backends.
 - **Per-league and per-prop performance breakdown** showing actual vs. expected hit rate.
 - **Cumulative P&L chart** tracking profit/loss across resolved slips (1-unit stake baseline).
 - **Closing line value (CLV) tracking** to measure edge vs. market consensus.
+
+**Strategy Sandbox:**
+- Replays historical Market Observatory data under a configurable strategy (leagues, stat types, min true-prob, slip size/type, Kelly on/off).
+- Stat-type filter is sourced live from the database and grouped by sport, so chips always match what actually exists.
+- **Auto-Optimize** sweeps probability thresholds to find the ROI-maximizing setting.
+- Charts: cumulative P&L, drawdown %, rolling ROI + win-rate (windowed).
+- Breakdowns: per stat type (per-leg attribution), per league, and per hit-count distribution.
+- Slip log with per-leg detail and CSV export.
+- Win rate counts only perfect slips (no missed legs) and excludes Kelly $0 entries from the denominator.
 
 **Runtime & Config:**
 - Scheduled auto-refresh (default 15 min, configurable).
@@ -35,10 +45,11 @@ CoreProp is a local +EV betting dashboard that compares PrizePicks projections a
 The web UI includes:
 
 - **Bets View**: Matched +EV plays sorted by ROI and volume.
-- **Book Lines**: Separate raw tables for PrizePicks, FanDuel, DraftKings, Pinnacle.
+- **Market Feed**: Separate raw tables for PrizePicks, FanDuel, DraftKings, Pinnacle.
 - **Slip Builder**: Select legs, auto-calculate EV, build best subsets, log slips to backtest.
-- **Backtest Tab**: View logged slips, filter by league/result, check results, download CSV.
+- **Backtest Tab**: View logged slips, filter by league/result, check results, download CSV. Toggle Auto-Backtest on/off per user.
 - **Analytics Tab**: Calibration summary cards, P&L chart, calibration plot (predicted vs. actual), per-league/prop performance, CLV tracking, slip outcome distribution.
+- **Sandbox Tab**: Strategy simulator (see Strategy Sandbox under Features) with equity, drawdown, rolling, and breakdown views.
 - **Config Panel**: Adjust refresh interval, EV threshold, and active leagues live.
 
 ## Tech Stack
@@ -63,14 +74,24 @@ The web UI includes:
 │  ├─ draftkings.py            # DraftKings headless scraper
 │  └─ pinnacle.py              # Pinnacle API scraper
 ├─ engine/
-│  ├─ constants.py             # EV thresholds, payout tables
+│  ├─ constants.py             # EV thresholds, payout tables, prop-type normalization
 │  ├─ matcher.py               # Cross-book fuzzy matching
-│  ├─ ev_calculator.py         # EV per leg and slip
-│  ├─ backtest.py              # Slip logging and tracking
+│  ├─ ev_calculator.py         # EV per leg and slip (independent + correlated)
+│  ├─ correlation.py           # Pairwise correlation matrix from observatory
+│  ├─ backtest.py              # Slip logging, dedup, per-user lock
 │  ├─ calibration.py           # Brier score, log-loss, CLV
+│  ├─ isotonic_calibration.py  # Isotonic-regression calibrator
+│  ├─ sharpness_calibration.py # Per-book sharpness fitting
+│  ├─ strategy_tester.py       # Sandbox simulator + threshold optimizer
+│  ├─ clv_checker.py           # Closing-line capture & finalization
+│  ├─ devig.py                 # Remove vig from sportsbook prices
+│  ├─ consensus.py             # Cross-book consensus probability
 │  ├─ results_checker.py       # ESPN result lookup
 │  ├─ database.py              # Supabase client
 │  └─ persistence.py           # State caching layer
+├─ migration_001.sql           # slips/legs schema
+├─ migration_002.sql           # market_observatory schema
+├─ migration_003.sql           # per-book sharpness columns
 ├─ web/
 │  ├─ app.py                   # FastAPI app, routes, scheduler
 │  └─ static/
@@ -112,6 +133,7 @@ LEAGUE_NBA=true
 LEAGUE_MLB=true
 LEAGUE_NHL=true
 LEAGUE_NCAAB=true
+LEAGUE_SOCCER=true
 
 # Server
 HOST=127.0.0.1
@@ -185,10 +207,18 @@ Changes are applied immediately; no restart needed.
 - `GET /api/backtest/latest-slip` - Most recent logged slip.
 - `GET /api/backtest/slips` - List logged slips (paginated).
 - `POST /api/backtest/add-slip` - Log current bets as a slip.
+- `DELETE /api/backtest/slip/{slip_id}` - Delete a logged slip.
 - `GET /api/backtest/download-csv` - Download backtest CSV export.
 - `POST /api/backtest/check-results` - Resolve pending slips via ESPN.
+- `POST /api/user/auto-backtest` - Toggle auto-logging of best 6-leg slip per refresh.
 - `GET /api/calibration` - Brier score, log-loss, calibration buckets.
 - `GET /api/analytics` - Full analytics: calibration + per-league/prop + P&L chart data + CLV.
+
+### Sandbox
+
+- `GET /api/sandbox/stat-types` - Distinct `(league, stat_type)` pairs from the observatory; powers the dynamic filter chips.
+- `POST /api/sandbox/run` - Replay a strategy and return summary, equity curve, drawdown curve, rolling ROI/win-rate, breakdowns, and the full slip log.
+- `POST /api/sandbox/optimize` - Sweep min-prob thresholds and return the ROI-maximizing value plus the full sweep results.
 
 ### System
 
@@ -259,7 +289,8 @@ The **Analytics** tab displays:
 - **Startup warmup**: First scrape takes ~30–60 sec (depends on Playwright + sportsbook load).
 - **Auto-refresh**: Runs every 15 min by default; adjust `REFRESH_INTERVAL_MINUTES`.
 - **Supabase caching**: Snapshots are cached to accelerate cold-start if <30 min old.
-- **Frontend charts**: Charts.js renders 3 charts + multiple tables; smooth on modern browsers.
+- **Sandbox queries**: `/api/sandbox/run` reads all resolved observatory rows for the selected leagues; expect ~1–2 s on a populated database. Stat-types endpoint pages through the table 1k rows at a time.
+- **Frontend charts**: Charts.js renders multiple charts + tables; smooth on modern browsers.
 
 ## Disclaimer
 
