@@ -203,7 +203,12 @@ class StrategyTester:
 
             # 4. Aggregate Results
             roi = (cumulative_profit / total_bet) if total_bet > 0 else 0
-            win_rate = sum(1 for s in sim_slips if s['profit'] > 0) / len(sim_slips)
+            # Win rate: a "win" is a slip with no missed legs (hits == n_legs).
+            # Denominator excludes slips that were never bet (Kelly sized $0)
+            # so they don't count as misses against the strategy.
+            bet_slips = [s for s in sim_slips if s['bet_size'] > 0]
+            wins_total = sum(1 for s in bet_slips if s['hits'] == s['n_legs'])
+            win_rate = (wins_total / len(bet_slips)) if bet_slips else 0.0
 
             # 5. Drawdown curve (running peak vs cumulative profit, %).
             #    Uses bankroll path so the % is comparable to summary.max_drawdown_pct.
@@ -225,9 +230,10 @@ class StrategyTester:
                 wnd = sim_slips[lo : i + 1]
                 bet_sum = sum(s['bet_size'] for s in wnd)
                 profit_sum = sum(s['profit'] for s in wnd)
-                wins = sum(1 for s in wnd if s['profit'] > 0)
+                wnd_bet = [s for s in wnd if s['bet_size'] > 0]
+                wins = sum(1 for s in wnd_bet if s['hits'] == s['n_legs'])
                 roll_roi = (profit_sum / bet_sum * 100.0) if bet_sum > 0 else 0.0
-                roll_wr = (wins / len(wnd) * 100.0) if wnd else 0.0
+                roll_wr = (wins / len(wnd_bet) * 100.0) if wnd_bet else 0.0
                 rolling.append({
                     "x": sim_slips[i]['timestamp'],
                     "roi": round(roll_roi, 2),
@@ -235,28 +241,37 @@ class StrategyTester:
                 })
 
             # 7. Breakdowns: by stat type (per-leg), by league, by slip hit-count.
+            #    "bet_slips" excludes Kelly $0 entries from the win-rate
+            #    denominator, and a "win" is a perfect slip (no missed legs).
             def _empty():
-                return {"slips": 0, "bet": 0.0, "profit": 0.0, "wins": 0}
+                return {"slips": 0, "bet_slips": 0, "bet": 0.0, "profit": 0.0, "wins": 0}
 
             by_league: Dict[str, Dict] = {}
             by_hits: Dict[int, Dict] = {}
             for s in sim_slips:
+                was_bet = s['bet_size'] > 0
+                is_win = was_bet and s['hits'] == s['n_legs']
+
                 lg = s['league'] or "Unknown"
                 if lg not in by_league:
                     by_league[lg] = _empty()
                 by_league[lg]['slips'] += 1
+                if was_bet:
+                    by_league[lg]['bet_slips'] += 1
                 by_league[lg]['bet'] += s['bet_size']
                 by_league[lg]['profit'] += s['profit']
-                if s['profit'] > 0:
+                if is_win:
                     by_league[lg]['wins'] += 1
 
                 h = int(s['hits'])
                 if h not in by_hits:
                     by_hits[h] = _empty()
                 by_hits[h]['slips'] += 1
+                if was_bet:
+                    by_hits[h]['bet_slips'] += 1
                 by_hits[h]['bet'] += s['bet_size']
                 by_hits[h]['profit'] += s['profit']
-                if s['profit'] > 0:
+                if is_win:
                     by_hits[h]['wins'] += 1
 
             # Stat-type breakdown is per-leg: each leg's contribution to the
@@ -282,15 +297,26 @@ class StrategyTester:
                 out = []
                 for k, v in d.items():
                     bet = v.get('bet', 0.0)
-                    legs = v.get('legs', v.get('slips', 0))
+                    # For slip-level groups, denominator is bet_slips (excludes
+                    # Kelly $0); for the per-leg stat-type group, denominator
+                    # is `legs` and the "wins" field is per-leg hits.
+                    legs = v.get('legs')
+                    if legs is not None:
+                        wr_num = v.get('hits', 0)
+                        wr_den = legs
+                        slips_count = legs
+                    else:
+                        wr_num = v.get('wins', 0)
+                        wr_den = v.get('bet_slips', 0)
+                        slips_count = v.get('slips', 0)
                     out.append({
                         key_label: k,
-                        "slips": v.get('slips', legs),
+                        "slips": slips_count,
                         "bet": round(bet, 2),
                         "profit": round(v['profit'], 2),
                         "roi_pct": round((v['profit'] / bet * 100.0) if bet > 0 else 0.0, 2),
                         "win_rate_pct": round(
-                            (v.get('wins', v.get('hits', 0)) / legs * 100.0) if legs else 0.0,
+                            (wr_num / wr_den * 100.0) if wr_den else 0.0,
                             2,
                         ),
                     })
