@@ -741,27 +741,76 @@
             </div>
             <div class="control-group">
               <label>Stat Types <span style="font-size:0.85em; opacity:0.6;">(none = all)</span></label>
-              <div class="league-chips" id="sb-prop-chips" style="max-height: 120px; overflow-y: auto;">
-                <button class="chip" data-val="Points">Points</button>
-                <button class="chip" data-val="Rebounds">Rebounds</button>
-                <button class="chip" data-val="Assists">Assists</button>
-                <button class="chip" data-val="Pts+Rebs+Asts">PRA</button>
-                <button class="chip" data-val="Pts+Rebs">P+R</button>
-                <button class="chip" data-val="Pts+Asts">P+A</button>
-                <button class="chip" data-val="Rebs+Asts">R+A</button>
-                <button class="chip" data-val="3-PT Made">3PT</button>
-                <button class="chip" data-val="Steals">Steals</button>
-                <button class="chip" data-val="Blocked Shots">Blocks</button>
-                <button class="chip" data-val="Double-Double">Dbl-Dbl</button>
-                <button class="chip" data-val="Pitcher Strikeouts">K's</button>
-                <button class="chip" data-val="Hits">Hits</button>
-                <button class="chip" data-val="Runs">Runs</button>
-                <button class="chip" data-val="Total Bases">Tot Bases</button>
-                <button class="chip" data-val="Hits+Runs+RBIs">H+R+RBI</button>
-                <button class="chip" data-val="Earned Runs Allowed">ERA</button>
-                <button class="chip" data-val="Pitching Outs">Outs</button>
-                <button class="chip" data-val="Goals">Goals</button>
-                <button class="chip" data-val="Shots On Goal">SOG</button>
+              <div id="sb-prop-chips" style="max-height: 240px; overflow-y: auto;">
+                <div class="sb-prop-group-label" style="font-size:0.75em; font-weight:600; opacity:0.65; margin:6px 0 4px; letter-spacing:0.05em;">NBA / NCAAB</div>
+                <div class="league-chips">
+                  <button class="chip" data-val="Points">Points</button>
+                  <button class="chip" data-val="Rebounds">Rebounds</button>
+                  <button class="chip" data-val="Assists">Assists</button>
+                  <button class="chip" data-val="Pts+Rebs+Asts">PRA</button>
+                  <button class="chip" data-val="Pts+Rebs">P+R</button>
+                  <button class="chip" data-val="Pts+Asts">P+A</button>
+                  <button class="chip" data-val="Rebs+Asts">R+A</button>
+                  <button class="chip" data-val="3-PT Made">3PT</button>
+                  <button class="chip" data-val="Steals">Steals</button>
+                  <button class="chip" data-val="Blocked Shots">Blocks</button>
+                  <button class="chip" data-val="Blks+Stls">Blks+Stls</button>
+                  <button class="chip" data-val="Turnovers">Turnovers</button>
+                  <button class="chip" data-val="Double-Double">Dbl-Dbl</button>
+                  <button class="chip" data-val="Triple-Double">Trp-Dbl</button>
+                  <button class="chip" data-val="Fantasy Score">Fantasy</button>
+                  <button class="chip" data-val="Offensive Rebounds">Off Reb</button>
+                  <button class="chip" data-val="Defensive Rebounds">Def Reb</button>
+                  <button class="chip" data-val="FG Made">FGM</button>
+                  <button class="chip" data-val="FG Attempted">FGA</button>
+                  <button class="chip" data-val="Free Throws Made">FTM</button>
+                  <button class="chip" data-val="Free Throws Attempted">FTA</button>
+                  <button class="chip" data-val="Personal Fouls">Fouls</button>
+                  <button class="chip" data-val="First Basket">1st Basket</button>
+                </div>
+                <div class="sb-prop-group-label" style="font-size:0.75em; font-weight:600; opacity:0.65; margin:10px 0 4px; letter-spacing:0.05em;">MLB</div>
+                <div class="league-chips">
+                  <button class="chip" data-val="Pitcher Strikeouts">K's</button>
+                  <button class="chip" data-val="Hitter Strikeouts">Hitter K's</button>
+                  <button class="chip" data-val="Hits">Hits</button>
+                  <button class="chip" data-val="Runs">Runs</button>
+                  <button class="chip" data-val="RBIs">RBIs</button>
+                  <button class="chip" data-val="Total Bases">Tot Bases</button>
+                  <button class="chip" data-val="Hits+Runs+RBIs">H+R+RBI</button>
+                  <button class="chip" data-val="Runs+RBIs">R+RBI</button>
+                  <button class="chip" data-val="Walks">Walks</button>
+                  <button class="chip" data-val="Earned Runs Allowed">ERA</button>
+                  <button class="chip" data-val="Hits Allowed">Hits Allowed</button>
+                  <button class="chip" data-val="Pitching Outs">Outs</button>
+                  <button class="chip" data-val="Hitter Fantasy Score">Hitter Fant</button>
+                  <button class="chip" data-val="Home Runs">HRs</button>
+                  <button class="chip" data-val="Stolen Bases">SBs</button>
+                  <button class="chip" data-val="Singles">1B</button>
+                  <button class="chip" data-val="Doubles">2B</button>
+                  <button class="chip" data-val="Triples">3B</button>
+                  <button class="chip" data-val="Extra Base Hits">XBH</button>
+                </div>
+                <div class="sb-prop-group-label" style="font-size:0.75em; font-weight:600; opacity:0.65; margin:10px 0 4px; letter-spacing:0.05em;">NHL</div>
+                <div class="league-chips">
+                  <button class="chip" data-val="Goals">Goals</button>
+                  <button class="chip" data-val="Shots on Goal">SOG</button>
+                  <button class="chip" data-val="Saves">Saves</button>
+                  <button class="chip" data-val="Time On Ice">TOI</button>
+                  <button class="chip" data-val="Power Play Points">PPP</button>
+                  <button class="chip" data-val="1st Period Goals">1st Per Goals</button>
+                </div>
+                <div class="sb-prop-group-label" style="font-size:0.75em; font-weight:600; opacity:0.65; margin:10px 0 4px; letter-spacing:0.05em;">SOCCER</div>
+                <div class="league-chips">
+                  <button class="chip" data-val="Shots On Target">SOT</button>
+                  <button class="chip" data-val="Shots">Shots</button>
+                  <button class="chip" data-val="Shots Assisted">Shots Asst</button>
+                  <button class="chip" data-val="Passes Attempted">Passes</button>
+                  <button class="chip" data-val="Tackles">Tackles</button>
+                  <button class="chip" data-val="Crosses">Crosses</button>
+                  <button class="chip" data-val="Clearances">Clearances</button>
+                  <button class="chip" data-val="Goalie Saves">Goalie Saves</button>
+                  <button class="chip" data-val="Attempted Dribbles">Dribbles</button>
+                </div>
               </div>
             </div>
             <div class="control-group">
