@@ -178,6 +178,29 @@ class StrategyTester:
             if not sim_slips:
                 return {"error": f"Could not form any {config.slip_size}-leg slips from history."}
 
+            # Sort slips chronologically before building any time-series.
+            # Within a slate the inner loop emits slips ordered by leg
+            # probability, not time, so the per-slip timestamp can jump
+            # backwards inside a single date — which makes charts plot
+            # date axes out of order. Sorting here (and rebuilding the
+            # equity curve from scratch) keeps all derived series in
+            # true chronological order.
+            def _ts(s):
+                try:
+                    return pd.to_datetime(s['timestamp'])
+                except Exception:
+                    return pd.Timestamp.max
+            sim_slips.sort(key=_ts)
+
+            equity_curve = []
+            running_cum = 0.0
+            for s in sim_slips:
+                running_cum += s['profit']
+                equity_curve.append({
+                    "x": s['timestamp'],
+                    "y": round(running_cum, 2),
+                })
+
             # 4. Aggregate Results
             roi = (cumulative_profit / total_bet) if total_bet > 0 else 0
             win_rate = sum(1 for s in sim_slips if s['profit'] > 0) / len(sim_slips)
