@@ -764,6 +764,9 @@ th.sortable-pp.active.asc::after {
   color: var(--red);
 }
 
+td.positive { color: var(--green); }
+td.negative { color: var(--red); }
+
 .bt-actions {
   display: flex;
   gap: 10px;

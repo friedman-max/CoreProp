@@ -182,6 +182,103 @@ class StrategyTester:
             roi = (cumulative_profit / total_bet) if total_bet > 0 else 0
             win_rate = sum(1 for s in sim_slips if s['profit'] > 0) / len(sim_slips)
 
+            # 5. Drawdown curve (running peak vs cumulative profit, %).
+            #    Uses bankroll path so the % is comparable to summary.max_drawdown_pct.
+            drawdown_curve = []
+            peak = config.bankroll
+            running = config.bankroll
+            for s in sim_slips:
+                running += s['profit']
+                if running > peak:
+                    peak = running
+                dd_pct = ((peak - running) / peak * 100.0) if peak > 0 else 0.0
+                drawdown_curve.append({"x": s['timestamp'], "y": round(dd_pct, 3)})
+
+            # 6. Rolling ROI / win-rate (window sized to ~10% of slip count, clamped 20-100).
+            window = max(20, min(100, len(sim_slips) // 10 or 20))
+            rolling = []
+            for i in range(len(sim_slips)):
+                lo = max(0, i - window + 1)
+                wnd = sim_slips[lo : i + 1]
+                bet_sum = sum(s['bet_size'] for s in wnd)
+                profit_sum = sum(s['profit'] for s in wnd)
+                wins = sum(1 for s in wnd if s['profit'] > 0)
+                roll_roi = (profit_sum / bet_sum * 100.0) if bet_sum > 0 else 0.0
+                roll_wr = (wins / len(wnd) * 100.0) if wnd else 0.0
+                rolling.append({
+                    "x": sim_slips[i]['timestamp'],
+                    "roi": round(roll_roi, 2),
+                    "win_rate": round(roll_wr, 2),
+                })
+
+            # 7. Breakdowns: by stat type (per-leg), by league, by slip hit-count.
+            def _empty():
+                return {"slips": 0, "bet": 0.0, "profit": 0.0, "wins": 0}
+
+            by_league: Dict[str, Dict] = {}
+            by_hits: Dict[int, Dict] = {}
+            for s in sim_slips:
+                lg = s['league'] or "Unknown"
+                if lg not in by_league:
+                    by_league[lg] = _empty()
+                by_league[lg]['slips'] += 1
+                by_league[lg]['bet'] += s['bet_size']
+                by_league[lg]['profit'] += s['profit']
+                if s['profit'] > 0:
+                    by_league[lg]['wins'] += 1
+
+                h = int(s['hits'])
+                if h not in by_hits:
+                    by_hits[h] = _empty()
+                by_hits[h]['slips'] += 1
+                by_hits[h]['bet'] += s['bet_size']
+                by_hits[h]['profit'] += s['profit']
+                if s['profit'] > 0:
+                    by_hits[h]['wins'] += 1
+
+            # Stat-type breakdown is per-leg: each leg's contribution to the
+            # slip is its proportional bet (bet_size / n_legs) and proportional
+            # profit. This isn't a true attribution (slips are correlated bets),
+            # but it gives a useful signal of which stat types appear in
+            # winning vs losing slips.
+            by_stat: Dict[str, Dict] = {}
+            for s in sim_slips:
+                per_leg_bet = s['bet_size'] / s['n_legs'] if s['n_legs'] else 0.0
+                per_leg_profit = s['profit'] / s['n_legs'] if s['n_legs'] else 0.0
+                for leg in s.get('legs', []):
+                    prop = (leg.get('prop') or "Unknown").strip() or "Unknown"
+                    if prop not in by_stat:
+                        by_stat[prop] = {"legs": 0, "bet": 0.0, "profit": 0.0, "hits": 0}
+                    by_stat[prop]['legs'] += 1
+                    by_stat[prop]['bet'] += per_leg_bet
+                    by_stat[prop]['profit'] += per_leg_profit
+                    if leg.get('result') == 'hit':
+                        by_stat[prop]['hits'] += 1
+
+            def _finalize_group(d, key_label):
+                out = []
+                for k, v in d.items():
+                    bet = v.get('bet', 0.0)
+                    legs = v.get('legs', v.get('slips', 0))
+                    out.append({
+                        key_label: k,
+                        "slips": v.get('slips', legs),
+                        "bet": round(bet, 2),
+                        "profit": round(v['profit'], 2),
+                        "roi_pct": round((v['profit'] / bet * 100.0) if bet > 0 else 0.0, 2),
+                        "win_rate_pct": round(
+                            (v.get('wins', v.get('hits', 0)) / legs * 100.0) if legs else 0.0,
+                            2,
+                        ),
+                    })
+                return sorted(out, key=lambda r: r['profit'], reverse=True)
+
+            breakdowns = {
+                "by_league": _finalize_group(by_league, "league"),
+                "by_hits":   _finalize_group(by_hits, "hits"),
+                "by_stat":   _finalize_group(by_stat, "stat_type"),
+            }
+
             return {
                 "summary": {
                     "total_slips": len(sim_slips),
@@ -190,9 +287,13 @@ class StrategyTester:
                     "roi_pct": round(roi * 100, 2),
                     "win_rate_pct": round(win_rate * 100, 2),
                     "max_drawdown_pct": round(max_drawdown * 100, 2),
+                    "rolling_window": window,
                 },
                 "equity_curve": equity_curve,
-                "slips": sim_slips[-50:] # Return last 50 for the UI log
+                "drawdown_curve": drawdown_curve,
+                "rolling": rolling,
+                "breakdowns": breakdowns,
+                "slips": sim_slips,
             }
         except Exception as e:
             logger.exception("Simulation failed")

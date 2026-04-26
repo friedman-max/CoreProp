@@ -1401,6 +1401,50 @@ class SandboxRequest(BaseModel):
     use_kelly:      bool      = False
     included_props: list[str] = []
 
+@app.get("/api/sandbox/stat-types")
+def list_sandbox_stat_types(user: dict = Depends(get_current_user)):
+    """Return distinct (league, stat_type) pairs from market_observatory so
+    the Sandbox UI shows only filter chips that will actually match data.
+    Pages through results because the supabase client caps a single
+    response at 1000 rows."""
+    from engine.database import get_db
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not connected")
+
+    grouped: dict[str, set] = {}
+    PAGE = 1000
+    offset = 0
+    try:
+        while True:
+            res = (
+                db.table("market_observatory")
+                .select("league,prop")
+                .range(offset, offset + PAGE - 1)
+                .execute()
+            )
+            rows = res.data or []
+            if not rows:
+                break
+            for r in rows:
+                lg = (r.get("league") or "").strip() or "Unknown"
+                prop = (r.get("prop") or "").strip()
+                if not prop:
+                    continue
+                grouped.setdefault(lg, set()).add(prop)
+            if len(rows) < PAGE:
+                break
+            offset += PAGE
+            # Hard cap to avoid pathological loops on a runaway table.
+            if offset > 200000:
+                break
+    except Exception as e:
+        logger.exception("stat-types endpoint failed")
+        raise HTTPException(status_code=500, detail=f"DB query failed: {e}")
+
+    return {lg: sorted(props) for lg, props in sorted(grouped.items())}
+
+
 @app.post("/api/sandbox/run")
 def run_sandbox_simulation(req: SandboxRequest, user: dict = Depends(get_current_user)):
     from engine.strategy_tester import StrategyTester, StrategyConfig

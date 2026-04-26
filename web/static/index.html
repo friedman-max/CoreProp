@@ -742,75 +742,7 @@
             <div class="control-group">
               <label>Stat Types <span style="font-size:0.85em; opacity:0.6;">(none = all)</span></label>
               <div id="sb-prop-chips" style="max-height: 240px; overflow-y: auto;">
-                <div class="sb-prop-group-label" style="font-size:0.75em; font-weight:600; opacity:0.65; margin:6px 0 4px; letter-spacing:0.05em;">NBA / NCAAB</div>
-                <div class="league-chips">
-                  <button class="chip" data-val="Points">Points</button>
-                  <button class="chip" data-val="Rebounds">Rebounds</button>
-                  <button class="chip" data-val="Assists">Assists</button>
-                  <button class="chip" data-val="Pts+Rebs+Asts">PRA</button>
-                  <button class="chip" data-val="Pts+Rebs">P+R</button>
-                  <button class="chip" data-val="Pts+Asts">P+A</button>
-                  <button class="chip" data-val="Rebs+Asts">R+A</button>
-                  <button class="chip" data-val="3-PT Made">3PT</button>
-                  <button class="chip" data-val="Steals">Steals</button>
-                  <button class="chip" data-val="Blocked Shots">Blocks</button>
-                  <button class="chip" data-val="Blks+Stls">Blks+Stls</button>
-                  <button class="chip" data-val="Turnovers">Turnovers</button>
-                  <button class="chip" data-val="Double-Double">Dbl-Dbl</button>
-                  <button class="chip" data-val="Triple-Double">Trp-Dbl</button>
-                  <button class="chip" data-val="Fantasy Score">Fantasy</button>
-                  <button class="chip" data-val="Offensive Rebounds">Off Reb</button>
-                  <button class="chip" data-val="Defensive Rebounds">Def Reb</button>
-                  <button class="chip" data-val="FG Made">FGM</button>
-                  <button class="chip" data-val="FG Attempted">FGA</button>
-                  <button class="chip" data-val="Free Throws Made">FTM</button>
-                  <button class="chip" data-val="Free Throws Attempted">FTA</button>
-                  <button class="chip" data-val="Personal Fouls">Fouls</button>
-                  <button class="chip" data-val="First Basket">1st Basket</button>
-                </div>
-                <div class="sb-prop-group-label" style="font-size:0.75em; font-weight:600; opacity:0.65; margin:10px 0 4px; letter-spacing:0.05em;">MLB</div>
-                <div class="league-chips">
-                  <button class="chip" data-val="Pitcher Strikeouts">K's</button>
-                  <button class="chip" data-val="Hitter Strikeouts">Hitter K's</button>
-                  <button class="chip" data-val="Hits">Hits</button>
-                  <button class="chip" data-val="Runs">Runs</button>
-                  <button class="chip" data-val="RBIs">RBIs</button>
-                  <button class="chip" data-val="Total Bases">Tot Bases</button>
-                  <button class="chip" data-val="Hits+Runs+RBIs">H+R+RBI</button>
-                  <button class="chip" data-val="Runs+RBIs">R+RBI</button>
-                  <button class="chip" data-val="Walks">Walks</button>
-                  <button class="chip" data-val="Earned Runs Allowed">ERA</button>
-                  <button class="chip" data-val="Hits Allowed">Hits Allowed</button>
-                  <button class="chip" data-val="Pitching Outs">Outs</button>
-                  <button class="chip" data-val="Hitter Fantasy Score">Hitter Fant</button>
-                  <button class="chip" data-val="Home Runs">HRs</button>
-                  <button class="chip" data-val="Stolen Bases">SBs</button>
-                  <button class="chip" data-val="Singles">1B</button>
-                  <button class="chip" data-val="Doubles">2B</button>
-                  <button class="chip" data-val="Triples">3B</button>
-                  <button class="chip" data-val="Extra Base Hits">XBH</button>
-                </div>
-                <div class="sb-prop-group-label" style="font-size:0.75em; font-weight:600; opacity:0.65; margin:10px 0 4px; letter-spacing:0.05em;">NHL</div>
-                <div class="league-chips">
-                  <button class="chip" data-val="Goals">Goals</button>
-                  <button class="chip" data-val="Shots on Goal">SOG</button>
-                  <button class="chip" data-val="Saves">Saves</button>
-                  <button class="chip" data-val="Time On Ice">TOI</button>
-                  <button class="chip" data-val="Power Play Points">PPP</button>
-                  <button class="chip" data-val="1st Period Goals">1st Per Goals</button>
-                </div>
-                <div class="sb-prop-group-label" style="font-size:0.75em; font-weight:600; opacity:0.65; margin:10px 0 4px; letter-spacing:0.05em;">SOCCER</div>
-                <div class="league-chips">
-                  <button class="chip" data-val="Shots On Target">SOT</button>
-                  <button class="chip" data-val="Shots">Shots</button>
-                  <button class="chip" data-val="Shots Assisted">Shots Asst</button>
-                  <button class="chip" data-val="Passes Attempted">Passes</button>
-                  <button class="chip" data-val="Tackles">Tackles</button>
-                  <button class="chip" data-val="Crosses">Crosses</button>
-                  <button class="chip" data-val="Clearances">Clearances</button>
-                  <button class="chip" data-val="Goalie Saves">Goalie Saves</button>
-                  <button class="chip" data-val="Attempted Dribbles">Dribbles</button>
-                </div>
+                <div style="font-size:0.8em; opacity:0.5; padding:8px 0;">Loading…</div>
               </div>
             </div>
             <div class="control-group">
@@ -848,12 +780,70 @@
           </div>
         </div>
 
-        <div class="analytics-panel">
-          <div class="analytics-panel-header">
-            <h3>Cumulative Performance</h3>
-            <span class="analytics-subtitle" id="sb-subtitle">Historical ROI based on your strategy</span>
+        <div class="analytics-panel" style="flex:1; display:flex; flex-direction:column; gap:16px;">
+          <div>
+            <div class="analytics-panel-header">
+              <h3>Cumulative Performance</h3>
+              <span class="analytics-subtitle" id="sb-subtitle">Historical ROI based on your strategy</span>
+            </div>
+            <div class="chart-wrap" style="height:300px;"><canvas id="chart-sandbox-equity"></canvas></div>
           </div>
-          <div class="chart-wrap" style="height:350px;"><canvas id="chart-sandbox-equity"></canvas></div>
+
+          <div id="sb-extra-charts" style="display:none; gap:16px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:300px;">
+              <div class="analytics-panel-header">
+                <h3>Drawdown</h3>
+                <span class="analytics-subtitle">% off peak bankroll</span>
+              </div>
+              <div class="chart-wrap" style="height:200px;"><canvas id="chart-sandbox-drawdown"></canvas></div>
+            </div>
+            <div style="flex:1; min-width:300px;">
+              <div class="analytics-panel-header">
+                <h3>Rolling ROI &amp; Win Rate</h3>
+                <span class="analytics-subtitle" id="sb-rolling-subtitle">Window: —</span>
+              </div>
+              <div class="chart-wrap" style="height:200px;"><canvas id="chart-sandbox-rolling"></canvas></div>
+            </div>
+          </div>
+
+          <div id="sb-breakdowns" style="display:none; gap:16px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:280px;">
+              <div class="analytics-panel-header"><h3>By Stat Type</h3></div>
+              <div class="table-wrapper" style="max-height:260px; overflow:auto;">
+                <table><thead><tr>
+                  <th>Stat Type</th><th style="text-align:right;">Legs</th><th style="text-align:right;">Hit %</th><th style="text-align:right;">ROI %</th><th style="text-align:right;">Profit</th>
+                </tr></thead><tbody id="sb-breakdown-stat"></tbody></table>
+              </div>
+            </div>
+            <div style="flex:1; min-width:240px;">
+              <div class="analytics-panel-header"><h3>By League</h3></div>
+              <div class="table-wrapper" style="max-height:260px; overflow:auto;">
+                <table><thead><tr>
+                  <th>League</th><th style="text-align:right;">Slips</th><th style="text-align:right;">Win %</th><th style="text-align:right;">ROI %</th><th style="text-align:right;">Profit</th>
+                </tr></thead><tbody id="sb-breakdown-league"></tbody></table>
+              </div>
+            </div>
+            <div style="flex:0 0 220px; min-width:200px;">
+              <div class="analytics-panel-header"><h3>By Hits</h3></div>
+              <div class="table-wrapper" style="max-height:260px; overflow:auto;">
+                <table><thead><tr>
+                  <th>Hits</th><th style="text-align:right;">Slips</th><th style="text-align:right;">%</th>
+                </tr></thead><tbody id="sb-breakdown-hits"></tbody></table>
+              </div>
+            </div>
+          </div>
+
+          <div id="sb-slip-log" style="display:none;">
+            <div class="analytics-panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <h3>Slip Log <span id="sb-slip-count" style="font-size:0.75em; opacity:0.6; font-weight:400;"></span></h3>
+              <button id="btn-sb-export" class="btn btn-sm btn-outline" style="padding:2px 10px; font-size:11px;">Export CSV</button>
+            </div>
+            <div class="table-wrapper" style="max-height:360px; overflow:auto;">
+              <table id="sb-slip-table"><thead><tr>
+                <th>Date</th><th>League</th><th>Legs</th><th>Hits</th><th>Stake</th><th>Payout</th><th>P/L</th><th>Detail</th>
+              </tr></thead><tbody id="sb-slip-log-body"></tbody></table>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -863,7 +853,7 @@
 
 
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script defer src="/static/app.js?v=25"></script>
+  <script defer src="/static/app.js?v=28"></script>
 </body>
 
 </html>

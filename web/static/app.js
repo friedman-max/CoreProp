@@ -2791,6 +2791,9 @@ setInterval(fetchStatus, 10_000);
 
 // ── Sandbox Logic ────────────────────────────────────────────────────────
 let sandboxChart = null;
+let sandboxDrawdownChart = null;
+let sandboxRollingChart = null;
+let sandboxLastSlips = [];
 let sandboxInitialized = false;
 
 function initSandbox() {
@@ -2804,12 +2807,19 @@ function initSandbox() {
         });
     });
 
-    // 1b. Stat-type chip toggles
-    document.querySelectorAll("#sb-prop-chips .chip").forEach(chip => {
-        chip.addEventListener("click", () => {
-            chip.classList.toggle("active");
+    // 1b. Stat-type chips — populate dynamically from the actual DB so labels
+    // always match what's in market_observatory. Then wire toggles via
+    // event delegation (works even though chips are added asynchronously).
+    loadSandboxStatTypes();
+    const propsContainer = $("sb-prop-chips");
+    if (propsContainer) {
+        propsContainer.addEventListener("click", (e) => {
+            const chip = e.target.closest(".chip");
+            if (chip && propsContainer.contains(chip)) {
+                chip.classList.toggle("active");
+            }
         });
-    });
+    }
 
     // 2. Prob range slider
     const probRange = $("sb-range-prob");
@@ -2851,6 +2861,54 @@ function initSandbox() {
     const btnOptimize = $("btn-optimize-prob");
     if (btnOptimize) {
         btnOptimize.onclick = optimizeSandboxThreshold;
+    }
+
+    // 6. Export CSV
+    const btnExport = $("btn-sb-export");
+    if (btnExport) {
+        btnExport.onclick = exportSandboxCSV;
+    }
+}
+
+async function loadSandboxStatTypes() {
+    const container = $("sb-prop-chips");
+    if (!container) return;
+    try {
+        const res = await apiFetch("/api/sandbox/stat-types");
+        if (!res.ok) {
+            let msg = res.status + ' ' + res.statusText;
+            try {
+                const err = await res.json();
+                if (err && err.detail) msg = err.detail;
+            } catch (_) { /* not JSON */ }
+            container.innerHTML = `<div style="font-size:0.8em; opacity:0.6; padding:8px 0;">Failed to load stat types: ${escapeHtml(msg)}</div>`;
+            return;
+        }
+        const groups = await res.json();
+        const leagueOrder = ["NBA", "NCAAB", "MLB", "NHL", "SOCCER"];
+        const sortedLeagues = Object.keys(groups).sort((a, b) => {
+            const ia = leagueOrder.indexOf(a);
+            const ib = leagueOrder.indexOf(b);
+            if (ia === -1 && ib === -1) return a.localeCompare(b);
+            if (ia === -1) return 1;
+            if (ib === -1) return -1;
+            return ia - ib;
+        });
+
+        const parts = [];
+        for (const lg of sortedLeagues) {
+            const props = groups[lg] || [];
+            if (!props.length) continue;
+            parts.push(`<div style="font-size:0.75em; font-weight:600; opacity:0.65; margin:6px 0 4px; letter-spacing:0.05em;">${escapeHtml(lg)}</div>`);
+            parts.push('<div class="league-chips">');
+            for (const p of props) {
+                parts.push(`<button class="chip" data-val="${escapeHtml(p)}" title="${escapeHtml(p)}">${escapeHtml(p)}</button>`);
+            }
+            parts.push('</div>');
+        }
+        container.innerHTML = parts.join('') || '<div style="font-size:0.8em; opacity:0.5; padding:8px 0;">No stat types found yet.</div>';
+    } catch (e) {
+        container.innerHTML = '<div style="font-size:0.8em; opacity:0.5; padding:8px 0;">Network error loading stat types.</div>';
     }
 }
 
@@ -2991,10 +3049,16 @@ function renderSandboxResults(data) {
     $("sb-metric-winrate").textContent = s.win_rate_pct + "%";
     $("sb-metric-drawdown").textContent = s.max_drawdown_pct + "%";
 
-    // Update Chart
+    sandboxLastSlips = data.slips || [];
+
+    const baseScales = {
+        y: { grid: { color: '#2a2f42' }, ticks: { color: '#7a80a0' } },
+        x: { grid: { display: false }, ticks: { color: '#7a80a0', maxRotation: 45, autoSkip: true } }
+    };
+
+    // ── Equity curve ────────────────────────────────────────────────
     const ctx = $("chart-sandbox-equity").getContext("2d");
     if (sandboxChart) sandboxChart.destroy();
-
     sandboxChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -3013,13 +3077,197 @@ function renderSandboxResults(data) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            scales: {
-                y: { grid: { color: '#2a2f42' }, ticks: { color: '#7a80a0' } },
-                x: { grid: { display: false }, ticks: { color: '#7a80a0', maxRotation: 45, autoSkip: true } }
-            },
-            plugins: {
-                legend: { display: false }
-            }
+            scales: baseScales,
+            plugins: { legend: { display: false } }
         }
     });
+
+    // ── Drawdown chart ──────────────────────────────────────────────
+    if (data.drawdown_curve && data.drawdown_curve.length) {
+        $("sb-extra-charts").style.display = "flex";
+        const ddCtx = $("chart-sandbox-drawdown").getContext("2d");
+        if (sandboxDrawdownChart) sandboxDrawdownChart.destroy();
+        sandboxDrawdownChart = new Chart(ddCtx, {
+            type: 'line',
+            data: {
+                labels: data.drawdown_curve.map(p => new Date(p.x).toLocaleDateString()),
+                datasets: [{
+                    label: 'Drawdown %',
+                    data: data.drawdown_curve.map(p => -p.y), // negative so the chart dips down
+                    borderColor: '#ef4444',
+                    borderWidth: 1.5,
+                    fill: true,
+                    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                    tension: 0.1,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { grid: { color: '#2a2f42' }, ticks: { color: '#7a80a0', callback: v => v + '%' } },
+                    x: baseScales.x
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+
+    // ── Rolling ROI / win-rate chart ────────────────────────────────
+    if (data.rolling && data.rolling.length) {
+        $("sb-rolling-subtitle").textContent = `Window: last ${s.rolling_window} slips`;
+        const rCtx = $("chart-sandbox-rolling").getContext("2d");
+        if (sandboxRollingChart) sandboxRollingChart.destroy();
+        sandboxRollingChart = new Chart(rCtx, {
+            type: 'line',
+            data: {
+                labels: data.rolling.map(p => new Date(p.x).toLocaleDateString()),
+                datasets: [
+                    {
+                        label: 'Rolling ROI %',
+                        data: data.rolling.map(p => p.roi),
+                        borderColor: '#3b82f6',
+                        borderWidth: 1.5,
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 0,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Rolling Win %',
+                        data: data.rolling.map(p => p.win_rate),
+                        borderColor: '#a855f7',
+                        borderWidth: 1.5,
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 0,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    y: {
+                        position: 'left',
+                        grid: { color: '#2a2f42' },
+                        ticks: { color: '#3b82f6', callback: v => v + '%' }
+                    },
+                    y1: {
+                        position: 'right',
+                        grid: { display: false },
+                        ticks: { color: '#a855f7', callback: v => v + '%' }
+                    },
+                    x: baseScales.x
+                },
+                plugins: {
+                    legend: { labels: { color: '#7a80a0', boxWidth: 12 } }
+                }
+            }
+        });
+    }
+
+    // ── Breakdown tables ────────────────────────────────────────────
+    const bd = data.breakdowns || {};
+    const sign = v => (v >= 0 ? 'positive' : 'negative');
+    const pct = v => (v == null ? '—' : v.toFixed(2) + '%');
+
+    const totalSlips = s.total_slips || 1;
+
+    if (bd.by_stat || bd.by_league || bd.by_hits) {
+        $("sb-breakdowns").style.display = "flex";
+    }
+
+    if (bd.by_stat) {
+        $("sb-breakdown-stat").innerHTML = bd.by_stat.map(r => `
+            <tr>
+              <td>${escapeHtml(r.stat_type)}</td>
+              <td style="text-align:right;">${r.slips}</td>
+              <td style="text-align:right;">${pct(r.win_rate_pct)}</td>
+              <td style="text-align:right;" class="${sign(r.roi_pct)}">${pct(r.roi_pct)}</td>
+              <td style="text-align:right;" class="${sign(r.profit)}">${fmt.dollar(r.profit)}</td>
+            </tr>
+        `).join('');
+    }
+    if (bd.by_league) {
+        $("sb-breakdown-league").innerHTML = bd.by_league.map(r => `
+            <tr>
+              <td>${escapeHtml(r.league)}</td>
+              <td style="text-align:right;">${r.slips}</td>
+              <td style="text-align:right;">${pct(r.win_rate_pct)}</td>
+              <td style="text-align:right;" class="${sign(r.roi_pct)}">${pct(r.roi_pct)}</td>
+              <td style="text-align:right;" class="${sign(r.profit)}">${fmt.dollar(r.profit)}</td>
+            </tr>
+        `).join('');
+    }
+    if (bd.by_hits) {
+        const sortedHits = [...bd.by_hits].sort((a, b) => b.hits - a.hits);
+        $("sb-breakdown-hits").innerHTML = sortedHits.map(r => `
+            <tr>
+              <td>${r.hits}</td>
+              <td style="text-align:right;">${r.slips}</td>
+              <td style="text-align:right;">${(r.slips / totalSlips * 100).toFixed(1)}%</td>
+            </tr>
+        `).join('');
+    }
+
+    // ── Slip log ────────────────────────────────────────────────────
+    if (sandboxLastSlips.length) {
+        $("sb-slip-log").style.display = "block";
+        $("sb-slip-count").textContent = `(${sandboxLastSlips.length} slips, newest first)`;
+        const rows = [...sandboxLastSlips].reverse().slice(0, 500).map((sl, idx) => {
+            const dateStr = sl.timestamp ? new Date(sl.timestamp).toLocaleDateString() : '—';
+            const detail = (sl.legs || []).map(l =>
+                `${escapeHtml(l.player || '?')} (${escapeHtml(l.prop || '?')}) ${l.result === 'hit' ? '✓' : '✗'}`
+            ).join(' · ');
+            return `
+              <tr>
+                <td>${dateStr}</td>
+                <td>${escapeHtml(sl.league || '—')}</td>
+                <td>${sl.n_legs}</td>
+                <td>${sl.hits}/${sl.n_legs}</td>
+                <td>${fmt.dollar(sl.bet_size)}</td>
+                <td>${fmt.dollar(sl.payout)}</td>
+                <td class="${sign(sl.profit)}">${fmt.dollar(sl.profit)}</td>
+                <td style="font-size:0.85em; opacity:0.8;">${detail}</td>
+              </tr>
+            `;
+        }).join('');
+        $("sb-slip-log-body").innerHTML = rows;
+    }
+}
+
+function exportSandboxCSV() {
+    if (!sandboxLastSlips.length) {
+        showToast("Run a simulation first.", "warning");
+        return;
+    }
+    const header = ["timestamp", "league", "n_legs", "hits", "bet_size", "payout", "profit", "legs"];
+    const rows = sandboxLastSlips.map(s => {
+        const legs = (s.legs || []).map(l => `${l.player}|${l.prop}|${l.true_prob}|${l.result}`).join(';');
+        return [
+            s.timestamp || '',
+            s.league || '',
+            s.n_legs,
+            s.hits,
+            s.bet_size,
+            s.payout,
+            s.profit,
+            legs
+        ].map(v => {
+            const str = String(v).replace(/"/g, '""');
+            return /[",\n]/.test(str) ? `"${str}"` : str;
+        }).join(',');
+    });
+    const csv = [header.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sandbox-slips-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
 }
