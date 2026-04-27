@@ -420,15 +420,29 @@ tbody tr.selected {
   font-weight: 600;
 }
 
-.bankroll-row label {
+.slip-prefs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.slip-prefs-row {
+  display: flex;
+  gap: 8px;
+}
+
+.slip-prefs label {
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
   color: var(--text-muted);
+  flex: 1;
 }
 
-.bankroll-row input {
+.slip-prefs select,
+.slip-prefs input[type="number"] {
   background: var(--surface2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -438,9 +452,39 @@ tbody tr.selected {
   width: 100%;
 }
 
-.bankroll-row input:focus {
+.slip-prefs select:focus,
+.slip-prefs input[type="number"]:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.slip-min-prob-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.slip-min-prob-be {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.slip-min-prob-control {
+  display: flex;
+  gap: 6px;
+}
+
+.slip-min-prob-be-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.slip-save-btn {
+  margin-top: 12px;
 }
 
 .slip-legs {

@@ -2,17 +2,20 @@
 Hardcoded PrizePicks break-even table and payout structures.
 """
 
-# Break-even probability per slip type (from PrizePicks official table)
+# Per-leg break-even probability for each slip type, derived from the actual
+# payout structures below. Power is closed-form: p = (1/payout)^(1/n_legs).
+# Flex is solved numerically against the partial-payout schedule (the
+# probability where E[payout] = 1).
 BREAK_EVEN = {
-    ("2", "power"): 0.5763,
-    ("3", "power"): 0.5495,
-    ("3", "flex"):  0.5781,
-    ("4", "power"): 0.5614,
-    ("4", "flex"):  0.5495,
-    ("5", "power"): 0.5495,
-    ("5", "flex"):  0.5434,
-    ("6", "power"): 0.5475,
-    ("6", "flex"):  0.5434,
+    ("2", "power"): 0.5774,   # (1/3)^(1/2)
+    ("3", "power"): 0.5503,   # (1/6)^(1/3)
+    ("3", "flex"):  0.5774,
+    ("4", "power"): 0.5623,   # (1/10)^(1/4)
+    ("4", "flex"):  0.5503,
+    ("5", "power"): 0.5493,   # (1/20)^(1/5)
+    ("5", "flex"):  0.5425,
+    ("6", "power"): 0.5407,   # (1/40)^(1/6)
+    ("6", "flex"):  0.5421,
 }
 
 # Power slip payout multipliers (decimal, e.g. 3x means you get 3x your stake back)

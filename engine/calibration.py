@@ -35,7 +35,10 @@ def _load_resolved_rows(user_jwt: str) -> list[dict]:
         return []
 
     try:
-        res = db.table("legs").select("*").in_("result", ["won", "win", "hit", "1", "lost", "loss", "miss", "0"]).execute()
+        # Project only the columns we use; `select("*")` was pulling every
+        # leg's worth of CLV/odds/timestamp baggage into RAM.
+        cols = "result, true_prob, player, prop, side, league, slip_id"
+        res = db.table("legs").select(cols).in_("result", ["won", "win", "hit", "1", "lost", "loss", "miss", "0"]).execute()
         rows = []
         for r in res.data:
             outcome = 1 if str(r.get("result")).lower() in ("won", "win", "hit", "1") else 0
@@ -228,7 +231,11 @@ def evaluate_analytics(user_jwt: str) -> dict:
     all_legs: list = []
     if db:
         try:
-            all_legs = (db.table("legs").select("*").execute().data) or []
+            # Project the union of fields used by all downstream consumers
+            # (resolved-rows, CLV rows, slip aggregation). Avoids dragging the
+            # full leg row — odds, devig metadata, etc. — through Python.
+            cols = "result, true_prob, player, prop, side, league, slip_id, closing_prob, clv_pct"
+            all_legs = (db.table("legs").select(cols).execute().data) or []
         except Exception as exc:
             logger.warning("Analytics: legs fetch failed: %s", exc)
             all_legs = []
@@ -305,7 +312,7 @@ def evaluate_analytics(user_jwt: str) -> dict:
 
     if db:
         try:
-            slips_res = db.table("slips").select("*").order("timestamp", desc=False).execute()
+            slips_res = db.table("slips").select("id, timestamp, slip_type").order("timestamp", desc=False).execute()
             # Reuse `all_legs` from above — no second legs query.
             legs_by_slip: dict[str, list] = {}
             for l in all_legs:

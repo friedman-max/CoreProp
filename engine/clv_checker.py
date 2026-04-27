@@ -225,7 +225,10 @@ class CLVTracker:
             return 0
 
         try:
-            res = db.table("legs").select("*").execute()
+            # Only the partial-write recovery path uses these fields — full
+            # leg rows were 3x bigger and the rest is unused.
+            cols = "slip_id, leg_num, closing_prob, clv_pct, true_prob, game_start"
+            res = db.table("legs").select(cols).execute()
             rows = res.data or []
         except Exception as exc:
             logger.error("CLVTracker: cannot read legs from Supabase: %s", exc)

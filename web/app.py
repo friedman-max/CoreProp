@@ -137,6 +137,115 @@ def _invalidate_analytics_cache(user_id: Optional[str] = None):
             _analytics_cache.pop(user_id, None)
 
 
+def _memory_snapshot() -> dict:
+    """Best-effort memory diagnostics for the 512 MB tier. Safe to call from
+    request handlers and post-pipeline logging hooks. Catches everything so a
+    stat-collection failure can't bring the process down."""
+    snap: dict = {}
+
+    # ── RSS / peak / threads via psutil ───────────────────────────────────
+    try:
+        import psutil
+        proc = psutil.Process()
+        mi = proc.memory_info()
+        snap["rss_mb"] = round(mi.rss / 1_048_576, 1)
+        snap["vms_mb"] = round(mi.vms / 1_048_576, 1)
+        try:
+            full = proc.memory_full_info()
+            if hasattr(full, "uss"):
+                snap["uss_mb"] = round(full.uss / 1_048_576, 1)
+        except Exception:
+            pass
+        # Peak RSS — Linux only. /proc/<pid>/status VmHWM is in kB.
+        try:
+            with open(f"/proc/{proc.pid}/status") as f:
+                for line in f:
+                    if line.startswith("VmHWM:"):
+                        snap["peak_rss_mb"] = round(int(line.split()[1]) / 1024, 1)
+                        break
+        except Exception:
+            pass
+        try:
+            snap["num_fds"] = proc.num_fds() if hasattr(proc, "num_fds") else None
+        except Exception:
+            pass
+        snap["thread_count"] = proc.num_threads()
+    except Exception as exc:
+        snap["error"] = f"psutil unavailable: {exc}"
+        snap["thread_count"] = threading.active_count()
+
+    # ── Threads breakdown ─────────────────────────────────────────────────
+    try:
+        names = [t.name for t in threading.enumerate()]
+        snap["threads"] = {"active": len(names), "names": names[:30]}
+    except Exception:
+        pass
+
+    # ── Pre-serialized payload cache ──────────────────────────────────────
+    try:
+        with _payload_lock:
+            sizes = {}
+            total = 0
+            for k, v in _payload_cache.items():
+                if isinstance(v, (bytes, bytearray)):
+                    sz = len(v)
+                    sizes[k] = round(sz / 1024, 1)
+                    total += sz
+                else:
+                    sizes[k] = None
+            snap["payload_cache_kb"] = sizes
+            snap["payload_cache_total_kb"] = round(total / 1024, 1)
+    except Exception:
+        pass
+
+    # ── Per-user analytics cache ──────────────────────────────────────────
+    try:
+        with _analytics_cache_lock:
+            snap["analytics_cache_users"] = len(_analytics_cache)
+    except Exception:
+        pass
+
+    # ── _state list lengths (raw books / matches retained in memory) ──────
+    try:
+        with _lock:
+            snap["state_lists"] = {
+                "bets":      len(_state.get("bets") or []),
+                "matches":   len(_state.get("matches") or []),
+                "pp_lines":  len(_state.get("pp_lines") or []),
+                "fd_lines":  len(_state.get("fd_lines") or []),
+                "dk_lines":  len(_state.get("dk_lines") or []),
+                "pin_lines": len(_state.get("pin_lines") or []),
+            }
+    except Exception:
+        pass
+
+    # ── Pandas DataFrame inventory (count + total memory_usage) ───────────
+    try:
+        import pandas as pd
+        dfs = [o for o in gc.get_objects() if isinstance(o, pd.DataFrame)]
+        total_bytes = 0
+        for df in dfs:
+            try:
+                total_bytes += int(df.memory_usage(deep=True).sum())
+            except Exception:
+                pass
+        snap["pandas_dataframes"] = {
+            "count": len(dfs),
+            "total_mb": round(total_bytes / 1_048_576, 2),
+        }
+    except Exception:
+        pass
+
+    # ── GC stats for context ──────────────────────────────────────────────
+    try:
+        snap["gc_objects"] = len(gc.get_objects())
+        snap["gc_counts"] = list(gc.get_count())
+    except Exception:
+        pass
+
+    return snap
+
+
 def _build_etag(last_refresh) -> str:
     """Stable ETag derived from the last_refresh timestamp. Weak (W/) because
     gzip compression can mutate bytes at the transport layer."""
@@ -735,6 +844,24 @@ def _run_pipeline_body():
             _state["pin_lines"] = []
         logger.info("Pipeline complete: %d +EV bets found.", len(bets))
 
+        # Log memory trajectory so we can see whether each refresh leaks or
+        # plateaus on the 512 MB tier. Cheap (psutil only).
+        try:
+            _msnap = _memory_snapshot()
+            _pdf = _msnap.get("pandas_dataframes") or {}
+            logger.info(
+                "Memory post-pipeline: rss=%.1fMB peak=%.1fMB threads=%s cache=%.1fKB pandas=%dx%.2fMB gc_objs=%s",
+                _msnap.get("rss_mb", 0.0),
+                _msnap.get("peak_rss_mb", 0.0),
+                _msnap.get("thread_count", "?"),
+                _msnap.get("payload_cache_total_kb", 0.0),
+                _pdf.get("count", 0),
+                _pdf.get("total_mb", 0.0),
+                _msnap.get("gc_objects", "?"),
+            )
+        except Exception as _mexc:
+            logger.debug("Memory snapshot post-pipeline failed: %s", _mexc)
+
         # ── Supabase Sync: Persist the new state for instant load on restart ──
         # sync_state_to_supabase auto-gzips payloads over 256KB, so the books
         # (fd/dk/pin_lines, 2-5MB raw) compress to ~300-500KB — well under any
@@ -751,25 +878,52 @@ def _run_pipeline_body():
         
         threading.Thread(target=_sync_all, daemon=True).start()
 
-        # Auto-backtest logging for opted-in users
+        # Auto-backtest logging for opted-in users — each user's chosen
+        # slip_type / n_legs (from the Slip Builder) drives what gets logged.
         def _auto_log_bg(bets=serialized_bets):
             try:
                 from engine.database import get_db
                 db = get_db()
                 if not db:
                     return
-                # Fetch users who explicitly opted in
-                users_res = db.table("user_config").select("user_id").eq("auto_backtest", True).execute()
+                users_res = (
+                    db.table("user_config")
+                    .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+                    .eq("auto_backtest", True)
+                    .execute()
+                )
+                from engine.constants import BREAK_EVEN
                 for row in (users_res.data or []):
                     uid = row.get("user_id")
-                    if not uid: 
+                    if not uid:
                         continue
-                        
+
+                    slip_type = row.get("auto_slip_type") or "Power"
+                    try:
+                        n_legs = int(row.get("auto_slip_legs") or 6)
+                    except (TypeError, ValueError):
+                        n_legs = 6
+                    n_legs = max(2, min(6, n_legs))
+
+                    # Per-leg min: explicit override beats the slip's
+                    # break-even floor. Falls back to break-even when unset
+                    # so legs that can't even pay for themselves never enter
+                    # the slip.
+                    raw_min = row.get("auto_slip_min_prob")
+                    try:
+                        min_prob = float(raw_min) if raw_min is not None else None
+                    except (TypeError, ValueError):
+                        min_prob = None
+                    if min_prob is None:
+                        min_prob = BREAK_EVEN.get((str(n_legs), slip_type.lower()), 0.5407)
+
+                    pool = [b for b in bets if float(b.get("true_prob") or 0.0) >= min_prob]
+
                     from engine.backtest import BacktestLogger
                     bl = BacktestLogger(user_id=uid, db_client=db)
-                    
-                    # Pass the top ~40 bets so it has enough pool to select from
-                    bl.try_log_slip(bets[:40], slip_type="Power", n_legs=6)
+
+                    # Pass the top ~40 candidates from the filtered pool.
+                    bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
             except Exception as e:
                 logger.error("Auto-backtest background worker error: %s", e)
 
@@ -960,6 +1114,24 @@ def startup():
     # grows. Each run is a single aggregation query on resolved observations
     # (no scraping), so the load is negligible.
     def _run_periodic_models():
+        # Don't load full table dumps into RAM while a scrape is allocating
+        # raw line lists — the overlap blew through the 512 MB tier.
+        # Defer to 60 s from now and let the next interval handle it.
+        with _lock:
+            scraping = bool(_state.get("is_scraping"))
+        if scraping:
+            logger.info("Hourly refit: deferring — scrape in progress")
+            try:
+                scheduler.add_job(
+                    _run_periodic_models,
+                    trigger="date",
+                    run_date=datetime.now() + timedelta(seconds=60),
+                    id=f"periodic_models_deferred_{int(time.time())}",
+                )
+            except Exception as exc:
+                logger.warning("Hourly refit: deferral scheduling failed: %s", exc)
+            return
+
         try:
             from engine.isotonic_calibration import update_isotonic_calibration
             from engine.ev_calculator import reload_calibration
@@ -1212,11 +1384,14 @@ def _get_user_config(user: Optional[dict]) -> dict:
         "min_ev_pct": -10.0,
         "active_leagues": dict(cfg.ACTIVE_LEAGUES),
         "refresh_interval_min": 5,
-        "auto_backtest": False
+        "auto_backtest": False,
+        "auto_slip_type": "Power",
+        "auto_slip_legs": 6,
+        "auto_slip_min_prob": None,
     }
     if not user:
         return base
-        
+
     try:
         from engine.database import get_user_db
         db = get_user_db(user["jwt"])
@@ -1229,9 +1404,19 @@ def _get_user_config(user: Optional[dict]) -> dict:
                     base["active_leagues"] = row["active_leagues"]
                 base["refresh_interval_min"] = int(row.get("refresh_interval_min", 5))
                 base["auto_backtest"] = bool(row.get("auto_backtest", False))
+                # auto_slip_* may be missing on rows from before migration_004.
+                if row.get("auto_slip_type"):
+                    base["auto_slip_type"] = str(row["auto_slip_type"])
+                if row.get("auto_slip_legs") is not None:
+                    base["auto_slip_legs"] = int(row["auto_slip_legs"])
+                if row.get("auto_slip_min_prob") is not None:
+                    try:
+                        base["auto_slip_min_prob"] = float(row["auto_slip_min_prob"])
+                    except (TypeError, ValueError):
+                        pass
     except Exception as e:
         logger.warning(f"Failed to fetch user config for {user['id']}: {e}")
-        
+
     return base
 
 @app.get("/api/bets")
@@ -1512,10 +1697,13 @@ class ConfigUpdate(BaseModel):
 def get_config(user: dict = Depends(get_current_user)):
     cfg = _get_user_config(user)
     return {
-        "interval_min":   cfg["refresh_interval_min"],
-        "min_ev_pct":     cfg["min_ev_pct"],
-        "active_leagues": cfg["active_leagues"],
-        "auto_backtest":  cfg.get("auto_backtest", False)
+        "interval_min":    cfg["refresh_interval_min"],
+        "min_ev_pct":      cfg["min_ev_pct"],
+        "active_leagues":  cfg["active_leagues"],
+        "auto_backtest":   cfg.get("auto_backtest", False),
+        "auto_slip_type":     cfg.get("auto_slip_type", "Power"),
+        "auto_slip_legs":     cfg.get("auto_slip_legs", 6),
+        "auto_slip_min_prob": cfg.get("auto_slip_min_prob"),
     }
 
 
@@ -1546,7 +1734,7 @@ def update_auto_backtest(update: AutoBacktestUpdate, user: dict = Depends(get_cu
     db = get_user_db(user["jwt"])
     if not db:
         raise HTTPException(status_code=500, detail="Database not reachable.")
-    
+
     # Upsert the user_config row. (Requires an ON CONFLICT clause in raw sql, but we'll try a basic upsert via PostgREST)
     try:
         db.table("user_config").upsert({
@@ -1558,6 +1746,51 @@ def update_auto_backtest(update: AutoBacktestUpdate, user: dict = Depends(get_cu
     except Exception as e:
         logger.error(f"Failed to update auto_backtest for user {user['id']}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update configuration.")
+
+
+class SlipPrefsUpdate(BaseModel):
+    auto_slip_type: str
+    auto_slip_legs: int
+    auto_slip_min_prob: Optional[float] = None
+
+
+@app.post("/api/user/slip-prefs")
+def update_slip_prefs(update: SlipPrefsUpdate, user: dict = Depends(get_current_user)):
+    """Persist the user's preferred slip type (Power/Flex), leg count, and the
+    per-leg minimum true probability. These drive Auto-Backtest's slip
+    construction on every refresh."""
+    if update.auto_slip_type not in ("Power", "Flex"):
+        raise HTTPException(status_code=400, detail="auto_slip_type must be 'Power' or 'Flex'")
+    if not (2 <= update.auto_slip_legs <= 6):
+        raise HTTPException(status_code=400, detail="auto_slip_legs must be between 2 and 6")
+    if update.auto_slip_type == "Flex" and update.auto_slip_legs < 3:
+        raise HTTPException(status_code=400, detail="Flex slips require at least 3 legs.")
+    if update.auto_slip_min_prob is not None and not (0.0 < update.auto_slip_min_prob < 1.0):
+        raise HTTPException(status_code=400, detail="auto_slip_min_prob must be between 0 and 1 (exclusive).")
+
+    from engine.database import get_user_db
+    db = get_user_db(user["jwt"])
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not reachable.")
+
+    payload = {
+        "user_id": user["id"],
+        "auto_slip_type": update.auto_slip_type,
+        "auto_slip_legs": update.auto_slip_legs,
+        "auto_slip_min_prob": update.auto_slip_min_prob,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        db.table("user_config").upsert(payload).execute()
+        return {
+            "status": "success",
+            "auto_slip_type": update.auto_slip_type,
+            "auto_slip_legs": update.auto_slip_legs,
+            "auto_slip_min_prob": update.auto_slip_min_prob,
+        }
+    except Exception as e:
+        logger.error(f"Failed to update slip prefs for user {user['id']}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update slip preferences.")
 
 # ---------------------------------------------------------------------------
 # PrizePicks-only endpoints
@@ -2252,6 +2485,42 @@ def delete_backtest_slip(slip_id: str, user: dict = Depends(get_current_user)):
     except Exception as e:
         logger.error("Backtest: delete slip failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Delete failed: {e}")
+
+
+# ── Admin / diagnostics ────────────────────────────────────────────────────
+
+@app.get("/api/admin/memory")
+def get_memory_diagnostics():
+    """Diagnostic dump of process memory usage. Used to find what's eating the
+    512 MB tier — RSS, peak RSS, payload-cache breakdown, pandas DataFrame
+    inventory, GC stats, and active thread names. Unauthenticated so it can
+    be hit directly from the browser URL bar; the snapshot exposes no user
+    data."""
+    return _memory_snapshot()
+
+
+@app.post("/api/admin/refit-calibration")
+def refit_calibration(user: dict = Depends(get_current_user)):
+    """Force an immediate isotonic refit so newly-resolved sub-50% observations
+    show up on the calibration curves chart without waiting for the hourly
+    job."""
+    try:
+        from engine.isotonic_calibration import update_isotonic_calibration
+        from engine.ev_calculator import reload_calibration
+        curves = update_isotonic_calibration()
+        if not curves:
+            return {"status": "no-data", "message": "No mature observations to fit yet."}
+        reload_calibration()
+        return {
+            "status": "refit",
+            "leagues":    len(curves.get("leagues") or {}),
+            "props":      len(curves.get("props") or {}),
+            "global_n_eff": (curves.get("global") or {}).get("n_eff"),
+            "fitted_at":    curves.get("fitted_at"),
+        }
+    except Exception as e:
+        logger.error("Manual calibration refit failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Refit failed: {e}")
 
 
 # ── Market Observatory Endpoints ───────────────────────────────────────────

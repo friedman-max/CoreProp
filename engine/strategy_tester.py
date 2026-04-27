@@ -71,11 +71,13 @@ class StrategyTester:
             return {"error": "Database not connected"}
 
         try:
-            # 1. Fetch resolved data
-            query = self.db.table("market_observatory").select("*").neq("result", "pending")
+            # 1. Fetch resolved data — project only the columns the simulation
+            # actually reads (everything else ballooned RAM ~3x for nothing).
+            cols = "result, prop, true_prob, game_start, league, player"
+            query = self.db.table("market_observatory").select(cols).neq("result", "pending")
             if config.leagues:
                 query = query.in_("league", config.leagues)
-            
+
             res = query.execute()
             df = pd.DataFrame(res.data)
 
@@ -460,7 +462,8 @@ class StrategyTester:
             return {"error": "Flex slips require at least 3 legs."}
 
         try:
-            query = self.db.table("market_observatory").select("*").neq("result", "pending")
+            cols = "result, prop, true_prob, game_start, league, player"
+            query = self.db.table("market_observatory").select(cols).neq("result", "pending")
             if config.leagues:
                 query = query.in_("league", config.leagues)
             res = query.execute()

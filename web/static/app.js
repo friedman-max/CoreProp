@@ -375,12 +375,27 @@ const FLEX_PAYOUTS = {
   6: { 4: 0.4, 5: 2.0, 6: 25.0 }
 };
 
+// Per-leg breakeven probability, mirrored from engine/constants.py BREAK_EVEN.
+// Power: p = (1/payout)^(1/n). Flex: numerically solved against the partial
+// payout schedule. Keys are "<n_legs>,<slip_type_lower>".
+const SLIP_BREAK_EVEN = {
+  "2,power": 0.5774,   // (1/3)^(1/2)
+  "3,power": 0.5503,   // (1/6)^(1/3)
+  "3,flex":  0.5774,
+  "4,power": 0.5623,   // (1/10)^(1/4)
+  "4,flex":  0.5503,
+  "5,power": 0.5493,   // (1/20)^(1/5)
+  "5,flex":  0.5425,
+  "6,power": 0.5407,   // (1/40)^(1/6)
+  "6,flex":  0.5421,
+};
+
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
   allBets:       [],          // raw bet objects from API
   filteredBets:  [],          // after filters applied
-  selected:      new Set(),   // set of bet_ids
-  sortCol:       "individual_ev_pct",
+  autoLegs:      [],          // bet_ids of the most recent auto-built slip
+  sortCol:       "true_prob",
   sortDir:       "desc",
   lastBetCount:  -1,          // detect when new bets arrive
   isScrapingPrev: false,
@@ -510,15 +525,8 @@ function showToast(message, type = "info", duration = 4500) {
 const $ = id => document.getElementById(id);
 const tbody           = $("bets-tbody");
 const totalBadge      = $("total-badge");
-const selectedCountEl = $("selected-count");
-const btnBuildSlip       = $("btn-build-slip");
-const btnAddToBacktest   = $("btn-add-to-backtest");
-const btnCalculate       = $("btn-calculate");
-const btnAutoBuild       = $("btn-auto-build");
-const btnClearSel        = $("btn-clear-selection");
 const slipLegsEl      = $("slip-legs");
 const slipResultsEl   = $("slip-results");
-const bankrollInput   = $("bankroll-input");
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const fmt = {
@@ -586,17 +594,21 @@ function applyFilters() {
   const league  = $("filter-league").value.toUpperCase();
   const prop    = $("filter-prop").value.toLowerCase().trim();
   const side    = $("filter-side").value.toLowerCase();
-  const maxOddsStr = $("filter-max-odds").value.trim();
-  const maxOdds = maxOddsStr ? parseInt(maxOddsStr, 10) : null;
-  const minEvStr = $("filter-min-ev").value.trim();
-  const minEv = minEvStr ? parseFloat(minEvStr) / 100 : 0;
+  // Min Odds % is required: if the user clears it, snap back to 54%.
+  // Stored as a percentage in the input; compared against b.true_prob (0..1).
+  const minProbEl = $("filter-min-prob");
+  let minProbPct = parseFloat(minProbEl.value);
+  if (Number.isNaN(minProbPct)) {
+    minProbPct = 54;
+    minProbEl.value = "54";
+  }
+  const minProb = minProbPct / 100;
 
   state.filteredBets = state.allBets.filter(b => {
     if (league && b.league !== league)                           return false;
     if (prop   && !b.prop_type.toLowerCase().includes(prop))    return false;
     if (side   && b.side !== side)                              return false;
-    if (maxOdds !== null && b.true_odds > maxOdds)              return false;
-    if (minEv !== null && b.individual_ev_pct < minEv)          return false;
+    if ((b.true_prob || 0) < minProb)                           return false;
     return true;
   });
 
@@ -604,7 +616,7 @@ function applyFilters() {
   renderTable();
 }
 
-["filter-league", "filter-prop", "filter-max-odds", "filter-min-ev", "filter-side"].forEach(id => {
+["filter-league", "filter-prop", "filter-min-prob", "filter-side"].forEach(id => {
   $(id).addEventListener("input", applyFilters);
   $(id).addEventListener("change", applyFilters);
 });
@@ -612,8 +624,7 @@ function applyFilters() {
 $("btn-clear-filters").addEventListener("click", () => {
   $("filter-league").value = "";
   $("filter-prop").value   = "";
-  $("filter-max-odds").value = "";
-  $("filter-min-ev").value   = "0";
+  $("filter-min-prob").value = "54";
   $("filter-side").value   = "";
   applyFilters();
 });
@@ -659,8 +670,8 @@ function sortBets(bets) {
 //   - { w: percent, type: "chk" }  for checkbox-style tiny square
 //   - { w: percent, align: "right" } for numeric right-aligned cells
 const SKELETON_SCHEMAS = {
-  // EV table: chk, Player, League, Prop, Line, Side, True Odds, Edge, EV%, Book Odds
-  ev:      [ {w:14,type:"chk"}, 75, 40, 65, 35, 35, 50, 50, 55, 80 ],
+  // EV table: Player, League, Prop, Line, Side, True Odds, Book Odds
+  ev:      [ 75, 40, 65, 35, 35, 50, 80 ],
   // Matched: Player, League, Prop, Line, Side, True, Best, FD, DK, PIN, Time
   matched: [ 75, 40, 65, 35, 35, 50, 50, 50, 50, 50, 55 ],
   // PP: Player, League, Prop, Line, Side, Time
@@ -698,7 +709,7 @@ function renderTable() {
   renderPagination("ev-pagination", state, totalItems, renderTable);
 
   if (totalItems === 0) {
-    tbody.innerHTML = `<tr id="empty-row"><td colspan="10" class="empty-msg">
+    tbody.innerHTML = `<tr id="empty-row"><td colspan="7" class="empty-msg">
       ${state.allBets.length === 0 ? 'Click "Refresh Now" to load bets.' : "No bets match current filters."}
     </td></tr>`;
     totalBadge.textContent = "0 bets";
@@ -708,12 +719,8 @@ function renderTable() {
   totalBadge.textContent = `${totalItems} bet${totalItems !== 1 ? "s" : ""}`;
 
   tbody.innerHTML = paginated.map(b => {
-    const checked   = state.selected.has(b.bet_id) ? "checked" : "";
     const isLive    = b.in_backtest === true;
-    const rowClass  = [
-      state.selected.has(b.bet_id) ? "selected" : "",
-      isLive ? "in-backtest" : "",
-    ].filter(Boolean).join(" ");
+    const rowClass  = isLive ? "in-backtest" : "";
 
     const lineDiff = (b.fd_line != null && b.pp_line !== b.fd_line)
       ? `<span class="line-diff"> (FD: ${b.fd_line})</span>` : "";
@@ -733,254 +740,35 @@ function renderTable() {
       : "—";
 
     return `<tr class="${rowClass}" data-id="${b.bet_id}">
-      <td><input type="checkbox" class="row-chk" data-id="${b.bet_id}" ${checked} /></td>
       <td data-label="Player">${b.player_name}${loggedBadge}</td>
       <td data-label="League">${b.league}</td>
       <td data-label="Prop">${b.prop_type}</td>
       <td data-label="Line">${b.pp_line}${lineDiff}</td>
       <td data-label="Side" class="side-${b.side}">${b.side.toUpperCase()}</td>
-      <td data-label="True Odds">${fmt.trueOdds(b.true_odds)}</td>
-      <td data-label="Edge" class="${evClass(b.edge)}">${fmt.pct(b.edge)}</td>
-      <td data-label="Ind. EV%" class="${evClass(b.individual_ev_pct)}">${fmt.pct(b.individual_ev_pct)}</td>
+      <td data-label="True %">${fmt.prob(b.true_prob)}</td>
       <td data-label="Book Odds" style="color:var(--text-muted)">${bookOddsHtml}</td>
     </tr>`;
   }).join("");
-
-  // Row checkbox listeners
-  tbody.querySelectorAll(".row-chk").forEach(chk => {
-    chk.addEventListener("change", e => toggleBet(e.target.dataset.id, e.target.checked));
-  });
-
-  // Row click (not on checkbox)
-  tbody.querySelectorAll("tr[data-id]").forEach(row => {
-    row.addEventListener("click", e => {
-      if (e.target.type === "checkbox") return;
-      const id  = row.dataset.id;
-      const chk = row.querySelector(".row-chk");
-      const newVal = !state.selected.has(id);
-      chk.checked = newVal;
-      toggleBet(id, newVal);
-    });
-  });
-
-  updateSelectionUI();
 }
-
-// ── Selection ──────────────────────────────────────────────────────────────
-function toggleBet(id, selected) {
-  if (selected) {
-    state.selected.add(id);
-  } else {
-    state.selected.delete(id);
-  }
-  updateSelectionUI();
-  renderTable(); // refresh row highlight
-}
-
-function updateSelectionUI() {
-  const n = state.selected.size;
-  selectedCountEl.textContent = `${n} selected`;
-  const valid = n >= 2 && n <= 6;
-  btnBuildSlip.disabled      = !valid;
-  btnCalculate.disabled      = !valid;
-  btnAddToBacktest.disabled  = !valid;
-}
-
-$("chk-all").addEventListener("change", e => {
-  const checked = e.target.checked;
-  const totalItems = state.filteredBets.length;
-  const startIdx = (state.page - 1) * state.pageSize;
-  const paginated = sortBets(state.filteredBets).slice(startIdx, startIdx + state.pageSize);
-  
-  const toToggle = checked ? paginated.slice(0, 6) : paginated;
-  toToggle.forEach(b => {
-    if (checked) state.selected.add(b.bet_id);
-    else         state.selected.delete(b.bet_id);
-  });
-  renderTable();
-});
-
-btnClearSel.addEventListener("click", () => {
-  state.selected.clear();
-  renderTable();
-  resetSlipPanel();
-});
-
-// ── Add to Backtest ────────────────────────────────────────────────────────
-btnAddToBacktest.addEventListener("click", async () => {
-  const betMap = Object.fromEntries(state.allBets.map(b => [b.bet_id, b]));
-  const selected = [...state.selected].map(id => betMap[id]).filter(Boolean);
-  if (selected.length < 2 || selected.length > 6) return;
-  
-  if (!currentSession) {
-    document.getElementById('auth-overlay').style.display = 'flex';
-    return;
-  }
-
-  btnAddToBacktest.disabled = true;
-  btnAddToBacktest.textContent = "Logging...";
-
-  try {
-    const resp = await apiFetch("/api/backtest/add-slip", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bet_ids: selected.map(b => b.bet_id) }),
-    });
-    const data = await resp.json();
-
-    if (!resp.ok) {
-      showToast("Failed to log slip: " + (data.detail || "Unknown error"), "error");
-    } else {
-      // Flash the button green briefly
-      btnAddToBacktest.textContent = "✓ Logged!";
-      btnAddToBacktest.style.background = "var(--green)";
-      btnAddToBacktest.style.color = "#000";
-
-      // Show notification banner with the new slip
-      if (data.slip) {
-        lastSeenSlipId = data.slip.slip_id;
-        playBeep();
-        showSlipNotification(data.slip);
-      }
-
-      // Invalidate backtest + analytics caches so the next tab activation
-      // reflects the new slip instead of the stale snapshot.
-      try { localStorage.removeItem(BT_CACHE_KEY); } catch (_) {}
-      try { localStorage.removeItem(ANALYTICS_CACHE_KEY); } catch (_) {}
-
-      setTimeout(() => {
-        btnAddToBacktest.textContent = "+ Add to Backtest";
-        btnAddToBacktest.style.background = "";
-        btnAddToBacktest.style.color = "";
-        btnAddToBacktest.disabled = (state.selected.size < 2 || state.selected.size > 6);
-      }, 2500);
-    }
-  } catch (e) {
-    showToast("Error logging slip: " + e.message, "error");
-    btnAddToBacktest.textContent = "+ Add to Backtest";
-    btnAddToBacktest.disabled = (state.selected.size < 2 || state.selected.size > 6);
-  }
-});
 
 // ── Slip panel ─────────────────────────────────────────────────────────────
 function renderSlipLegs() {
   const betMap = Object.fromEntries(state.allBets.map(b => [b.bet_id, b]));
-  const selected = [...state.selected].map(id => betMap[id]).filter(Boolean);
+  const legs = state.autoLegs.map(id => betMap[id]).filter(Boolean);
 
-  if (selected.length === 0) {
-    slipLegsEl.innerHTML = `<p class="empty-msg">Select 2–6 bets from the table.</p>`;
+  if (legs.length === 0) {
+    slipLegsEl.innerHTML = `<p class="empty-msg">Click "Auto-Build Best Slip" to generate a slip.</p>`;
     return;
   }
 
-  slipLegsEl.innerHTML = selected.map(b => `
+  slipLegsEl.innerHTML = legs.map(b => `
     <div class="slip-leg">
       <div class="slip-leg-name">${b.player_name}</div>
       <div class="slip-leg-detail">${b.prop_type} ${b.side.toUpperCase()} ${b.pp_line} · ${b.league}</div>
-      <div class="slip-leg-prob">True Odds: ${fmt.trueOdds(b.true_odds)} · EV: ${fmt.pct(b.individual_ev_pct)}</div>
+      <div class="slip-leg-prob">True %: ${fmt.prob(b.true_prob)}</div>
     </div>
   `).join("");
 }
-
-function resetSlipPanel() {
-  slipLegsEl.innerHTML = `<p class="empty-msg">Select 2–6 bets from the table.</p>`;
-  slipResultsEl.classList.add("hidden");
-  btnCalculate.disabled = true;
-}
-
-btnBuildSlip.addEventListener("click", () => {
-  renderSlipLegs();
-  slipResultsEl.classList.add("hidden");
-});
-
-btnCalculate.addEventListener("click", async () => {
-  const betIds   = [...state.selected];
-  const bankroll = parseFloat(bankrollInput.value) || 100;
-
-  btnCalculate.disabled = true;
-  btnCalculate.textContent = "Calculating…";
-
-  try {
-    const resp = await apiFetch("/api/slip", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ bet_ids: betIds, bankroll }),
-    });
-    if (!resp.ok) {
-      const err = await resp.json();
-      showToast("Slip error: " + (err.detail || resp.statusText), "error");
-      return;
-    }
-    const data = await resp.json();
-    renderSlipResults(data);
-  } catch (e) {
-    showToast("Network error: " + e.message, "error");
-  } finally {
-    btnCalculate.disabled = false;
-    btnCalculate.textContent = "Calculate EV";
-  }
-});
-
-// Must match _AUTO_SLIP_MAX_CANDIDATES in web/app.py — the backend caps the
-// search pool at this size, so sending more would be wasted bytes.
-const AUTO_SLIP_CANDIDATE_POOL = 12;
-
-btnAutoBuild.addEventListener("click", async () => {
-  const sorted = [...state.filteredBets].sort((a, b) => (b.individual_ev_pct || 0) - (a.individual_ev_pct || 0));
-
-  // Dedupe by player — the backend also dedupes by (player, game_day), but
-  // trimming here means we can fit ~12 distinct players into the cap instead
-  // of wasting slots on the same player across games.
-  const pickedPlayers = new Set();
-  const betIds = [];
-
-  for (const b of sorted) {
-    if (!pickedPlayers.has(b.player_name)) {
-      pickedPlayers.add(b.player_name);
-      betIds.push(b.bet_id);
-      if (betIds.length === AUTO_SLIP_CANDIDATE_POOL) break;
-    }
-  }
-
-  if (betIds.length < 2) {
-    showToast("Not enough valid unique players matching the current filters to build a slip.", "warning");
-    return;
-  }
-
-  const bankroll = parseFloat(bankrollInput.value) || 100;
-  
-  btnAutoBuild.disabled = true;
-  btnAutoBuild.textContent = "Auto-Building...";
-  
-  try {
-    const resp = await apiFetch("/api/slip/auto", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ bet_ids: betIds, bankroll }),
-    });
-    if (!resp.ok) {
-      const err = await resp.json();
-      showToast("Auto-Slip error: " + (err.detail || resp.statusText), "error");
-      return;
-    }
-    const data = await resp.json();
-    
-    state.selected.clear();
-    for (const bid of data.optimal_bet_ids) {
-      state.selected.add(bid);
-    }
-    
-    updateSelectionUI();
-    renderTable(); 
-    renderSlipLegs();
-    renderSlipResults(data);
-    
-  } catch (e) {
-    showToast("Network error: " + e.message, "error");
-  } finally {
-    btnAutoBuild.disabled = false;
-    btnAutoBuild.textContent = "Auto-Build Best Slip";
-  }
-});
 
 function renderSlipResults(data) {
   const powerEl  = $("power-ev");
@@ -2039,10 +1827,10 @@ function loadBacktestCache() {
 function renderBacktestSkeleton() {
   const tbody = $("bt-tbody");
   if (!tbody) return;
-  // 12 columns in the backtest table (Player, League, Prop Type, Line,
-  // Side, True Prob, Closing, CLV%, Ind EV%, Game Start, Result, Actual);
+  // 11 columns in the backtest table (Player, League, Prop Type, Line,
+  // Side, True Prob, Closing, CLV%, Game Start, Result, Actual);
   // render 8 skeleton rows.
-  const cells = Array.from({ length: 12 })
+  const cells = Array.from({ length: 11 })
     .map((_, i) => `<td><div class="skeleton-bar" style="width:${i === 0 ? 60 : 45}%"></div></td>`)
     .join("");
   tbody.innerHTML = Array.from({ length: 8 }).map(() => `<tr class="skeleton-row">${cells}</tr>`).join("");
@@ -2213,7 +2001,6 @@ function renderBacktest() {
     const isFirst = l.slip_id !== prevSlipId;
     prevSlipId = l.slip_id;
     const evPct = l.proj_slip_ev_pct != null ? (parseFloat(l.proj_slip_ev_pct) * 100).toFixed(1) + "%" : "";
-    const indEv = l.ind_ev_pct != null ? (parseFloat(l.ind_ev_pct) * 100).toFixed(1) + "%" : "";
     const trueP = l.true_prob != null ? (parseFloat(l.true_prob) * 100).toFixed(1) + "%" : "";
     const closeP = (l.closing_prob !== undefined && l.closing_prob !== null && l.closing_prob !== "") ? (parseFloat(l.closing_prob) * 100).toFixed(1) + "%" : "—";
     const clvPctVal = (l.clv_pct !== undefined && l.clv_pct !== null && l.clv_pct !== "") ? parseFloat(l.clv_pct) : null;
@@ -2241,7 +2028,7 @@ function renderBacktest() {
     let headerHtml = "";
     if (isFirst) {
       headerHtml = `<tr class="slip-header-row">
-        <td colspan="12">
+        <td colspan="11">
           <div class="slip-header-content">
             <button class="btn-delete-slip" data-slip-id="${l.slip_id}" title="Delete this slip">🗑</button>
             <span class="slip-header-stat">
@@ -2277,7 +2064,6 @@ function renderBacktest() {
       <td data-label="True Prob">${trueP}</td>
       <td data-label="Close Prob">${closeP}</td>
       <td data-label="CLV%" class="${clvCls}" style="font-weight:600;">${clvPctText}</td>
-      <td data-label="Ind. EV%" class="ev-medium">${indEv}</td>
       <td data-label="Game Time">${gameTime}</td>
       <td data-label="Result"><span class="${resultCls}">${resultText.toUpperCase()}</span></td>
       <td data-label="Actual">${(l.stat_actual !== null && l.stat_actual !== undefined && l.stat_actual !== "") ? l.stat_actual : "—"}</td>
@@ -2622,7 +2408,7 @@ function renderCalibration(data) {
       <td data-label="Predicted" style="font-family:var(--font-mono); opacity:0.8;">${predicted}</td>
       <td data-label="Actual" style="font-family:var(--font-mono); font-weight:700;">${actual}</td>
       <td data-label="Count" style="opacity:0.7;">${b.count}</td>
-      <td data-label="Edge">
+      <td data-label="Delta">
         <div style="display:flex; align-items:center; gap:6px;">
           <span class="cal-delta ${statusClass}">${diffSign}${diffPct}pp</span>
           <span class="cal-tag">${alignLabel}</span>
@@ -2911,6 +2697,115 @@ window.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // Slip prefs (Power/Flex × number of legs × min leg %). Hydrate from
+    // localStorage so the controls show the user's choice instantly on cold
+    // loads, then let /api/config overwrite once auth resolves.
+    const slipTypeSel = document.getElementById("slip-type-select");
+    const slipLegsSel = document.getElementById("slip-legs-select");
+    const slipMinEl   = document.getElementById("slip-min-prob");
+    const slipSaveBtn = document.getElementById("btn-save-slip-prefs");
+    const slipMinBeEl  = document.getElementById("slip-min-prob-be");
+    const slipMinBeBtn = document.getElementById("btn-slip-min-be");
+    if (slipTypeSel && slipLegsSel && slipMinEl && slipSaveBtn) {
+        // Tracks whether the min input currently mirrors the auto-derived
+        // breakeven (false ⇒ user has typed a custom value and we should
+        // stop overwriting on type/legs change).
+        let minIsCustom = false;
+
+        const breakevenPct = () => {
+            const key = `${slipLegsSel.value},${slipTypeSel.value.toLowerCase()}`;
+            const be = SLIP_BREAK_EVEN[key];
+            return be != null ? +(be * 100).toFixed(2) : 54;
+        };
+
+        const updateBeLabel = () => {
+            if (slipMinBeEl) slipMinBeEl.textContent = `BE ${breakevenPct().toFixed(2)}%`;
+        };
+
+        // Flex requires ≥3 legs (a 2-leg Flex collapses to a Power play). Keep
+        // the "2" option in the DOM but greyed out when Flex is selected, and
+        // bump the value up if the user lands on the invalid combination.
+        const syncLegOptionsForType = () => {
+            const twoOpt = slipLegsSel.querySelector('option[value="2"]');
+            if (twoOpt) {
+                const isFlex = slipTypeSel.value === "Flex";
+                twoOpt.disabled = isFlex;
+                if (isFlex && slipLegsSel.value === "2") slipLegsSel.value = "3";
+            }
+            updateBeLabel();
+            if (!minIsCustom) slipMinEl.value = String(breakevenPct());
+        };
+
+        if (slipMinBeBtn) {
+            slipMinBeBtn.addEventListener("click", () => {
+                slipMinEl.value = String(breakevenPct());
+                minIsCustom = false;
+            });
+        }
+
+        const cachedType = localStorage.getItem("coreprop_slip_type");
+        const cachedLegs = localStorage.getItem("coreprop_slip_legs");
+        const cachedMin  = localStorage.getItem("coreprop_slip_min_prob");
+        if (cachedType === "Power" || cachedType === "Flex") slipTypeSel.value = cachedType;
+        if (cachedLegs && /^[2-6]$/.test(cachedLegs))        slipLegsSel.value = cachedLegs;
+        if (cachedMin && !Number.isNaN(parseFloat(cachedMin))) {
+            slipMinEl.value = cachedMin;
+            // Treat a saved override as custom only if it diverges from the
+            // breakeven — that way switching slip types still re-derives
+            // unless the user truly overrode.
+            const be = breakevenPct();
+            minIsCustom = Math.abs(parseFloat(cachedMin) - be) > 0.01;
+        }
+        syncLegOptionsForType();
+
+        slipTypeSel.addEventListener("change", syncLegOptionsForType);
+        slipLegsSel.addEventListener("change", syncLegOptionsForType);
+        slipMinEl.addEventListener("input", () => { minIsCustom = true; });
+
+        slipSaveBtn.addEventListener("click", async () => {
+            const slipType = slipTypeSel.value;
+            const nLegs = parseInt(slipLegsSel.value, 10);
+            let minPct = parseFloat(slipMinEl.value);
+            if (Number.isNaN(minPct)) {
+                minPct = breakevenPct();
+                slipMinEl.value = String(minPct);
+            }
+            const minProb = +(minPct / 100).toFixed(4);
+
+            // Optimistic: persist locally so a cold reload reflects the choice
+            // even if the network call lags.
+            localStorage.setItem("coreprop_slip_type", slipType);
+            localStorage.setItem("coreprop_slip_legs", String(nLegs));
+            localStorage.setItem("coreprop_slip_min_prob", String(minPct));
+
+            const original = slipSaveBtn.textContent;
+            slipSaveBtn.disabled = true;
+            slipSaveBtn.textContent = "Saving…";
+            try {
+                const res = await apiFetch("/api/user/slip-prefs", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        auto_slip_type: slipType,
+                        auto_slip_legs: nLegs,
+                        auto_slip_min_prob: minProb,
+                    }),
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.detail || "Save failed");
+                }
+                slipSaveBtn.textContent = "✓ Saved";
+                setTimeout(() => { slipSaveBtn.textContent = original; }, 1500);
+            } catch (err) {
+                showToast("Failed to save slip preferences: " + err.message, "error");
+                slipSaveBtn.textContent = original;
+            } finally {
+                slipSaveBtn.disabled = false;
+            }
+        });
+    }
 });
 
 async function fetchUserConfig() {
@@ -2924,6 +2819,27 @@ async function fetchUserConfig() {
                 // Sync localStorage with server truth
                 localStorage.setItem("coreprop_auto_backtest", String(data.auto_backtest));
             }
+            const slipTypeSel = document.getElementById("slip-type-select");
+            const slipLegsSel = document.getElementById("slip-legs-select");
+            if (slipTypeSel && (data.auto_slip_type === "Power" || data.auto_slip_type === "Flex")) {
+                slipTypeSel.value = data.auto_slip_type;
+                localStorage.setItem("coreprop_slip_type", data.auto_slip_type);
+            }
+            if (slipLegsSel && data.auto_slip_legs != null) {
+                const n = String(data.auto_slip_legs);
+                if (/^[2-6]$/.test(n)) {
+                    slipLegsSel.value = n;
+                    localStorage.setItem("coreprop_slip_legs", n);
+                }
+            }
+            const slipMinEl2 = document.getElementById("slip-min-prob");
+            if (slipMinEl2 && data.auto_slip_min_prob != null) {
+                const pct = +(data.auto_slip_min_prob * 100).toFixed(2);
+                slipMinEl2.value = String(pct);
+                localStorage.setItem("coreprop_slip_min_prob", String(pct));
+            }
+            // Re-run the Flex/2-legs guard now that values came from the server.
+            if (slipTypeSel) slipTypeSel.dispatchEvent(new Event("change"));
         }
     } catch (e) {
         console.error("Failed to fetch user config", e);

@@ -230,7 +230,11 @@ def evaluate_match(match: MatchedProp, min_ev_pct: float = 0.01) -> list[BetResu
         # PP easier line for OVER → value exclusively on PP OVER
         # Use available odds for the HARDER line as our probability estimate
         true_over = _get_true_prob_for_side(match, "over")
-        if true_over is None or true_over <= 0.5:
+        # Threshold of 0.30 (not 0.50) matches the market_observatory logging
+        # threshold so calibration sees both winners and losers and can
+        # adjust each league's curve in either direction. The +EV UI filter
+        # (default 54% Min Odds %) hides sub-break-even bets from the user.
+        if true_over is None or true_over <= 0.3:
             return []
 
         bet_id = f"{pp.player_id}_{pp.stat_type}_over"
@@ -255,7 +259,8 @@ def evaluate_match(match: MatchedProp, min_ev_pct: float = 0.01) -> list[BetResu
         # PP harder line for UNDER → value exclusively on PP UNDER
         # Use available odds for the EASIER line as probability estimate
         true_under = _get_true_prob_for_side(match, "under")
-        if true_under is None or true_under <= 0.5:
+        # See note above the over branch — same 0.30 threshold for symmetry.
+        if true_under is None or true_under <= 0.3:
             return []
 
         bet_id = f"{pp.player_id}_{pp.stat_type}_under"

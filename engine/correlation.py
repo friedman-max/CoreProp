@@ -257,11 +257,16 @@ def update_correlation_map() -> Optional[dict]:
     if not db:
         return None
 
+    # Window the scan to keep RAM bounded — pairwise hit correlations
+    # don't drift fast enough to need pre-2024 data on a 512 MB tier.
+    from datetime import datetime, timedelta, timezone
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()
     try:
         res = (
             db.table("market_observatory")
               .select("player, league, game_start, result, prop")
               .in_("result", ["hit", "miss"])
+              .gte("game_start", cutoff_iso)
               .execute()
         )
     except Exception as exc:

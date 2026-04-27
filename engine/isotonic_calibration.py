@@ -47,6 +47,12 @@ ISOTONIC_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "isotonic_
 # to 50% of its weight, a 120-day-old one to 25%, etc.
 RECENCY_HALF_LIFE_DAYS = 60.0
 
+# Hard cutoff on how far back we read from the database. With the 60-day
+# half-life, a 180-day-old observation contributes <12.5% weight — not worth
+# pulling into RAM on the 512 MB tier. Older rows stay in Supabase, just
+# excluded from the fit.
+RECENCY_LOOKBACK_DAYS = 180
+
 # Bayesian shrinkage smoothing constant. At n_eff = SHRINKAGE_KAPPA the bucket
 # carries 50% of the weight vs its parent; at n_eff = 5×SHRINKAGE_KAPPA, ~83%.
 # Lower κ ⇒ buckets take over faster (more variance); higher κ ⇒ more
@@ -157,10 +163,18 @@ def _load_observations(db) -> list[dict]:
     obs_outcome: list[dict] = []
     obs_clv: list[dict] = []
 
+    # Date floor — cuts the historical scan to roughly 3× the half-life.
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=RECENCY_LOOKBACK_DAYS)).isoformat()
+
     # ── market_observatory ─────────────────────────────────────────────────
     try:
         select_cols = "league, prop, true_prob, result, game_start, closing_prob"
-        res = db.table("market_observatory").select(select_cols).execute()
+        res = (
+            db.table("market_observatory")
+            .select(select_cols)
+            .gte("game_start", cutoff_iso)
+            .execute()
+        )
         for r in (res.data or []):
             league = r.get("league")
             prop = r.get("prop")
@@ -203,7 +217,12 @@ def _load_observations(db) -> list[dict]:
     # ── legs (service-role bypasses RLS so we can pool across users) ───────
     try:
         select_cols = "league, prop, true_prob, closing_prob, result, game_start"
-        res = db.table("legs").select(select_cols).execute()
+        res = (
+            db.table("legs")
+            .select(select_cols)
+            .gte("game_start", cutoff_iso)
+            .execute()
+        )
         for r in (res.data or []):
             league = r.get("league")
             prop = r.get("prop")

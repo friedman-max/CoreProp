@@ -33,7 +33,7 @@ import json
 import math
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from engine.database import get_db
 
@@ -49,6 +49,10 @@ MIN_BOOK_OBS = 150
 # Recency half-life. Same intuition as the calibration recency: recent CLV
 # residuals reflect current market behavior.
 SHARPNESS_HALF_LIFE_DAYS = 60.0
+
+# Hard date cutoff to keep the table scan bounded on the 512 MB tier; older
+# rows fall well below the half-life weight floor anyway.
+SHARPNESS_LOOKBACK_DAYS = 180
 
 # Output weight scale. The consensus engine treats raw weights multiplicatively
 # in a VWAP-style average; the absolute scale doesn't matter for the consensus
@@ -97,11 +101,13 @@ def update_sharpness_weights() -> dict | None:
 
     now = datetime.now(timezone.utc)
 
+    cutoff_iso = (now - timedelta(days=SHARPNESS_LOOKBACK_DAYS)).isoformat()
     try:
         res = (
             db.table("market_observatory")
             .select("books, closing_prob, game_start")
             .not_.is_("closing_prob", "null")
+            .gte("game_start", cutoff_iso)
             .execute()
         )
         rows = res.data or []

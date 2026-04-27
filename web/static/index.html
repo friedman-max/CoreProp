@@ -111,11 +111,8 @@
       <label>Prop Type:
         <input type="text" id="filter-prop" placeholder="e.g. Points" />
       </label>
-      <label>Max Odds:
-        <input type="number" id="filter-max-odds" placeholder="-110" style="width:70px" />
-      </label>
-      <label>Min EV%:
-        <input type="number" id="filter-min-ev" value="0" step="0.5" style="width:60px" />
+      <label>Min Odds %:
+        <input type="number" id="filter-min-prob" value="54" min="1" max="99" step="0.1" required style="width:70px" />
       </label>
       <label>Side:
         <select id="filter-side">
@@ -209,35 +206,22 @@
     <div class="main-layout" id="ev-view">
       <!-- Bets table -->
       <div class="table-section">
-        <div class="table-header-row">
-          <div class="table-actions">
-            <span id="selected-count">0 selected</span>
-            <button class="btn btn-accent" id="btn-build-slip" disabled>Build Slip</button>
-            <button class="btn btn-secondary" id="btn-add-to-backtest" disabled
-              title="Log selected bets as a slip in the backtest CSV">+ Add to Backtest</button>
-            <button class="btn btn-secondary" id="btn-clear-selection">Clear</button>
-          </div>
-        </div>
-
         <div class="table-wrapper">
           <table id="bets-table">
             <thead>
               <tr>
-                <th><input type="checkbox" id="chk-all" title="Select all visible" /></th>
                 <th class="sortable" data-col="player_name">Player</th>
                 <th class="sortable" data-col="league">League</th>
                 <th class="sortable" data-col="prop_type">Prop Type</th>
                 <th class="sortable" data-col="pp_line">Line</th>
                 <th class="sortable" data-col="side">Side</th>
-                <th class="sortable" data-col="true_odds">True Odds</th>
-                <th class="sortable" data-col="edge">Edge</th>
-                <th class="sortable active desc" data-col="individual_ev_pct">Ind. EV%</th>
+                <th class="sortable active desc" data-col="true_prob">True %</th>
                 <th>Book Odds</th>
               </tr>
             </thead>
             <tbody id="bets-tbody">
               <tr id="empty-row">
-                <td colspan="10" class="empty-msg">Click "Refresh Now" to load bets.</td>
+                <td colspan="7" class="empty-msg">Click "Refresh Now" to load bets.</td>
               </tr>
             </tbody>
           </table>
@@ -248,20 +232,45 @@
       <div class="slip-panel" id="slip-panel">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
           <h2 style="margin: 0;">Slip Builder</h2>
-          <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; cursor: pointer;" title="Automatically log the best 6-leg EV slip to Backtest on refresh">
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; cursor: pointer;" title="Automatically log the chosen slip type to Backtest on refresh">
             <input type="checkbox" id="auto-backtest-toggle" style="width: 16px; height: 16px; cursor: pointer;" />
             Auto-Backtest
           </label>
         </div>
 
-        <div class="bankroll-row">
-          <label>Bankroll ($)
-            <input type="number" id="bankroll-input" value="100" min="1" step="10" />
+        <div class="slip-prefs">
+          <div class="slip-prefs-row">
+            <label>Slip Type
+              <select id="slip-type-select">
+                <option value="Power">Power</option>
+                <option value="Flex">Flex</option>
+              </select>
+            </label>
+            <label>Legs
+              <select id="slip-legs-select">
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6" selected>6</option>
+              </select>
+            </label>
+          </div>
+          <label class="slip-min-prob-label" title="Per-leg minimum true probability. Defaults to the slip's break-even.">
+            <span class="slip-min-prob-header">
+              <span>Min Leg %</span>
+              <span id="slip-min-prob-be" class="slip-min-prob-be">BE —</span>
+            </span>
+            <div class="slip-min-prob-control">
+              <input type="number" id="slip-min-prob" min="1" max="99" step="0.1" />
+              <button type="button" id="btn-slip-min-be" class="btn btn-secondary slip-min-prob-be-btn"
+                      title="Reset to break-even">Reset</button>
+            </div>
           </label>
         </div>
 
         <div id="slip-legs" class="slip-legs">
-          <p class="empty-msg">Select 2–6 bets from the table.</p>
+          <p class="empty-msg">Slip will appear here.</p>
         </div>
 
         <div id="slip-results" class="slip-results hidden">
@@ -283,9 +292,7 @@
           </div>
         </div>
 
-        <button class="btn btn-accent btn-full" id="btn-calculate" disabled>Calculate EV</button>
-        <button class="btn btn-primary btn-full" id="btn-auto-build" style="margin-top: 10px;">Auto-Build Best
-          Slip</button>
+        <button class="btn btn-accent btn-full slip-save-btn" id="btn-save-slip-prefs">Save</button>
       </div>
     </div>
 
@@ -445,7 +452,6 @@
                 <th>True Prob</th>
                 <th>Closing</th>
                 <th>CLV%</th>
-                <th>Ind EV%</th>
                 <th>Game Start</th>
                 <th>Result</th>
                 <th>Actual</th>
