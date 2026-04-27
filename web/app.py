@@ -1160,18 +1160,34 @@ def check_username(username: str):
     if not username.replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="Username may only contain letters, numbers, and underscores.")
 
-    # Query all auth users' metadata for matching username via admin API
-    r = _req.get(
-        f"{SUPABASE_URL}/auth/v1/admin/users",
-        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-    )
-    if r.status_code != 200:
-        raise HTTPException(status_code=500, detail="Could not verify username.")
-    users = r.json().get("users", [])
-    for u in users:
-        meta = u.get("user_metadata") or {}
-        if meta.get("username", "").lower() == username.lower():
-            return {"available": False}
+    target = username.lower()
+    # Page through the admin API. Default page size is 50; without paging,
+    # users beyond page 1 silently pass as "available". We cap at 20 pages
+    # (1000 users) — well above current scale, with a hard exit so a future
+    # 10k-user database can't pin this endpoint.
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    PER_PAGE = 200
+    for page in range(1, 21):
+        try:
+            r = _req.get(
+                f"{SUPABASE_URL}/auth/v1/admin/users",
+                params={"page": page, "per_page": PER_PAGE},
+                headers=headers,
+                timeout=5,
+            )
+        except Exception as exc:
+            logger.warning("check_username request failed: %s", exc)
+            raise HTTPException(status_code=500, detail="Could not verify username.")
+        if r.status_code != 200:
+            logger.warning("check_username admin API returned %s: %s", r.status_code, r.text[:200])
+            raise HTTPException(status_code=500, detail="Could not verify username.")
+        users = r.json().get("users", []) or []
+        for u in users:
+            meta = u.get("user_metadata") or {}
+            if (meta.get("username", "") or "").lower() == target:
+                return {"available": False}
+        if len(users) < PER_PAGE:
+            break
     return {"available": True}
 
 

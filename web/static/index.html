@@ -41,22 +41,24 @@
       </div>
 
       <!-- Login form -->
-      <div id="auth-form-login" class="auth-form">
-        <input type="email" id="login-email" placeholder="Email" class="auth-input" />
-        <input type="password" id="login-password" placeholder="Password" class="auth-input" />
-        <button id="btn-login" class="btn btn-primary auth-submit">Log In</button>
-      </div>
+      <form id="auth-form-login" class="auth-form" autocomplete="on">
+        <input type="email" id="login-email" placeholder="Email" class="auth-input" autocomplete="username" />
+        <input type="password" id="login-password" placeholder="Password" class="auth-input" autocomplete="current-password" />
+        <button type="submit" id="btn-login" class="btn btn-primary auth-submit">Log In</button>
+        <button type="button" id="btn-forgot-password" class="auth-link" style="background:none;border:none;color:var(--accent,#3b82f6);cursor:pointer;font-size:0.85em;margin-top:6px;text-align:center;">Forgot password?</button>
+      </form>
 
       <!-- Sign Up form -->
-      <div id="auth-form-signup" class="auth-form" style="display:none;">
+      <form id="auth-form-signup" class="auth-form" style="display:none;" autocomplete="on">
         <input type="text" id="signup-username" placeholder="Username" class="auth-input" maxlength="20" autocomplete="off" />
         <div id="username-status" class="username-status"></div>
-        <input type="email" id="signup-email" placeholder="Email" class="auth-input" />
-        <input type="password" id="signup-password" placeholder="Password (min 6 chars)" class="auth-input" />
-        <button id="btn-signup" class="btn btn-primary auth-submit">Create Account</button>
-      </div>
+        <input type="email" id="signup-email" placeholder="Email" class="auth-input" autocomplete="email" />
+        <input type="password" id="signup-password" placeholder="Password (min 6 chars)" class="auth-input" autocomplete="new-password" />
+        <button type="submit" id="btn-signup" class="btn btn-primary auth-submit">Create Account</button>
+      </form>
 
       <p id="auth-error" class="auth-error"></p>
+      <p id="auth-info" class="auth-info" style="color:var(--green,#22c55e); font-size:0.9em; text-align:center; margin-top:6px;"></p>
     </div>
   </div>
 
@@ -853,7 +855,7 @@
 
 
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script defer src="/static/app.js?v=28"></script>
+  <script defer src="/static/app.js?v=29"></script>
 </body>
 
 </html>

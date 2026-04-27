@@ -25,40 +25,108 @@ async function initAuth() {
         currentSession = session;
         handleSessionUpdate(session);
 
-        sbClient.auth.onAuthStateChange((_event, session) => {
+        sbClient.auth.onAuthStateChange(async (event, session) => {
             currentSession = session;
             handleSessionUpdate(session);
+
+            // PASSWORD_RECOVERY fires when the user lands on the page via
+            // the reset-email link. Supabase has already exchanged the
+            // recovery token for a (limited-scope) session — we now need to
+            // collect a new password and update the user.
+            if (event === 'PASSWORD_RECOVERY') {
+                let pw1 = '';
+                while (true) {
+                    pw1 = window.prompt('Reset your password — enter a new password (min 6 chars):') || '';
+                    if (pw1 === '') return; // user cancelled
+                    if (pw1.length < 6) { alert('Password must be at least 6 characters.'); continue; }
+                    const pw2 = window.prompt('Confirm new password:') || '';
+                    if (pw1 !== pw2) { alert('Passwords did not match. Try again.'); continue; }
+                    break;
+                }
+                try {
+                    const { error } = await sbClient.auth.updateUser({ password: pw1 });
+                    if (error) {
+                        alert('Could not update password: ' + (error.message || error));
+                    } else {
+                        alert('Password updated. You are now signed in.');
+                    }
+                } catch (e) {
+                    alert('Could not update password: ' + (e.message || e));
+                }
+            }
         });
 
         // ── Auth tab switching ──
+        const clearAuthMsgs = () => {
+            const e = document.getElementById('auth-error'); if (e) e.textContent = '';
+            const i = document.getElementById('auth-info');  if (i) i.textContent = '';
+        };
         document.getElementById('auth-tab-login').addEventListener('click', () => {
             document.getElementById('auth-tab-login').classList.add('active');
             document.getElementById('auth-tab-signup').classList.remove('active');
             document.getElementById('auth-form-login').style.display = 'flex';
             document.getElementById('auth-form-signup').style.display = 'none';
-            document.getElementById('auth-error').textContent = '';
+            clearAuthMsgs();
         });
         document.getElementById('auth-tab-signup').addEventListener('click', () => {
             document.getElementById('auth-tab-signup').classList.add('active');
             document.getElementById('auth-tab-login').classList.remove('active');
             document.getElementById('auth-form-signup').style.display = 'flex';
             document.getElementById('auth-form-login').style.display = 'none';
-            document.getElementById('auth-error').textContent = '';
+            clearAuthMsgs();
         });
 
-        // ── Login handler ──
-        document.getElementById('btn-login').addEventListener('click', async () => {
+        // ── Login handler (form submit catches Enter key + button click) ──
+        document.getElementById('auth-form-login').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('btn-login');
             const email = document.getElementById('login-email').value.trim();
             const password = document.getElementById('login-password').value;
             const errorEl = document.getElementById('auth-error');
+            const infoEl  = document.getElementById('auth-info');
+            infoEl.textContent = '';
             if (!email || !password) { errorEl.textContent = 'Please fill in all fields.'; return; }
-            errorEl.textContent = 'Logging in…';
+            errorEl.textContent = '';
+            btn.disabled = true;
+            const origText = btn.textContent;
+            btn.textContent = 'Logging in…';
+            try {
+                const { error } = await sbClient.auth.signInWithPassword({ email, password });
+                if (error) {
+                    errorEl.textContent = error.message || 'Login failed.';
+                } else {
+                    errorEl.textContent = '';
+                }
+            } catch (e) {
+                errorEl.textContent = 'Network error: ' + (e.message || e);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+            }
+        });
 
-            const { error } = await sbClient.auth.signInWithPassword({ email, password });
-            if (error) {
-                errorEl.textContent = error.message;
-            } else {
-                errorEl.textContent = '';
+        // ── Forgot password ──
+        document.getElementById('btn-forgot-password').addEventListener('click', async () => {
+            const email = document.getElementById('login-email').value.trim();
+            const errorEl = document.getElementById('auth-error');
+            const infoEl  = document.getElementById('auth-info');
+            errorEl.textContent = '';
+            infoEl.textContent  = '';
+            if (!email) {
+                errorEl.textContent = 'Enter your email above first, then click "Forgot password?".';
+                return;
+            }
+            try {
+                const redirectTo = window.location.origin + '/';
+                const { error } = await sbClient.auth.resetPasswordForEmail(email, { redirectTo });
+                if (error) {
+                    errorEl.textContent = error.message || 'Could not send reset email.';
+                } else {
+                    // Phrased to avoid leaking which emails exist.
+                    infoEl.textContent = 'If an account exists for ' + email + ', a password reset email is on its way.';
+                }
+            } catch (e) {
+                errorEl.textContent = 'Network error: ' + (e.message || e);
             }
         });
 
@@ -101,28 +169,91 @@ async function initAuth() {
             }, 400);
         });
 
-        // ── Signup handler ──
-        document.getElementById('btn-signup').addEventListener('click', async () => {
+        // ── Signup handler (form submit catches Enter key + button click) ──
+        // Helper: re-check username synchronously if the debounced check is
+        // still in flight or the user typed something new without the timer
+        // having fired. Avoids a misleading "choose an available username"
+        // when the username actually IS available.
+        async function reverifyUsername(val) {
+            try {
+                const r = await fetch(`/api/auth/check-username?username=${encodeURIComponent(val)}`);
+                const d = await r.json();
+                return r.ok && !!d.available;
+            } catch {
+                return false;
+            }
+        }
+
+        document.getElementById('auth-form-signup').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('btn-signup');
             const username = usernameInput.value.trim();
             const email = document.getElementById('signup-email').value.trim();
             const password = document.getElementById('signup-password').value;
             const errorEl = document.getElementById('auth-error');
+            const infoEl  = document.getElementById('auth-info');
+            infoEl.textContent = '';
 
             if (!username || !email || !password) { errorEl.textContent = 'Please fill in all fields.'; return; }
             if (username.length < 2) { errorEl.textContent = 'Username must be at least 2 characters.'; return; }
-            if (!usernameAvailable) { errorEl.textContent = 'Please choose an available username.'; return; }
             if (password.length < 6) { errorEl.textContent = 'Password must be at least 6 characters.'; return; }
 
-            errorEl.textContent = 'Creating account…';
-            const { error } = await sbClient.auth.signUp({
-                email,
-                password,
-                options: { data: { username } }
-            });
-            if (error) {
-                errorEl.textContent = error.message;
-            } else {
-                errorEl.textContent = '';
+            errorEl.textContent = '';
+            btn.disabled = true;
+            const origText = btn.textContent;
+            btn.textContent = 'Checking…';
+
+            // Wait out an in-flight debounced check, then sync-verify
+            // (handles the race where the user submits before the 400ms
+            // debounce timer fires).
+            if (!usernameAvailable) {
+                const ok = await reverifyUsername(username);
+                if (!ok) {
+                    errorEl.textContent = 'That username is taken or invalid. Please pick another.';
+                    btn.disabled = false;
+                    btn.textContent = origText;
+                    return;
+                }
+                usernameAvailable = true;
+                usernameStatus.textContent = '✓ Available';
+                usernameStatus.className = 'username-status available';
+            }
+
+            btn.textContent = 'Creating account…';
+            try {
+                const { data, error } = await sbClient.auth.signUp({
+                    email,
+                    password,
+                    options: {
+                        data: { username },
+                        emailRedirectTo: window.location.origin + '/',
+                    }
+                });
+                if (error) {
+                    errorEl.textContent = error.message || 'Sign-up failed.';
+                    return;
+                }
+                // Supabase obfuscates duplicate-email signups (when email
+                // confirmation is enabled) by returning a fake user with
+                // identities: []. Detect and surface a useful message.
+                const idents = (data && data.user && data.user.identities) || [];
+                if (data && data.user && !data.session && idents.length === 0) {
+                    errorEl.textContent = 'An account with that email already exists. Try logging in or resetting your password.';
+                    return;
+                }
+                if (data && data.session) {
+                    // Auto-confirmed (email confirmation off in Supabase project).
+                    // onAuthStateChange will close the modal.
+                    infoEl.textContent = 'Account created — signing you in…';
+                } else {
+                    // Confirmation required — user has to click the email link.
+                    infoEl.textContent = '✓ Account created! Check ' + email + ' for a confirmation link before logging in.';
+                }
+            } catch (e) {
+                errorEl.textContent = 'Network error: ' + (e.message || e);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
             }
         });
 
@@ -138,8 +269,22 @@ async function initAuth() {
 
         // ── Logout ──
         document.getElementById('btn-logout').addEventListener('click', async () => {
-            await sbClient.auth.signOut();
-            document.getElementById('user-dropdown').classList.remove('open');
+            try {
+                const { error } = await sbClient.auth.signOut();
+                if (error) {
+                    if (typeof showToast === 'function') {
+                        showToast('Logout failed: ' + (error.message || error), 'error');
+                    }
+                    return;
+                }
+            } catch (e) {
+                if (typeof showToast === 'function') {
+                    showToast('Logout failed: ' + (e.message || e), 'error');
+                }
+                return;
+            } finally {
+                document.getElementById('user-dropdown').classList.remove('open');
+            }
         });
 
         // ── Avatar dropdown toggle ──
