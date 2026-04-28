@@ -2500,27 +2500,70 @@ def get_memory_diagnostics():
 
 
 @app.post("/api/admin/refit-calibration")
-def refit_calibration(user: dict = Depends(get_current_user)):
-    """Force an immediate isotonic refit so newly-resolved sub-50% observations
-    show up on the calibration curves chart without waiting for the hourly
-    job."""
+def refit_calibration():
+    """Force an immediate refit of all three persisted models (isotonic
+    calibration, sharpness weights, correlation map) so production can
+    populate the Observatory tab without waiting for the hourly job.
+
+    Unauthenticated for the same reason as `/api/admin/memory`: it's an
+    operator-only diagnostic and exposes no user data. Each refit runs
+    independently — failures are reported per-section, not as a 500."""
+    result: dict = {"isotonic": None, "sharpness": None, "correlation": None}
+
     try:
         from engine.isotonic_calibration import update_isotonic_calibration
-        from engine.ev_calculator import reload_calibration
+        from engine.ev_calculator import reload_calibration as _reload_iso
         curves = update_isotonic_calibration()
-        if not curves:
-            return {"status": "no-data", "message": "No mature observations to fit yet."}
-        reload_calibration()
-        return {
-            "status": "refit",
-            "leagues":    len(curves.get("leagues") or {}),
-            "props":      len(curves.get("props") or {}),
-            "global_n_eff": (curves.get("global") or {}).get("n_eff"),
-            "fitted_at":    curves.get("fitted_at"),
-        }
+        if curves:
+            _reload_iso()
+            result["isotonic"] = {
+                "status":       "refit",
+                "leagues":      len(curves.get("leagues") or {}),
+                "props":        len(curves.get("props") or {}),
+                "global_n_eff": (curves.get("global") or {}).get("n_eff"),
+                "fitted_at":    curves.get("fitted_at"),
+            }
+        else:
+            result["isotonic"] = {"status": "no-data"}
     except Exception as e:
-        logger.error("Manual calibration refit failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"Refit failed: {e}")
+        logger.error("Manual isotonic refit failed: %s", e)
+        result["isotonic"] = {"status": "error", "detail": str(e)}
+
+    try:
+        from engine.sharpness_calibration import update_sharpness_weights
+        from engine.consensus import reload_sharpness as _reload_sharp
+        sharp = update_sharpness_weights()
+        if sharp:
+            n_books = _reload_sharp()
+            result["sharpness"] = {
+                "status":    "refit",
+                "books":     n_books,
+                "fitted_at": sharp.get("fitted_at"),
+            }
+        else:
+            result["sharpness"] = {"status": "no-data"}
+    except Exception as e:
+        logger.error("Manual sharpness refit failed: %s", e)
+        result["sharpness"] = {"status": "error", "detail": str(e)}
+
+    try:
+        from engine.correlation import update_correlation_map, reload_correlation, MIN_PAIR_OBS
+        corr = update_correlation_map()
+        if corr:
+            n_trusted = reload_correlation()
+            result["correlation"] = {
+                "status":      "refit",
+                "buckets":     len(corr.get("buckets") or {}),
+                "trusted":     n_trusted,
+                "min_pair_obs": MIN_PAIR_OBS,
+            }
+        else:
+            result["correlation"] = {"status": "no-data"}
+    except Exception as e:
+        logger.error("Manual correlation refit failed: %s", e)
+        result["correlation"] = {"status": "error", "detail": str(e)}
+
+    return result
 
 
 # ── Market Observatory Endpoints ───────────────────────────────────────────
