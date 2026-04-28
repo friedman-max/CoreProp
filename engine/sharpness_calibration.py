@@ -102,12 +102,15 @@ def update_sharpness_weights() -> dict | None:
     now = datetime.now(timezone.utc)
 
     cutoff_iso = (now - timedelta(days=SHARPNESS_LOOKBACK_DAYS)).isoformat()
+    # NULL-safe recency filter — keeps rows missing game_start so a backfill
+    # gap doesn't collapse the fit set to zero.
+    recency_filter = f"game_start.gte.{cutoff_iso},game_start.is.null"
     try:
         res = (
             db.table("market_observatory")
             .select("books, closing_prob, game_start")
             .not_.is_("closing_prob", "null")
-            .gte("game_start", cutoff_iso)
+            .or_(recency_filter)
             .execute()
         )
         rows = res.data or []
@@ -197,6 +200,13 @@ def update_sharpness_weights() -> dict | None:
         logger.error("Sharpness: write failed: %s", exc)
         return None
 
+    # Mirror to Supabase for ephemeral-disk deploys.
+    try:
+        from engine.persistence import sync_state_to_supabase
+        sync_state_to_supabase("sharpness_weights", out)
+    except Exception as exc:
+        logger.warning("Sharpness: Supabase mirror failed: %s", exc)
+
     logger.info(
         "Sharpness: refit weights for %d books — %s",
         len(weights),
@@ -208,13 +218,36 @@ def update_sharpness_weights() -> dict | None:
 def load_sharpness_weights() -> dict[str, float]:
     """
     Load the empirical per-book weights, or an empty dict if no fit is
-    available. Callers should fall back to the hardcoded prior in that case.
+    available. Falls back to the Supabase-mirrored copy when the local
+    JSON file is missing (ephemeral-disk redeploys). Callers fall back to
+    the hardcoded prior when this returns empty.
     """
-    if not os.path.exists(SHARPNESS_FILE):
+    raw = None
+    if os.path.exists(SHARPNESS_FILE):
+        try:
+            with open(SHARPNESS_FILE, "r") as f:
+                raw = json.load(f)
+        except Exception:
+            raw = None
+
+    if raw is None:
+        try:
+            from engine.persistence import load_state_from_supabase
+            mirrored, _ = load_state_from_supabase("sharpness_weights")
+            if isinstance(mirrored, dict) and mirrored.get("weights"):
+                try:
+                    os.makedirs(os.path.dirname(SHARPNESS_FILE), exist_ok=True)
+                    with open(SHARPNESS_FILE, "w") as f:
+                        json.dump(mirrored, f, indent=2)
+                except Exception:
+                    pass
+                raw = mirrored
+        except Exception:
+            pass
+
+    if raw is None:
         return {}
     try:
-        with open(SHARPNESS_FILE, "r") as f:
-            raw = json.load(f)
         weights = raw.get("weights") or {}
         return {str(k).lower(): float(v) for k, v in weights.items()}
     except Exception:

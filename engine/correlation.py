@@ -259,14 +259,18 @@ def update_correlation_map() -> Optional[dict]:
 
     # Window the scan to keep RAM bounded — pairwise hit correlations
     # don't drift fast enough to need pre-2024 data on a 512 MB tier.
+    # NULL-safe: rows missing game_start are kept (the per-game grouping
+    # below ignores them anyway, but excluding them at the SQL layer can
+    # silently zero out the fit set if a backfill gap shows up).
     from datetime import datetime, timedelta, timezone
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()
+    recency_filter = f"game_start.gte.{cutoff_iso},game_start.is.null"
     try:
         res = (
             db.table("market_observatory")
               .select("player, league, game_start, result, prop")
               .in_("result", ["hit", "miss"])
-              .gte("game_start", cutoff_iso)
+              .or_(recency_filter)
               .execute()
         )
     except Exception as exc:
@@ -344,6 +348,13 @@ def update_correlation_map() -> Optional[dict]:
         logger.warning("Correlation fit: write failed: %s", exc)
         return payload  # still return for in-memory reload
 
+    # Mirror to Supabase so ephemeral-disk redeploys don't lose the fit.
+    try:
+        from engine.persistence import sync_state_to_supabase
+        sync_state_to_supabase("correlation_map", payload)
+    except Exception as exc:
+        logger.warning("Correlation: Supabase mirror failed: %s", exc)
+
     n_trusted = sum(1 for v in fitted.values() if v["n"] >= MIN_PAIR_OBS)
     logger.info(
         "Correlation fit: %d buckets fitted (%d above trust threshold of %d pairs).",
@@ -354,16 +365,35 @@ def update_correlation_map() -> Optional[dict]:
 
 def load_correlation_map() -> dict:
     """Read the persisted empirical map from disk into the plain-dict form
-    used by `_pair_correlation`. Returns {} if the file is missing."""
-    if not os.path.exists(CORRELATION_FILE):
+    used by `_pair_correlation`. Falls back to the Supabase-mirrored copy
+    when the local JSON is missing (ephemeral-disk redeploys)."""
+    payload = None
+    if os.path.exists(CORRELATION_FILE):
+        try:
+            with open(CORRELATION_FILE, "r") as f:
+                payload = json.load(f)
+        except Exception as exc:
+            logger.warning("Correlation load: %s", exc)
+            payload = None
+
+    if payload is None:
+        try:
+            from engine.persistence import load_state_from_supabase
+            mirrored, _ = load_state_from_supabase("correlation_map")
+            if isinstance(mirrored, dict) and mirrored.get("buckets") is not None:
+                try:
+                    os.makedirs(os.path.dirname(CORRELATION_FILE), exist_ok=True)
+                    with open(CORRELATION_FILE, "w") as f:
+                        json.dump(mirrored, f, indent=2)
+                except Exception:
+                    pass
+                payload = mirrored
+        except Exception:
+            pass
+
+    if payload is None:
         return {}
-    try:
-        with open(CORRELATION_FILE, "r") as f:
-            payload = json.load(f)
-        return payload.get("buckets", {}) or {}
-    except Exception as exc:
-        logger.warning("Correlation load: %s", exc)
-        return {}
+    return payload.get("buckets", {}) or {}
 
 
 def reload_correlation() -> int:

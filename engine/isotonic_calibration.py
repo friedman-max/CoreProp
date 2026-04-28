@@ -164,7 +164,10 @@ def _load_observations(db) -> list[dict]:
     obs_clv: list[dict] = []
 
     # Date floor — cuts the historical scan to roughly 3× the half-life.
+    # `or_(...is.null)` keeps rows whose game_start was never populated, so a
+    # backfill gap doesn't accidentally collapse the fit set to zero.
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=RECENCY_LOOKBACK_DAYS)).isoformat()
+    recency_filter = f"game_start.gte.{cutoff_iso},game_start.is.null"
 
     # ── market_observatory ─────────────────────────────────────────────────
     try:
@@ -172,7 +175,7 @@ def _load_observations(db) -> list[dict]:
         res = (
             db.table("market_observatory")
             .select(select_cols)
-            .gte("game_start", cutoff_iso)
+            .or_(recency_filter)
             .execute()
         )
         for r in (res.data or []):
@@ -220,7 +223,7 @@ def _load_observations(db) -> list[dict]:
         res = (
             db.table("legs")
             .select(select_cols)
-            .gte("game_start", cutoff_iso)
+            .or_(recency_filter)
             .execute()
         )
         for r in (res.data or []):
@@ -346,6 +349,15 @@ def update_isotonic_calibration() -> dict | None:
         logger.error("IsotonicCalibration: write failed: %s", exc)
         return None
 
+    # Mirror to Supabase so the fit survives ephemeral-disk redeploys
+    # (Render's free tier wipes /data on every restart). Best-effort: a
+    # Supabase outage shouldn't fail the in-process refresh.
+    try:
+        from engine.persistence import sync_state_to_supabase
+        sync_state_to_supabase("isotonic_calibration", out)
+    except Exception as exc:
+        logger.warning("IsotonicCalibration: Supabase mirror failed: %s", exc)
+
     logger.info(
         "IsotonicCalibration: fit %d leagues, %d (league,prop) buckets, %d total obs (n_eff=%.1f)",
         len(out["leagues"]), len(out["props"]), len(observations),
@@ -361,15 +373,36 @@ def update_isotonic_calibration() -> dict | None:
 def load_isotonic_calibration() -> dict:
     """
     Returns the fitted hierarchy, with curves normalized into tuples for the
-    interpolator. Returns an empty (no-op) shape if the file doesn't exist
-    or is from a prior schema version.
+    interpolator. Reads the local JSON file first; falls back to the
+    Supabase-mirrored copy when the disk is empty (ephemeral-filesystem
+    deploys). Returns an empty (no-op) shape if neither is available or
+    the version is from a prior schema.
     """
-    if not os.path.exists(ISOTONIC_FILE):
-        return {"global": None, "leagues": {}, "props": {}}
-    try:
-        with open(ISOTONIC_FILE, "r") as f:
-            raw = json.load(f)
-    except Exception:
+    raw = None
+    if os.path.exists(ISOTONIC_FILE):
+        try:
+            with open(ISOTONIC_FILE, "r") as f:
+                raw = json.load(f)
+        except Exception:
+            raw = None
+
+    if raw is None:
+        try:
+            from engine.persistence import load_state_from_supabase
+            mirrored, _ = load_state_from_supabase("isotonic_calibration")
+            if isinstance(mirrored, dict) and mirrored.get("version") == 2:
+                # Hydrate the local file so subsequent reads skip the round trip.
+                try:
+                    os.makedirs(os.path.dirname(ISOTONIC_FILE), exist_ok=True)
+                    with open(ISOTONIC_FILE, "w") as f:
+                        json.dump(mirrored, f, indent=2)
+                except Exception:
+                    pass
+                raw = mirrored
+        except Exception as exc:
+            logger.debug("IsotonicCalibration: Supabase fallback unavailable: %s", exc)
+
+    if raw is None:
         return {"global": None, "leagues": {}, "props": {}}
 
     if raw.get("version") != 2:
