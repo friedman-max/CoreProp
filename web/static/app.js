@@ -1020,10 +1020,11 @@ function renderCalibrationHeatmap(heat) {
     return;
   }
 
-  // Header: League, Prop, then one column per 5% bucket.
+  // Header: League, Prop, overall Hit Rate, then one column per 5% bucket.
   const headCells = [
     `<th>League</th>`,
     `<th>Prop</th>`,
+    `<th style="text-align:center;" title="Overall recency-weighted hit rate across all qualifying buckets, alongside the volume-weighted average expected probability.">Hit Rate</th>`,
     ...buckets.map(b => `<th style="text-align:center;">${b.label}</th>`),
   ].join("");
   thead.innerHTML = `<tr>${headCells}</tr>`;
@@ -1040,21 +1041,29 @@ function renderCalibrationHeatmap(heat) {
     group.sort((a, b) => b.n_eff - a.n_eff);
     let first = true;
     for (const r of group) {
+      const cellColor = (actual, expected) => {
+        const delta = actual - expected;
+        const intensity = Math.min(1, Math.abs(delta) / 0.15);
+        const hue = delta >= 0 ? 140 : 0;
+        return `hsla(${hue}, 70%, 45%, ${0.15 + intensity * 0.55})`;
+      };
+
       const cells = r.cells.map((c, i) => {
         if (!c) return `<td class="heat-cell heat-empty"></td>`;
         const expected = (buckets[i].lo + buckets[i].hi) / 2;
-        const delta = c.actual - expected;  // negative = worse than expected
-        // Map delta to a color: red for underperforming, green for overperforming.
-        const intensity = Math.min(1, Math.abs(delta) / 0.15);
-        const hue = delta >= 0 ? 140 : 0;
-        const bg = `hsla(${hue}, 70%, 45%, ${0.15 + intensity * 0.55})`;
+        const bg = cellColor(c.actual, expected);
         const pct = (c.actual * 100).toFixed(0) + "%";
         const title = `Actual ${(c.actual*100).toFixed(1)}% vs expected ${(expected*100).toFixed(0)}%\nn_eff=${c.n_eff}`;
         return `<td class="heat-cell" style="background:${bg};" title="${title}">${pct}</td>`;
       }).join("");
+
+      const overallBg    = cellColor(r.actual, r.expected);
+      const overallTitle = `Overall hit rate ${(r.actual*100).toFixed(1)}% vs avg expected ${(r.expected*100).toFixed(1)}% (n_eff=${r.n_eff})`;
+      const overallCell  = `<td class="heat-cell heat-overall" style="background:${overallBg};" title="${overallTitle}">${(r.actual*100).toFixed(0)}%</td>`;
+
       html.push(
         `<tr>${first ? `<td class="heat-league-cell" rowspan="${group.length}">${league}</td>` : ""}` +
-        `<td class="heat-prop-cell">${r.prop}</td>${cells}</tr>`
+        `<td class="heat-prop-cell">${r.prop}</td>${overallCell}${cells}</tr>`
       );
       first = false;
     }

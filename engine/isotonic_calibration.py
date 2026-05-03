@@ -614,6 +614,8 @@ def export_heatmap() -> dict:
 
         cells: list[dict | None] = []
         total_n_eff = 0.0
+        total_hits_w = 0.0
+        total_expected_w = 0.0  # Σ expected_prob × n_eff, for an avg-expected anchor
         for lo, hi in HEATMAP_BUCKETS:
             # Sum the outcome-only accumulators for the 0.5% bins that fall
             # inside this 5% display bucket.
@@ -632,16 +634,24 @@ def export_heatmap() -> dict:
                     "n_eff":    round(sum_w, 2),
                 })
                 total_n_eff += sum_w
+                total_hits_w += sum_hits_w
+                total_expected_w += ((lo + hi) / 2) * sum_w
             else:
                 cells.append(None)
 
         if total_n_eff < HEATMAP_MIN_ROW_N_EFF:
             continue
         rows.append({
-            "league":  league,
-            "prop":    prop,
-            "n_eff":   round(total_n_eff, 2),
-            "cells":   cells,
+            "league":   league,
+            "prop":     prop,
+            "n_eff":    round(total_n_eff, 2),
+            # Overall recency-weighted hit rate across all qualifying buckets,
+            # plus the volume-weighted average expected probability so the UI
+            # can show the gap between what the model expects and what the
+            # prop actually delivers without picking an arbitrary anchor.
+            "actual":   round(total_hits_w / total_n_eff, 4),
+            "expected": round(total_expected_w / total_n_eff, 4),
+            "cells":    cells,
         })
 
     rows.sort(key=lambda r: (r["league"], -r["n_eff"]))
