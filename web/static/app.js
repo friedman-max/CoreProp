@@ -2792,7 +2792,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const h2 = sp && sp.querySelector("h2");
     if (h2) {
         h2.addEventListener("click", () => {
-            if (window.innerWidth <= 900) sp.classList.toggle("open");
+            if (window.innerWidth <= 768) sp.classList.toggle("open");
         });
     }
 

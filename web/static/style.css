@@ -1454,6 +1454,89 @@ tr.in-backtest.selected {
     flex: none !important;
     width: 100% !important;
   }
+
+  /* Slip drawer: header wrapper stacks so the h2 can act as a centered
+     drag handle, with the Auto-Backtest toggle flowing beneath it.
+     Targets the inline-styled flex container that wraps h2 + auto-backtest. */
+  .slip-panel:not(.hidden) > div:first-child {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    margin-bottom: 10px !important;
+  }
+  .slip-panel:not(.hidden) > div:first-child > label {
+    justify-content: center !important;
+  }
+
+  /* Honor iOS home-indicator safe area inside the slip drawer. */
+  .slip-panel:not(.hidden) {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom)) !important;
+  }
+
+  /* Sandbox strategy panel uses inline `flex: 0 0 300px` — force full-width
+     on mobile so it doesn't stay a 300px column on a 360px-wide phone. */
+  #sandbox-view .analytics-panel {
+    flex: 1 1 100% !important;
+    min-width: 0 !important;
+  }
+
+  /* Prevent iOS zoom-on-focus: inputs/selects must be ≥16px. */
+  .filters-bar input,
+  .filters-bar select,
+  .slip-prefs input,
+  .slip-prefs select,
+  .auth-input,
+  .sandbox-controls select,
+  .modal-body input,
+  .modal-body select {
+    font-size: 16px !important;
+  }
+
+  /* Compact the logo so it doesn't dominate the tab bar on small screens. */
+  .tab-logo {
+    height: 36px;
+  }
+  .sticky-logo-wrap {
+    padding-left: 10px;
+  }
+  .sticky-user-wrap {
+    padding: 0 10px 0 16px;
+  }
+
+  /* Pagination lives inside the filters bar with `margin-left:auto`, which
+     on mobile pushes it past the horizontal-scroll edge. Wrap it onto its
+     own row below the filters so it stays reachable. */
+  .filters-bar:not(.hidden) {
+    flex-wrap: wrap !important;
+  }
+  .pagination-controls {
+    margin-left: 0 !important;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    order: 99;
+  }
+
+  /* Toast: respect safe area at the top below the tab bar. */
+  .toast-container {
+    top: calc(56px + env(safe-area-inset-top));
+  }
+}
+
+/* Fine-tune for very small phones (≤380px) where 3-up summary cards
+   crowd together. */
+@media (max-width: 380px) {
+  .bt-summary {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  #cal-summary,
+  #clv-summary {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .tab {
+    font-size: 11px;
+    padding: 7px 10px;
+  }
 }
 
 /* ── Loading overlay (first load / hard refresh) ─────────────────────── */
