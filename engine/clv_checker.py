@@ -135,8 +135,9 @@ class CLVTracker:
                 # stored true_prob and CLV reflects only line movement.
                 league = row.get("league")
                 prop_for_cal = row.get("prop")
+                side_for_cal = (row.get("side") or "").lower()
                 calibrated_cp = min(
-                    _apply_isotonic(self._isotonic_curves, league, prop_for_cal, new_cp_val),
+                    _apply_isotonic(self._isotonic_curves, league, prop_for_cal, side_for_cal, new_cp_val),
                     0.999,
                 )
 

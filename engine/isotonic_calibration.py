@@ -357,18 +357,25 @@ def _save_state(state: dict) -> None:
         logger.warning("IsotonicCalibration: state mirror failed: %s", exc)
 
 
-def _ingest_into_state(state: dict, league: str, prop: str,
+def _ingest_into_state(state: dict, league: str, prop: str, side: str,
                        x: float, y: float, w: float, *, is_outcome: bool = False) -> None:
-    """Add one observation to all three hierarchy levels."""
+    """Add one observation to all three hierarchy levels.
+
+    The (league, prop) bucket is keyed by side too — over and under tend to
+    be miscalibrated asymmetrically (books often shade one side for variance
+    protection), and pooling them washes the signal out. `side` must be
+    "over" or "under"; anything else (legacy "both", missing, etc.) is
+    skipped at the prop level but still contributes to global and league.
+    """
     if w <= 0 or not (0.0 < x < 1.0):
         return
     _accum_bin_set(state["global"], x, y, w, is_outcome=is_outcome)
     _accum(state["leagues"], league, x, y, w, is_outcome=is_outcome)
-    if prop:
-        _accum(state["props"], f"{league}|{prop}", x, y, w, is_outcome=is_outcome)
+    if prop and side in ("over", "under"):
+        _accum(state["props"], f"{league}|{prop}|{side}", x, y, w, is_outcome=is_outcome)
 
 
-def _ingest_resolved_row(state: dict, league: str, prop: str,
+def _ingest_resolved_row(state: dict, league: str, prop: str, side: str,
                          true_prob: float, result: str,
                          closing_prob: float | None,
                          resolved_at: datetime | None,
@@ -384,9 +391,9 @@ def _ingest_resolved_row(state: dict, league: str, prop: str,
 
     r = (result or "").lower()
     if r in ("hit", "won", "win"):
-        _ingest_into_state(state, league, prop, true_prob, 1.0, rec_w, is_outcome=True)
+        _ingest_into_state(state, league, prop, side, true_prob, 1.0, rec_w, is_outcome=True)
     elif r in ("miss", "lost", "loss"):
-        _ingest_into_state(state, league, prop, true_prob, 0.0, rec_w, is_outcome=True)
+        _ingest_into_state(state, league, prop, side, true_prob, 0.0, rec_w, is_outcome=True)
     # push/dnp contribute no outcome signal but do contribute CLV below.
 
     if closing_prob is not None:
@@ -395,7 +402,7 @@ def _ingest_resolved_row(state: dict, league: str, prop: str,
         except (ValueError, TypeError):
             cp = None
         if cp is not None and 0.0 < cp < 1.0:
-            _ingest_into_state(state, league, prop, true_prob, cp,
+            _ingest_into_state(state, league, prop, side, true_prob, cp,
                                rec_w * CLV_OBSERVATION_WEIGHT, is_outcome=False)
 
 
@@ -496,8 +503,8 @@ def update_isotonic_calibration() -> dict | None:
                 _decay_stats(state["props"], decay)
 
     # ── 2. Cursor pulls ─────────────────────────────────────────────────
-    obs_cols  = "league, prop, true_prob, result, closing_prob, resolved_at"
-    legs_cols = "league, prop, true_prob, result, closing_prob, resolved_at"
+    obs_cols  = "league, prop, side, true_prob, result, closing_prob, resolved_at"
+    legs_cols = "league, prop, side, true_prob, result, closing_prob, resolved_at"
     obs_rows  = _pull_resolved_since(db, "market_observatory", state.get("hwm_observatory"), obs_cols)
     leg_rows  = _pull_resolved_since(db, "legs", state.get("hwm_legs"), legs_cols)
 
@@ -518,7 +525,8 @@ def update_isotonic_calibration() -> dict | None:
             continue
         ra = r.get("resolved_at")
         ra_dt = _parse_dt(ra)
-        _ingest_resolved_row(state, league, r.get("prop") or "", tp,
+        _ingest_resolved_row(state, league, r.get("prop") or "",
+                             (r.get("side") or "").lower(), tp,
                              r.get("result") or "", r.get("closing_prob"),
                              ra_dt, now)
         n_ingested += 1
@@ -537,7 +545,8 @@ def update_isotonic_calibration() -> dict | None:
             continue
         ra = r.get("resolved_at")
         ra_dt = _parse_dt(ra)
-        _ingest_resolved_row(state, league, r.get("prop") or "", tp,
+        _ingest_resolved_row(state, league, r.get("prop") or "",
+                             (r.get("side") or "").lower(), tp,
                              r.get("result") or "", r.get("closing_prob"),
                              ra_dt, now)
         n_ingested += 1
@@ -611,10 +620,17 @@ def export_heatmap() -> dict:
     state = _load_state()
 
     rows: list[dict] = []
-    for league_prop, by_bin in (state.get("props") or {}).items():
-        if "|" not in league_prop:
+    for bucket_key, by_bin in (state.get("props") or {}).items():
+        # New 3-key format: "league|prop|side". Skip legacy 2-key entries
+        # ("league|prop") that pre-date the per-side split — they decay out
+        # naturally over the next refits and shouldn't be displayed since
+        # they conflate over/under hit rates.
+        parts = bucket_key.split("|")
+        if len(parts) != 3:
             continue
-        league, prop = league_prop.split("|", 1)
+        league, prop, side = parts
+        if side not in ("over", "under"):
+            continue
 
         cells: list[dict | None] = []
         total_n_eff = 0.0
@@ -647,7 +663,8 @@ def export_heatmap() -> dict:
             continue
         rows.append({
             "league":   league,
-            "prop":     prop,
+            "prop":     f"{prop} ({side})",
+            "side":     side,
             "n_eff":    round(total_n_eff, 2),
             # Overall recency-weighted hit rate across all qualifying buckets,
             # plus the volume-weighted average expected probability so the UI
@@ -769,26 +786,28 @@ def _shrink(parent_q: float, level: dict | None, raw_prob: float) -> float:
     return alpha * q_child + (1.0 - alpha) * parent_q
 
 
-def calibrate(curves: dict, league: str | None, prop: str | None, raw_prob: float) -> float:
+def calibrate(curves: dict, league: str | None, prop: str | None,
+              side: str | None, raw_prob: float) -> float:
     """
     Apply isotonic calibration with Bayesian shrinkage.
 
-    Hierarchy on the apply path is global → (league, prop). The league level
-    is fitted and surfaced for diagnostics (Observatory chart) but is
+    Hierarchy on the apply path is global → (league, prop, side). The league
+    level is fitted and surfaced for diagnostics (Observatory chart) but is
     intentionally NOT a parent of the prop level: we choose props, not
     leagues, so a bad prop type must not get lifted by the league's overall
     performance, and a good prop must not get dragged down by a poor league.
 
+    The bucket key includes `side` because miscalibration tends to be
+    side-asymmetric — books often shade one side for variance protection,
+    so over and under hit at meaningfully different rates and pooling them
+    averages out the signal. When `side` is missing or not "over"/"under"
+    we fall through to global directly (the legacy 2-key bucket is no
+    longer consulted).
+
     Symmetric output: when empirical hit rate exceeds the raw devig number
     at high n_eff, the result is allowed to exceed raw_prob. The Bayesian
-    shrinkage (κ=SHRINKAGE_KAPPA) is what regulates against overfitting —
-    thin buckets pool toward global automatically, well-attested ones move
-    the number. The previous min(q_prop, raw_prob) cap was double-protection
-    that broke regression symmetry: it correctly down-shrunk under-performers
-    but ignored real upside on over-performers, biasing every consumer
-    (true_prob shown, EV display, CLV tracking) downward on average.
-    Variance-control belongs in stake sizing (quarter-Kelly), not the point
-    estimate.
+    shrinkage (κ=SHRINKAGE_KAPPA) is the only guardrail; variance control
+    belongs in stake sizing (quarter-Kelly), not the point estimate.
     """
     if not curves:
         return raw_prob
@@ -798,9 +817,11 @@ def calibrate(curves: dict, league: str | None, prop: str | None, raw_prob: floa
         return raw_prob
     q_global = _interp(global_level["curve"], raw_prob)
 
-    # (league, prop) shrinks directly toward global, bypassing the league
-    # posterior so prop performance is the dominant signal at apply time.
+    # (league, prop, side) shrinks directly toward global, bypassing the
+    # league posterior so prop performance is the dominant signal at apply
+    # time and side asymmetry isn't washed out.
     prop_level = None
-    if league and prop:
-        prop_level = curves.get("props", {}).get(f"{league}|{prop}")
+    side_norm = (side or "").lower()
+    if league and prop and side_norm in ("over", "under"):
+        prop_level = curves.get("props", {}).get(f"{league}|{prop}|{side_norm}")
     return _shrink(q_global, prop_level, raw_prob)
