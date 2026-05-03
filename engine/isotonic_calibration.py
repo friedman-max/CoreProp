@@ -28,8 +28,12 @@ Design notes:
      size scales with #(distinct buckets), not with history depth — no row
      limits needed.
 
-Output is conservative: `calibrated_prob ≤ raw_prob` always — calibration
-shrinks but never inflates.
+Output is symmetric: a (league, prop) bucket whose empirical hit rate
+exceeds the raw devig probability at high n_eff is allowed to push the
+calibrated number above raw. The Bayesian shrinkage (κ=SHRINKAGE_KAPPA)
+is the only guardrail against overfitting — thin buckets pool toward
+global, well-attested ones move the number meaningfully in either
+direction. Stake-sizing (quarter-Kelly) is where variance control lives.
 """
 from __future__ import annotations
 
@@ -775,14 +779,22 @@ def calibrate(curves: dict, league: str | None, prop: str | None, raw_prob: floa
     leagues, so a bad prop type must not get lifted by the league's overall
     performance, and a good prop must not get dragged down by a poor league.
 
-    Conservative cap: the calibrated probability never exceeds the raw input.
+    Symmetric output: when empirical hit rate exceeds the raw devig number
+    at high n_eff, the result is allowed to exceed raw_prob. The Bayesian
+    shrinkage (κ=SHRINKAGE_KAPPA) is what regulates against overfitting —
+    thin buckets pool toward global automatically, well-attested ones move
+    the number. The previous min(q_prop, raw_prob) cap was double-protection
+    that broke regression symmetry: it correctly down-shrunk under-performers
+    but ignored real upside on over-performers, biasing every consumer
+    (true_prob shown, EV display, CLV tracking) downward on average.
+    Variance-control belongs in stake sizing (quarter-Kelly), not the point
+    estimate.
     """
     if not curves:
         return raw_prob
 
     global_level = curves.get("global")
     if not global_level or not global_level.get("curve"):
-        # No fits at all yet — pass through.
         return raw_prob
     q_global = _interp(global_level["curve"], raw_prob)
 
@@ -791,7 +803,4 @@ def calibrate(curves: dict, league: str | None, prop: str | None, raw_prob: floa
     prop_level = None
     if league and prop:
         prop_level = curves.get("props", {}).get(f"{league}|{prop}")
-    q_prop = _shrink(q_global, prop_level, raw_prob)
-
-    # Conservative cap: never inflate.
-    return min(q_prop, raw_prob)
+    return _shrink(q_global, prop_level, raw_prob)

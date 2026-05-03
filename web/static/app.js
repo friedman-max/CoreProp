@@ -1284,11 +1284,11 @@ function renderObservatoryMultipliers(multipliers) {
     return;
   }
 
-  // Sort: calibrated rows first by strongest edge (smallest multiplier =
-  // biggest correction the model is applying), then neutrals alphabetically.
+  // Sort: calibrated rows first by largest absolute correction (either
+  // direction is a meaningful signal), then neutrals alphabetically.
   rows.sort((a, b) => {
     if (a.calibrated !== b.calibrated) return a.calibrated ? -1 : 1;
-    if (a.calibrated) return a.value - b.value;
+    if (a.calibrated) return Math.abs(b.value - 1) - Math.abs(a.value - 1);
     return a.key.localeCompare(b.key);
   });
 
@@ -1302,10 +1302,21 @@ function renderObservatoryMultipliers(multipliers) {
         <td class="obs-neutral-text">Awaiting league data — using global fallback</td>
       </tr>`;
     }
-    // val is calibrated_prob / raw_prob at the anchor: 1.00 = no change, 0.95 = 5% haircut.
-    const strengthClass = val >= 0.99 ? "ev-high" : (val >= 0.90 ? "ev-mid" : "ev-low");
-    const shrinkagePct = Math.round((1 - val) * 100);
-    const strengthText = shrinkagePct <= 0 ? "No shrinkage" : `−${shrinkagePct}% shrinkage`;
+    // val is calibrated_prob / raw_prob at the anchor: 1.00 = no change,
+    // 0.95 = 5% haircut, 1.04 = 4% upward correction (now possible since
+    // calibrate() no longer caps at raw_prob).
+    const adjPct = Math.round((val - 1) * 100);
+    let strengthClass, strengthText;
+    if (adjPct === 0) {
+      strengthClass = "ev-mid";
+      strengthText  = "No adjustment";
+    } else if (adjPct > 0) {
+      strengthClass = "ev-high";
+      strengthText  = `+${adjPct}% boost`;
+    } else {
+      strengthClass = "ev-low";
+      strengthText  = `${adjPct}% shrinkage`;  // already has minus sign
+    }
     return `<tr>
       <td><strong>${league}</strong></td>
       <td class="line-value ${strengthClass}">${val.toFixed(2)}x</td>
