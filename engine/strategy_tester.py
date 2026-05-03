@@ -27,6 +27,36 @@ class StrategyTester:
     def __init__(self):
         self.db = get_db()
 
+    def _fetch_resolved_observatory(self, leagues: List[str]) -> pd.DataFrame:
+        """Page through every resolved market_observatory row matching the
+        league filter. The default PostgREST response caps at 1000 rows, so
+        a single `.execute()` silently truncated the dataset once volume
+        crossed that threshold — the sandbox would see a near-random
+        thousand-row sample, miss most slates, form barely any slips, and
+        report a loss because the slip-size grouping ate most of what was
+        left. Paging fixes that."""
+        cols = "result, prop, true_prob, game_start, league, player"
+        PAGE = 1000
+        offset = 0
+        all_rows: list[dict] = []
+        while True:
+            try:
+                q = self.db.table("market_observatory").select(cols).neq("result", "pending")
+                if leagues:
+                    q = q.in_("league", leagues)
+                res = q.range(offset, offset + PAGE - 1).execute()
+            except Exception as exc:
+                logger.warning("Sandbox: observatory page fetch failed at offset %d: %s", offset, exc)
+                break
+            rows = res.data or []
+            all_rows.extend(rows)
+            if len(rows) < PAGE:
+                break
+            offset += PAGE
+            if offset > 500_000:  # runaway guard
+                break
+        return pd.DataFrame(all_rows)
+
     def _calculate_kelly_fraction(self, probs: List[float], slip_size: int, slip_type: str) -> float:
         import itertools
         outcomes = list(itertools.product([0, 1], repeat=slip_size))
@@ -71,15 +101,9 @@ class StrategyTester:
             return {"error": "Database not connected"}
 
         try:
-            # 1. Fetch resolved data — project only the columns the simulation
-            # actually reads (everything else ballooned RAM ~3x for nothing).
-            cols = "result, prop, true_prob, game_start, league, player"
-            query = self.db.table("market_observatory").select(cols).neq("result", "pending")
-            if config.leagues:
-                query = query.in_("league", config.leagues)
-
-            res = query.execute()
-            df = pd.DataFrame(res.data)
+            # 1. Fetch resolved data — paginated so every row in the lookback
+            # is available, not the random 1000 PostgREST returns by default.
+            df = self._fetch_resolved_observatory(config.leagues)
 
             if df.empty:
                 return {"error": "No resolved data found matching filters."}
@@ -462,12 +486,7 @@ class StrategyTester:
             return {"error": "Flex slips require at least 3 legs."}
 
         try:
-            cols = "result, prop, true_prob, game_start, league, player"
-            query = self.db.table("market_observatory").select(cols).neq("result", "pending")
-            if config.leagues:
-                query = query.in_("league", config.leagues)
-            res = query.execute()
-            base_df = pd.DataFrame(res.data) if res and res.data is not None else pd.DataFrame()
+            base_df = self._fetch_resolved_observatory(config.leagues)
 
             if base_df.empty:
                 return {"error": "No resolved data found matching filters."}

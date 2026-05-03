@@ -2078,3 +2078,21 @@ tr.in-backtest.selected {
   .toast           { min-width: 0; max-width: 100%; }
 }
 
+
+/* ── Calibration heatmap ────────────────────────────────────── */
+.heatmap-table { font-size: 12px; }
+.heatmap-table th,
+.heatmap-table td { padding: 4px 6px; white-space: nowrap; }
+.heatmap-table .heat-cell {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+  color: var(--text);
+}
+.heatmap-table .heat-empty { background: transparent; color: var(--muted); }
+.heatmap-table .heat-league-cell {
+  font-weight: 600;
+  border-right: 2px solid var(--border);
+  vertical-align: middle;
+}
+.heatmap-table .heat-prop-cell { padding-right: 12px; }

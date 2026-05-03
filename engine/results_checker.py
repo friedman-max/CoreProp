@@ -147,7 +147,8 @@ class ESPNResultsChecker:
                         l_num = int(row.get("leg_num", 0))
                         db.table("legs").update({
                             "result":      "dnp",
-                            "stat_actual": None
+                            "stat_actual": None,
+                            "resolved_at": datetime.now(timezone.utc).isoformat(),
                         }).eq("slip_id", sid).eq("leg_num", l_num).execute()
                         updated += 1
                         logger.info(
@@ -174,7 +175,8 @@ class ESPNResultsChecker:
                 l_num = int(row.get("leg_num", 0))
                 db.table("legs").update({
                     "result":      result,
-                    "stat_actual": actual
+                    "stat_actual": actual,
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
                 }).eq("slip_id", sid).eq("leg_num", l_num).execute()
                 updated += 1
             except Exception as db_exc:
@@ -265,7 +267,8 @@ class ESPNResultsChecker:
                     try:
                         db.table("market_observatory").update({
                             "result": "dnp",
-                            "stat_actual": None
+                            "stat_actual": None,
+                            "resolved_at": datetime.now(timezone.utc).isoformat(),
                         }).eq("id", row["id"]).execute()
                         updated += 1
                     except Exception as db_exc:
@@ -280,7 +283,8 @@ class ESPNResultsChecker:
             try:
                 db.table("market_observatory").update({
                     "result": result,
-                    "stat_actual": actual
+                    "stat_actual": actual,
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
                 }).eq("id", row["id"]).execute()
                 updated += 1
             except Exception as db_exc:

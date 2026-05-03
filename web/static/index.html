@@ -661,6 +661,23 @@
       <div class="analytics-row">
         <div class="analytics-panel">
           <div class="analytics-panel-header">
+            <h3>Prop Hit Rate by Expected Probability</h3>
+            <span class="analytics-subtitle">Rows: prop type (grouped by league). Columns: expected hit rate in 5% bands. Cells: actual recency-weighted hit rate (outcome-only).</span>
+          </div>
+          <div class="table-wrapper">
+            <table id="cal-heatmap-table" class="heatmap-table">
+              <thead id="cal-heatmap-thead"></thead>
+              <tbody id="cal-heatmap-tbody">
+                <tr><td class="empty-msg">Waiting for calibration data…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="analytics-row">
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
             <h3>Market Feed (Verified Lines)</h3>
             <span class="analytics-subtitle">Global observations used to verify model accuracy</span>
           </div>
@@ -681,6 +698,8 @@
                 <button class="chip active" data-val="pending">Pending</button>
                 <button class="chip active" data-val="hit">Hit</button>
                 <button class="chip active" data-val="miss">Miss</button>
+                <button class="chip active" data-val="push">Push</button>
+                <button class="chip active" data-val="dnp">DNP</button>
               </div>
             </div>
           </div>

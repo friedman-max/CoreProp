@@ -1,29 +1,32 @@
 """
-Hierarchical isotonic calibration.
+Hierarchical isotonic calibration with incremental sufficient statistics.
 
-Three improvements layered on top of the original per-league PAV:
+Design notes:
 
-  1. **Recency weighting** — each observation is weighted by
-     `exp(-Δdays / RECENCY_HALF_LIFE_DAYS)` so recent legs dominate when the
-     market drifts (rule changes, season starts, player development).
+  1. **Recency weighting** — each observation contributes `exp(-Δdays / H)`
+     where Δ is measured against `resolved_at` (when we learned the
+     outcome). H = RECENCY_HALF_LIFE_DAYS.
 
-  2. **Hierarchical fit** — three parallel curves are fit per refresh:
-       global   → all observations
-       league   → filtered to one league
-       prop     → filtered to one (league, prop) pair
-     At apply-time, Bayesian shrinkage blends each level toward its parent
-     based on effective sample size, eliminating the prior hard
-     `MIN_LEAGUE_OBS` cutoff. A bucket starts borrowing strength from its
-     parent on observation #1 and gradually takes over as data accumulates.
+  2. **Two fitted levels, one apply path** — global and (league, prop)
+     curves are fit. The per-league curve is also fit (and surfaced in the
+     Observatory diagnostic) but is intentionally NOT a parent in
+     `calibrate()`: prop performance must not be diluted by the league
+     average. (league, prop) shrinks directly toward global.
 
-  3. **CLV signal** — closing_prob (set when a game starts) is used as a
-     secondary calibration target alongside hit/miss outcomes. CLV
-     observations are weighted at `CLV_OBSERVATION_WEIGHT` of an outcome
-     observation; the bias they carry (closing line ≠ truly fair price) is
-     small and the ~5–10× sample-density boost more than compensates.
+  3. **CLV signal** — closing_prob contributes a second observation per
+     row at `CLV_OBSERVATION_WEIGHT` × the outcome weight. PAV handles
+     continuous targets identically to binary ones. Outcome-only
+     accumulators are also tracked separately so the diagnostic heatmap
+     can report a true hit rate uncontaminated by CLV.
 
-PAV (Pool Adjacent Violators) handles continuous targets in [0, 1] just as
-naturally as binary {0, 1}, so the same weighted fit serves both signals.
+  4. **Incremental, bounded state** — instead of pulling all rows on every
+     refit, we maintain bucket-level sufficient statistics
+     `(sum_w, sum_yw, sum_xw, outcome_w, outcome_hits_w)` per (level, x_bin).
+     Exponential decay commutes with addition, so on each tick we multiply
+     all accumulators by `exp(-Δt·ln2/H)` and fold in only the rows resolved
+     since the previous cursor (`resolved_at` from migration_005). State
+     size scales with #(distinct buckets), not with history depth — no row
+     limits needed.
 
 Output is conservative: `calibrated_prob ≤ raw_prob` always — calibration
 shrinks but never inflates.
@@ -34,14 +37,30 @@ import os
 import json
 import math
 import logging
-from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from engine.database import get_db
 
 logger = logging.getLogger(__name__)
 
 ISOTONIC_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "isotonic_calibration.json")
+
+# Sufficient-statistics state for the incremental refit. Stored separately
+# from the curves file because consumers only ever read the curves; the
+# state is internal bookkeeping that doesn't need to round-trip through
+# `load_isotonic_calibration()`.
+ISOTONIC_STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "isotonic_state.json")
+
+# Width of each raw-probability bin used by the sufficient-statistics
+# accumulator. 0.5% = 200 bins across [0, 1] — fine enough that PAV on bin
+# means is indistinguishable from PAV on raw observations, coarse enough
+# that state stays small (<1 MB even with thousands of (league, prop) keys).
+_BIN_COUNT = 200
+
+# Drop accumulator buckets whose decayed weight has fallen below this floor.
+# Without pruning, every bucket ever touched would persist forever; with
+# pruning the state stays bounded as old activity decays out.
+_BUCKET_WEIGHT_FLOOR = 0.01
 
 # Half-life for the recency exponential decay. Drops a 60-day-old observation
 # to 50% of its weight, a 120-day-old one to 25%, etc.
@@ -60,9 +79,11 @@ RECENCY_LOOKBACK_DAYS = 180
 SHRINKAGE_KAPPA = 50.0
 
 # Effective sample size below which we don't bother emitting a curve at all
-# (the parent curve will be used). Prevents serializing thousands of one-leg
-# nano-buckets.
-MIN_BUCKET_N_EFF = 5.0
+# (the parent curve will be used). Set low so per-league/(league,prop) curves
+# surface in the Observatory chart as soon as we have any signal — Bayesian
+# shrinkage already pulls thin buckets back toward their parent, so emitting
+# them early is safe and lets the chart densify naturally as data grows.
+MIN_BUCKET_N_EFF = 2.0
 
 # Relative weight of a CLV-based observation vs an outcome-based one. Closing
 # lines are sharp but not unbiased fair-value estimates; we discount them.
@@ -142,135 +163,6 @@ def _recency_weight(observation_dt: datetime | None, now: datetime) -> float:
     return math.exp(-delta_days * _LN2 / RECENCY_HALF_LIFE_DAYS)
 
 
-def _load_observations(db) -> list[dict]:
-    """
-    Pull calibration observations from two sources:
-
-      1. market_observatory rows resolved to hit/miss → outcome signal.
-         Also pull any closing_prob already populated on those rows for the
-         CLV signal (introduced by migration_003).
-
-      2. legs table rows that have closing_prob recorded but might not be
-         resolved yet → CLV signal only. The legs table lives behind RLS;
-         callers must use the service-role client (`get_db()`).
-
-    De-duplicates physical markets across the two sources by `market_key`
-    (player|league|prop|line|side|game_start). When both an outcome-bearing
-    observatory row and a leg row exist for the same market, the outcome
-    becomes the primary y-target and the closing_prob contributes a second,
-    lower-weight observation.
-    """
-    obs_outcome: list[dict] = []
-    obs_clv: list[dict] = []
-
-    # Date floor — cuts the historical scan to roughly 3× the half-life.
-    # `or_(...is.null)` keeps rows whose game_start was never populated, so a
-    # backfill gap doesn't accidentally collapse the fit set to zero.
-    cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=RECENCY_LOOKBACK_DAYS)).isoformat()
-    recency_filter = f"game_start.gte.{cutoff_iso},game_start.is.null"
-
-    # ── market_observatory ─────────────────────────────────────────────────
-    try:
-        select_cols = "league, prop, true_prob, result, game_start, closing_prob"
-        res = (
-            db.table("market_observatory")
-            .select(select_cols)
-            .or_(recency_filter)
-            .execute()
-        )
-        for r in (res.data or []):
-            league = r.get("league")
-            prop = r.get("prop")
-            try:
-                tp = float(r.get("true_prob") or 0.0)
-            except (ValueError, TypeError):
-                continue
-            if not (0.0 < tp < 1.0) or not league:
-                continue
-            ts = _parse_dt(r.get("game_start"))
-
-            outcome = r.get("result")
-            if outcome in ("hit", "miss"):
-                obs_outcome.append({
-                    "x": tp,
-                    "y": 1.0 if outcome == "hit" else 0.0,
-                    "league": league,
-                    "prop": prop or "",
-                    "ts": ts,
-                    "source": "outcome",
-                })
-            cp = r.get("closing_prob")
-            if cp is not None:
-                try:
-                    cpf = float(cp)
-                    if 0.0 < cpf < 1.0:
-                        obs_clv.append({
-                            "x": tp,
-                            "y": cpf,
-                            "league": league,
-                            "prop": prop or "",
-                            "ts": ts,
-                            "source": "clv",
-                        })
-                except (ValueError, TypeError):
-                    pass
-    except Exception as exc:
-        logger.warning("IsotonicCalibration: market_observatory load failed: %s", exc)
-
-    # ── legs (service-role bypasses RLS so we can pool across users) ───────
-    try:
-        select_cols = "league, prop, true_prob, closing_prob, result, game_start"
-        res = (
-            db.table("legs")
-            .select(select_cols)
-            .or_(recency_filter)
-            .execute()
-        )
-        for r in (res.data or []):
-            league = r.get("league")
-            prop = r.get("prop")
-            try:
-                tp = float(r.get("true_prob") or 0.0)
-            except (ValueError, TypeError):
-                continue
-            if not (0.0 < tp < 1.0) or not league:
-                continue
-            ts = _parse_dt(r.get("game_start"))
-            cp = r.get("closing_prob")
-            if cp is not None:
-                try:
-                    cpf = float(cp)
-                    if 0.0 < cpf < 1.0:
-                        obs_clv.append({
-                            "x": tp,
-                            "y": cpf,
-                            "league": league,
-                            "prop": prop or "",
-                            "ts": ts,
-                            "source": "clv",
-                        })
-                except (ValueError, TypeError):
-                    pass
-            outcome = (r.get("result") or "").lower()
-            if outcome in ("hit", "miss", "won", "win", "lost", "loss"):
-                obs_outcome.append({
-                    "x": tp,
-                    "y": 1.0 if outcome in ("hit", "won", "win") else 0.0,
-                    "league": league,
-                    "prop": prop or "",
-                    "ts": ts,
-                    "source": "outcome",
-                })
-    except Exception as exc:
-        logger.warning("IsotonicCalibration: legs load failed: %s", exc)
-
-    return obs_outcome + obs_clv
-
-
-# ---------------------------------------------------------------------------
-# Top-level fit
-# ---------------------------------------------------------------------------
-
 def _fit_level(triples: list[tuple[float, float, float]]) -> dict | None:
     """Fit a single level. Returns None if too thin to bother emitting."""
     curve, n_eff = _fit_pav_weighted(triples)
@@ -283,87 +175,485 @@ def _fit_level(triples: list[tuple[float, float, float]]) -> dict | None:
     }
 
 
-def update_isotonic_calibration() -> dict | None:
+# ---------------------------------------------------------------------------
+# Incremental refit: bucket-level sufficient statistics
+# ---------------------------------------------------------------------------
+#
+# Each refit maintains three flat dicts of accumulators keyed by
+# (level_key, x_bin) → [sum_w, sum_yw, sum_xw]. The math:
+#
+#   PAV with weights only depends on (sum_w, sum_yw) per x-bin; sum_xw is
+#   carried so we can use the empirical bin-mean as the PAV input rather
+#   than the bin centre. Three quantities per bin = full sufficient
+#   statistics for weighted isotonic regression.
+#
+#   Recency decay is exponential, so it commutes with addition:
+#     decay( Σᵢ wᵢ·xᵢ )  =  Σᵢ decay·wᵢ·xᵢ
+#   which means we can apply Δt of decay to the entire accumulator in O(1)
+#   per bucket between refits and add new observations on top, instead of
+#   rebuilding from scratch. This is what makes the loader bounded: state
+#   size scales with #(distinct buckets) rather than with history depth.
+#
+# Cursor: we read newly-resolved rows since the last refit using the
+# `resolved_at` column added in migration_005. No history scan, no row
+# limits — only the delta. Pending rows that haven't resolved yet contribute
+# nothing this tick; they'll arrive on the tick after their game finishes.
+
+def _bin(x: float) -> int:
+    b = int(round(x * _BIN_COUNT))
+    if b < 0:
+        return 0
+    if b > _BIN_COUNT:
+        return _BIN_COUNT
+    return b
+
+
+def _accum_bin_set(by_bin: dict, x: float, y: float, w: float, *, is_outcome: bool = False) -> None:
+    """Fold one weighted observation into a {x_bin → cell} dict.
+
+    Cell layout: [sum_w, sum_yw, sum_xw, outcome_w, outcome_hits_w].
+    The first three drive PAV (all signals, including CLV); the last two
+    are outcome-only and feed the diagnostic heatmap so it shows true
+    hit rates rather than CLV-blended values.
     """
-    Refit hierarchical isotonic curves and persist to disk.
-    """
-    db = get_db()
-    if not db:
-        return None
+    if w <= 0:
+        return
+    b = _bin(x)
+    cell = by_bin.get(b)
+    if cell is None:
+        cell = [0.0, 0.0, 0.0, 0.0, 0.0]
+        by_bin[b] = cell
+    cell[0] += w
+    cell[1] += y * w
+    cell[2] += x * w
+    if is_outcome:
+        cell[3] += w
+        cell[4] += y * w  # y is exactly 0 or 1 for outcomes
 
-    now = datetime.now(timezone.utc)
-    try:
-        observations = _load_observations(db)
-    except Exception as exc:
-        logger.error("IsotonicCalibration: load failed: %s", exc)
-        return None
 
-    if not observations:
-        logger.info("IsotonicCalibration: no observations to fit.")
-        return None
+def _accum(stats: dict, key: str, x: float, y: float, w: float, *, is_outcome: bool = False) -> None:
+    """Fold one weighted observation into a {key → {x_bin → cell}} dict."""
+    if w <= 0:
+        return
+    _accum_bin_set(stats.setdefault(key, {}), x, y, w, is_outcome=is_outcome)
 
-    # Build weighted (x, y, w) triples bucketed by hierarchy level.
-    global_triples: list[tuple[float, float, float]] = []
-    league_triples: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
-    prop_triples: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
 
-    for obs in observations:
-        recency = _recency_weight(obs["ts"], now)
-        source_w = 1.0 if obs["source"] == "outcome" else CLV_OBSERVATION_WEIGHT
-        w = recency * source_w
-        if w <= 0:
+def _decay_bin_set(by_bin: dict, factor: float) -> None:
+    """Multiply one {x_bin → cell} dict in-place by `factor`; prune cells
+    that fall below the weight floor."""
+    for b, cell in list(by_bin.items()):
+        for i in range(len(cell)):
+            cell[i] *= factor
+        if cell[0] < _BUCKET_WEIGHT_FLOOR:
+            del by_bin[b]
+
+
+def _decay_stats(stats: dict, factor: float) -> None:
+    """Decay a {key → {x_bin → cell}} two-level dict in place. Drops outer
+    keys whose bin set goes empty so the state can't grow without bound."""
+    if factor >= 1.0:
+        return
+    for key, by_bin in list(stats.items()):
+        _decay_bin_set(by_bin, factor)
+        if not by_bin:
+            del stats[key]
+
+
+def _level_triples(by_bin: dict) -> list[tuple[float, float, float]]:
+    """Convert a level's bucket accumulators into PAV input triples."""
+    triples: list[tuple[float, float, float]] = []
+    for cell in by_bin.values():
+        sw, syw, sxw = cell[0], cell[1], cell[2]
+        if sw <= 0:
             continue
-        triple = (obs["x"], obs["y"], w)
-        global_triples.append(triple)
-        league_triples[obs["league"]].append(triple)
-        if obs["prop"]:
-            key = f"{obs['league']}|{obs['prop']}"
-            prop_triples[key].append(triple)
+        triples.append((sxw / sw, syw / sw, sw))
+    return triples
 
+
+def _empty_state() -> dict:
+    return {
+        "version": 3,
+        "fitted_at": None,
+        "hwm_observatory": None,
+        "hwm_legs": None,
+        "global": {},   # {x_bin: [sum_w, sum_yw, sum_xw]}
+        "leagues": {},  # {league: {x_bin: [...]}}
+        "props": {},    # {"league|prop": {x_bin: [...]}}
+    }
+
+
+def _coerce_cell(v) -> list[float]:
+    """Pad legacy 3-element cells out to the current 5-element layout so
+    state written by an earlier deploy still loads cleanly."""
+    cell = [float(x) for x in (v or [])]
+    while len(cell) < 5:
+        cell.append(0.0)
+    return cell
+
+
+def _normalize_state_bins(state: dict) -> None:
+    """JSON keys are strings; coerce x_bin keys back to int after a load."""
+    for level_key in ("global", "leagues", "props"):
+        node = state.get(level_key) or {}
+        if level_key == "global":
+            state[level_key] = {int(k): _coerce_cell(v) for k, v in node.items()}
+        else:
+            state[level_key] = {
+                outer: {int(k): _coerce_cell(v) for k, v in inner.items()}
+                for outer, inner in node.items()
+            }
+
+
+def _load_state() -> dict:
+    """Load incremental state from disk → Supabase fallback. Returns an
+    empty state when nothing usable exists (a bootstrap will then run)."""
+    raw: dict | None = None
+    if os.path.exists(ISOTONIC_STATE_FILE):
+        try:
+            with open(ISOTONIC_STATE_FILE, "r") as f:
+                raw = json.load(f)
+        except Exception:
+            raw = None
+
+    if raw is None:
+        try:
+            from engine.persistence import load_state_from_supabase
+            mirrored, _ = load_state_from_supabase("isotonic_state")
+            if isinstance(mirrored, dict):
+                raw = mirrored
+        except Exception:
+            raw = None
+
+    if not isinstance(raw, dict) or raw.get("version") != 3:
+        return _empty_state()
+
+    state = _empty_state()
+    state["fitted_at"] = raw.get("fitted_at")
+    state["hwm_observatory"] = raw.get("hwm_observatory")
+    state["hwm_legs"] = raw.get("hwm_legs")
+    state["global"] = raw.get("global") or {}
+    state["leagues"] = raw.get("leagues") or {}
+    state["props"] = raw.get("props") or {}
+    _normalize_state_bins(state)
+    return state
+
+
+def _save_state(state: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(ISOTONIC_STATE_FILE), exist_ok=True)
+        with open(ISOTONIC_STATE_FILE, "w") as f:
+            json.dump(state, f)
+    except Exception as exc:
+        logger.warning("IsotonicCalibration: state write failed: %s", exc)
+        return
+    try:
+        from engine.persistence import sync_state_to_supabase
+        sync_state_to_supabase("isotonic_state", state)
+    except Exception as exc:
+        logger.warning("IsotonicCalibration: state mirror failed: %s", exc)
+
+
+def _ingest_into_state(state: dict, league: str, prop: str,
+                       x: float, y: float, w: float, *, is_outcome: bool = False) -> None:
+    """Add one observation to all three hierarchy levels."""
+    if w <= 0 or not (0.0 < x < 1.0):
+        return
+    _accum_bin_set(state["global"], x, y, w, is_outcome=is_outcome)
+    _accum(state["leagues"], league, x, y, w, is_outcome=is_outcome)
+    if prop:
+        _accum(state["props"], f"{league}|{prop}", x, y, w, is_outcome=is_outcome)
+
+
+def _ingest_resolved_row(state: dict, league: str, prop: str,
+                         true_prob: float, result: str,
+                         closing_prob: float | None,
+                         resolved_at: datetime | None,
+                         now: datetime) -> None:
+    """Fold a single resolved row's signals into the accumulators.
+
+    `resolved_at` (not game_start) drives the recency weight: the moment we
+    learned the outcome is what matters for "how old is this evidence."
+    """
+    rec_w = _recency_weight(resolved_at, now)
+    if rec_w <= 0:
+        return
+
+    r = (result or "").lower()
+    if r in ("hit", "won", "win"):
+        _ingest_into_state(state, league, prop, true_prob, 1.0, rec_w, is_outcome=True)
+    elif r in ("miss", "lost", "loss"):
+        _ingest_into_state(state, league, prop, true_prob, 0.0, rec_w, is_outcome=True)
+    # push/dnp contribute no outcome signal but do contribute CLV below.
+
+    if closing_prob is not None:
+        try:
+            cp = float(closing_prob)
+        except (ValueError, TypeError):
+            cp = None
+        if cp is not None and 0.0 < cp < 1.0:
+            _ingest_into_state(state, league, prop, true_prob, cp,
+                               rec_w * CLV_OBSERVATION_WEIGHT, is_outcome=False)
+
+
+def _pull_resolved_since(db, table: str, hwm: str | None,
+                         select_cols: str) -> list[dict]:
+    """Pull rows whose `resolved_at` exceeds the high-water-mark. When the
+    column or HWM doesn't yet exist, falls back to a one-time bootstrap on
+    the recency lookback window — so the very first run, and any run after
+    the migration but before the next resolution wave, still produces a
+    correct fit."""
+    # Page through without any silent caps. PostgREST tops out at 1000 per
+    # page by default; we walk pages until exhausted so the fit can never
+    # lose new data to a row limit. A fresh query is built per page so the
+    # builder's internal range header isn't carried across requests.
+    page_size = 1000
+    rows: list[dict] = []
+    offset = 0
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=RECENCY_LOOKBACK_DAYS)).isoformat()
+    while True:
+        try:
+            q = db.table(table).select(select_cols).order("resolved_at", desc=False)
+            if hwm:
+                q = q.gt("resolved_at", hwm)
+            else:
+                q = q.gte("resolved_at", cutoff_iso)
+            res = q.range(offset, offset + page_size - 1).execute()
+        except Exception as exc:
+            logger.warning(
+                "IsotonicCalibration: %s pull failed (resolved_at missing? run migration_005.sql): %s",
+                table, exc,
+            )
+            return rows
+        chunk = res.data or []
+        rows.extend(chunk)
+        if len(chunk) < page_size:
+            break
+        offset += page_size
+    return rows
+
+
+def _stats_to_curves(state: dict, fitted_at: datetime) -> dict:
+    """Run PAV against the current accumulators and assemble the curves
+    payload that downstream consumers (clv_checker, ev_calculator, the
+    Observatory chart) load via `load_isotonic_calibration()`."""
     out: dict = {
-        "version":    2,
-        "fitted_at":  now.isoformat(),
-        "global":     _fit_level(global_triples),
-        "leagues":    {},
-        "props":      {},
+        "version":   2,   # consumer-facing curves schema unchanged
+        "fitted_at": fitted_at.isoformat(),
+        "global":    _fit_level(_level_triples(state["global"])),
+        "leagues":   {},
+        "props":     {},
         "config": {
             "recency_half_life_days":  RECENCY_HALF_LIFE_DAYS,
             "shrinkage_kappa":         SHRINKAGE_KAPPA,
             "clv_observation_weight":  CLV_OBSERVATION_WEIGHT,
         },
     }
-    for lg, ts in league_triples.items():
-        fit = _fit_level(ts)
+    for lg, by_bin in state["leagues"].items():
+        fit = _fit_level(_level_triples(by_bin))
         if fit is not None:
             out["leagues"][lg] = fit
-    for key, ts in prop_triples.items():
-        fit = _fit_level(ts)
+    for key, by_bin in state["props"].items():
+        fit = _fit_level(_level_triples(by_bin))
         if fit is not None:
             out["props"][key] = fit
+    return out
+
+
+def update_isotonic_calibration() -> dict | None:
+    """
+    Incrementally refit hierarchical isotonic curves.
+
+    Each call:
+      1. Loads bucket-level sufficient statistics from prior runs.
+      2. Applies exponential recency decay since the last fit.
+      3. Pulls only the rows resolved since the last cursor and folds them
+         into the accumulators.
+      4. Runs PAV from the bucket aggregates and persists the curves.
+
+    State and curves are both mirrored to Supabase so a Render redeploy
+    (which wipes the local disk) doesn't reset the calibration.
+    """
+    db = get_db()
+    if not db:
+        return None
+
+    now = datetime.now(timezone.utc)
+    state = _load_state()
+
+    # ── 1. Decay existing accumulators ──────────────────────────────────
+    if state.get("fitted_at"):
+        prev = _parse_dt(state["fitted_at"])
+        if prev is not None:
+            dt_days = max(0.0, (now - prev).total_seconds() / 86400.0)
+            decay = math.exp(-dt_days * _LN2 / RECENCY_HALF_LIFE_DAYS)
+            if decay < 1.0:
+                _decay_bin_set(state["global"], decay)
+                _decay_stats(state["leagues"], decay)
+                _decay_stats(state["props"], decay)
+
+    # ── 2. Cursor pulls ─────────────────────────────────────────────────
+    obs_cols  = "league, prop, true_prob, result, closing_prob, resolved_at"
+    legs_cols = "league, prop, true_prob, result, closing_prob, resolved_at"
+    obs_rows  = _pull_resolved_since(db, "market_observatory", state.get("hwm_observatory"), obs_cols)
+    leg_rows  = _pull_resolved_since(db, "legs", state.get("hwm_legs"), legs_cols)
+
+    # ── 3. Fold into accumulators ───────────────────────────────────────
+    new_hwm_obs  = state.get("hwm_observatory")
+    new_hwm_legs = state.get("hwm_legs")
+    n_ingested = 0
+
+    for r in obs_rows:
+        league = r.get("league")
+        if not league:
+            continue
+        try:
+            tp = float(r.get("true_prob") or 0.0)
+        except (ValueError, TypeError):
+            continue
+        if not (0.0 < tp < 1.0):
+            continue
+        ra = r.get("resolved_at")
+        ra_dt = _parse_dt(ra)
+        _ingest_resolved_row(state, league, r.get("prop") or "", tp,
+                             r.get("result") or "", r.get("closing_prob"),
+                             ra_dt, now)
+        n_ingested += 1
+        if ra and (new_hwm_obs is None or ra > new_hwm_obs):
+            new_hwm_obs = ra
+
+    for r in leg_rows:
+        league = r.get("league")
+        if not league:
+            continue
+        try:
+            tp = float(r.get("true_prob") or 0.0)
+        except (ValueError, TypeError):
+            continue
+        if not (0.0 < tp < 1.0):
+            continue
+        ra = r.get("resolved_at")
+        ra_dt = _parse_dt(ra)
+        _ingest_resolved_row(state, league, r.get("prop") or "", tp,
+                             r.get("result") or "", r.get("closing_prob"),
+                             ra_dt, now)
+        n_ingested += 1
+        if ra and (new_hwm_legs is None or ra > new_hwm_legs):
+            new_hwm_legs = ra
+
+    state["hwm_observatory"] = new_hwm_obs
+    state["hwm_legs"] = new_hwm_legs
+    state["fitted_at"] = now.isoformat()
+
+    # If we never managed to ingest a single observation and we've never
+    # built a state before, there's nothing meaningful to fit yet — let the
+    # next tick try again rather than overwriting the curves with empties.
+    has_prior_signal = any(state["global"].values())
+    if n_ingested == 0 and not has_prior_signal:
+        logger.info("IsotonicCalibration: no observations to fit yet.")
+        return None
+
+    # ── 4. Refit PAV and persist ────────────────────────────────────────
+    out = _stats_to_curves(state, now)
 
     try:
         os.makedirs(os.path.dirname(ISOTONIC_FILE), exist_ok=True)
         with open(ISOTONIC_FILE, "w") as f:
             json.dump(out, f, indent=2)
     except Exception as exc:
-        logger.error("IsotonicCalibration: write failed: %s", exc)
+        logger.error("IsotonicCalibration: curves write failed: %s", exc)
         return None
 
-    # Mirror to Supabase so the fit survives ephemeral-disk redeploys
-    # (Render's free tier wipes /data on every restart). Best-effort: a
-    # Supabase outage shouldn't fail the in-process refresh.
     try:
         from engine.persistence import sync_state_to_supabase
         sync_state_to_supabase("isotonic_calibration", out)
     except Exception as exc:
         logger.warning("IsotonicCalibration: Supabase mirror failed: %s", exc)
 
+    _save_state(state)
+
     logger.info(
-        "IsotonicCalibration: fit %d leagues, %d (league,prop) buckets, %d total obs (n_eff=%.1f)",
-        len(out["leagues"]), len(out["props"]), len(observations),
+        "IsotonicCalibration: incremental refit — +%d new rows, %d leagues, "
+        "%d (league,prop) buckets, global n_eff=%.1f",
+        n_ingested, len(out["leagues"]), len(out["props"]),
         out["global"]["n_eff"] if out["global"] else 0.0,
     )
     return out
+
+
+# ---------------------------------------------------------------------------
+# Heatmap export (diagnostic: per-(league, prop) actual hit rate by 5%
+# expected-probability buckets)
+# ---------------------------------------------------------------------------
+
+# 5% wide buckets covering the bet-relevant range.
+HEATMAP_BUCKETS: list[tuple[float, float]] = [
+    (round(lo / 100, 2), round((lo + 5) / 100, 2)) for lo in range(30, 100, 5)
+]
+
+# Minimum recency-weighted outcome n_eff for a (league, prop) row to qualify
+# for the heatmap. Below this the per-bucket actuals are just noise — a row
+# of "33%, 100%, 0%, 80%" from a handful of resolved legs is misleading. 30
+# matches the rule-of-thumb threshold for a per-prop hit rate to mean
+# anything above sampling variance at the 5% bucket scale.
+HEATMAP_MIN_ROW_N_EFF = 30.0
+
+
+def export_heatmap() -> dict:
+    """Build the per-(league, prop) × expected-probability heatmap from the
+    incremental state. Cell value is the recency-weighted actual hit rate
+    of that prop within that 5% expected-probability band, using only
+    outcome observations (CLV signal is excluded so the number is a true
+    hit rate, not a closing-line blend)."""
+    state = _load_state()
+
+    rows: list[dict] = []
+    for league_prop, by_bin in (state.get("props") or {}).items():
+        if "|" not in league_prop:
+            continue
+        league, prop = league_prop.split("|", 1)
+
+        cells: list[dict | None] = []
+        total_n_eff = 0.0
+        for lo, hi in HEATMAP_BUCKETS:
+            # Sum the outcome-only accumulators for the 0.5% bins that fall
+            # inside this 5% display bucket.
+            bin_lo = int(round(lo * _BIN_COUNT))
+            bin_hi = int(round(hi * _BIN_COUNT))
+            sum_w = 0.0
+            sum_hits_w = 0.0
+            for b, cell in by_bin.items():
+                if bin_lo <= b < bin_hi:
+                    sum_w += cell[3]
+                    sum_hits_w += cell[4]
+            if sum_w >= MIN_BUCKET_N_EFF:
+                cells.append({
+                    "actual":   round(sum_hits_w / sum_w, 4),
+                    "expected": round((lo + hi) / 2, 4),
+                    "n_eff":    round(sum_w, 2),
+                })
+                total_n_eff += sum_w
+            else:
+                cells.append(None)
+
+        if total_n_eff < HEATMAP_MIN_ROW_N_EFF:
+            continue
+        rows.append({
+            "league":  league,
+            "prop":    prop,
+            "n_eff":   round(total_n_eff, 2),
+            "cells":   cells,
+        })
+
+    rows.sort(key=lambda r: (r["league"], -r["n_eff"]))
+
+    return {
+        "buckets": [
+            {"lo": lo, "hi": hi, "label": f"{int(lo*100)}-{int(hi*100)}%"}
+            for lo, hi in HEATMAP_BUCKETS
+        ],
+        "rows": rows,
+        "fitted_at": state.get("fitted_at"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -467,33 +757,31 @@ def _shrink(parent_q: float, level: dict | None, raw_prob: float) -> float:
 
 def calibrate(curves: dict, league: str | None, prop: str | None, raw_prob: float) -> float:
     """
-    Apply hierarchical isotonic calibration with Bayesian shrinkage.
+    Apply isotonic calibration with Bayesian shrinkage.
 
-    Walks the hierarchy global → league → (league, prop), shrinking each
-    level toward its parent based on effective sample size. Conservative
-    cap: the calibrated probability never exceeds the raw input.
+    Hierarchy on the apply path is global → (league, prop). The league level
+    is fitted and surfaced for diagnostics (Observatory chart) but is
+    intentionally NOT a parent of the prop level: we choose props, not
+    leagues, so a bad prop type must not get lifted by the league's overall
+    performance, and a good prop must not get dragged down by a poor league.
 
-    A missing level is treated as "no data" — we fall through to the parent.
+    Conservative cap: the calibrated probability never exceeds the raw input.
     """
     if not curves:
         return raw_prob
 
-    # Level 1: global
     global_level = curves.get("global")
     if not global_level or not global_level.get("curve"):
         # No fits at all yet — pass through.
         return raw_prob
     q_global = _interp(global_level["curve"], raw_prob)
 
-    # Level 2: league shrinks toward global
-    league_level = curves.get("leagues", {}).get(league or "") if league else None
-    q_league = _shrink(q_global, league_level, raw_prob)
-
-    # Level 3: (league, prop) shrinks toward league
+    # (league, prop) shrinks directly toward global, bypassing the league
+    # posterior so prop performance is the dominant signal at apply time.
     prop_level = None
     if league and prop:
         prop_level = curves.get("props", {}).get(f"{league}|{prop}")
-    q_prop = _shrink(q_league, prop_level, raw_prob)
+    q_prop = _shrink(q_global, prop_level, raw_prob)
 
     # Conservative cap: never inflate.
     return min(q_prop, raw_prob)

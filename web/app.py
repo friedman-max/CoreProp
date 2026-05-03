@@ -2611,32 +2611,53 @@ def get_calibration_map_api():
     without changes.
     """
     try:
-        from engine.isotonic_calibration import load_isotonic_calibration, calibrate, DISPLAY_ANCHOR
+        from engine.isotonic_calibration import (
+            load_isotonic_calibration, _interp, _shrink, DISPLAY_ANCHOR,
+        )
         from engine.constants import PROP_TYPE_MAP
         curves = load_isotonic_calibration()
+
+        # Display-only league shrinkage: the apply path no longer routes through
+        # the league level (prop curves shrink directly toward global), so we
+        # compute the league posterior here purely for the diagnostic chart.
+        global_level = curves.get("global")
+        q_global = _interp(global_level["curve"], DISPLAY_ANCHOR) if global_level else DISPLAY_ANCHOR
+
+        def _league_ratio(lg: str) -> float:
+            league_level = curves.get("leagues", {}).get(lg)
+            q_league = _shrink(q_global, league_level, DISPLAY_ANCHOR)
+            return (q_league / DISPLAY_ANCHOR) if DISPLAY_ANCHOR > 0 else 1.0
 
         out: dict = {}
         for league in sorted(PROP_TYPE_MAP.keys()):
             key = f"{league}|Calibration @ p={DISPLAY_ANCHOR:.2f}"
-            calibrated_at_anchor = calibrate(curves, league, None, DISPLAY_ANCHOR)
-            # A league with NO fitted curve passes through identity (== anchor),
-            # which we surface as "Awaiting data" rather than "1.00x".
-            has_data = curves.get("leagues", {}).get(league) is not None or curves.get("global") is not None
-            ratio = calibrated_at_anchor / DISPLAY_ANCHOR if DISPLAY_ANCHOR > 0 else 1.0
-            out[key] = {"value": round(ratio, 4), "calibrated": bool(has_data)}
+            has_league_curve = curves.get("leagues", {}).get(league) is not None
+            out[key] = {"value": round(_league_ratio(league), 4), "calibrated": bool(has_league_curve)}
 
         # Surface any fitted league not in PROP_TYPE_MAP (e.g. NCAAF).
         for league in (curves.get("leagues") or {}).keys():
             key = f"{league}|Calibration @ p={DISPLAY_ANCHOR:.2f}"
             if key in out:
                 continue
-            calibrated_at_anchor = calibrate(curves, league, None, DISPLAY_ANCHOR)
-            out[key] = {"value": round(calibrated_at_anchor / DISPLAY_ANCHOR, 4), "calibrated": True}
+            out[key] = {"value": round(_league_ratio(league), 4), "calibrated": True}
 
         return out
     except Exception as e:
         logger.error("API: calibration fetch error: %s", e)
         return {}
+
+
+@app.get("/api/calibration/heatmap")
+def get_calibration_heatmap_api():
+    """Per-(league, prop) actual hit rate sliced by 5% expected-probability
+    bands. Sourced from the incremental calibration sufficient statistics so
+    no extra database round-trip is needed."""
+    try:
+        from engine.isotonic_calibration import export_heatmap
+        return export_heatmap()
+    except Exception as e:
+        logger.error("API: calibration heatmap fetch error: %s", e)
+        return {"buckets": [], "rows": []}
 
 
 @app.get("/api/calibration/curves")

@@ -983,6 +983,17 @@ async function refreshObservatory() {
     console.warn("Calibration curves fetch failed:", e);
   }
 
+  // Per-(league, prop) hit-rate heatmap.
+  try {
+    const heatResp = await apiFetch("/api/calibration/heatmap");
+    if (heatResp.ok) {
+      const heat = await heatResp.json();
+      renderCalibrationHeatmap(heat);
+    }
+  } catch (e) {
+    console.warn("Calibration heatmap fetch failed:", e);
+  }
+
   // Fetch observatory feed (requires market_observatory table)
   try {
     const obsResp = await apiFetch("/api/observatory");
@@ -993,6 +1004,63 @@ async function refreshObservatory() {
   } catch (e) {
     console.warn("Observatory fetch failed:", e);
   }
+}
+
+function renderCalibrationHeatmap(heat) {
+  const thead = document.getElementById("cal-heatmap-thead");
+  const tbody = document.getElementById("cal-heatmap-tbody");
+  if (!thead || !tbody) return;
+
+  const buckets = (heat && heat.buckets) || [];
+  const rows    = (heat && heat.rows) || [];
+
+  if (!buckets.length || !rows.length) {
+    thead.innerHTML = "";
+    tbody.innerHTML = `<tr><td class="empty-msg">No prop-level hit rates yet — needs resolved outcomes.</td></tr>`;
+    return;
+  }
+
+  // Header: League, Prop, then one column per 5% bucket.
+  const headCells = [
+    `<th>League</th>`,
+    `<th>Prop</th>`,
+    ...buckets.map(b => `<th style="text-align:center;">${b.label}</th>`),
+  ].join("");
+  thead.innerHTML = `<tr>${headCells}</tr>`;
+
+  // Group rows by league so we can show a visual divider between leagues.
+  const byLeague = {};
+  for (const r of rows) {
+    (byLeague[r.league] = byLeague[r.league] || []).push(r);
+  }
+
+  const html = [];
+  for (const league of Object.keys(byLeague).sort()) {
+    const group = byLeague[league];
+    group.sort((a, b) => b.n_eff - a.n_eff);
+    let first = true;
+    for (const r of group) {
+      const cells = r.cells.map((c, i) => {
+        if (!c) return `<td class="heat-cell heat-empty"></td>`;
+        const expected = (buckets[i].lo + buckets[i].hi) / 2;
+        const delta = c.actual - expected;  // negative = worse than expected
+        // Map delta to a color: red for underperforming, green for overperforming.
+        const intensity = Math.min(1, Math.abs(delta) / 0.15);
+        const hue = delta >= 0 ? 140 : 0;
+        const bg = `hsla(${hue}, 70%, 45%, ${0.15 + intensity * 0.55})`;
+        const pct = (c.actual * 100).toFixed(0) + "%";
+        const title = `Actual ${(c.actual*100).toFixed(1)}% vs expected ${(expected*100).toFixed(0)}%\nn_eff=${c.n_eff}`;
+        return `<td class="heat-cell" style="background:${bg};" title="${title}">${pct}</td>`;
+      }).join("");
+      html.push(
+        `<tr>${first ? `<td class="heat-league-cell" rowspan="${group.length}">${league}</td>` : ""}` +
+        `<td class="heat-prop-cell">${r.prop}</td>${cells}</tr>`
+      );
+      first = false;
+    }
+  }
+
+  tbody.innerHTML = html.join("");
 }
 
 // League color palette — matches existing league-tag styles where reasonable.
@@ -1023,7 +1091,13 @@ function renderCalibrationCurves(isotonic) {
   const global = isotonic.global;
   const leagues = isotonic.leagues || {};
   const props = isotonic.props || {};
-  const leagueNames = Object.keys(leagues).sort();
+  // NCAAB has too little resolved volume to fit a meaningful curve at the
+  // moment; surfacing it just adds a noisy line that confuses the chart.
+  // Re-include it once volume catches up.
+  const _CURVE_LEAGUE_BLACKLIST = new Set(["NCAAB"]);
+  const leagueNames = Object.keys(leagues)
+    .filter(lg => !_CURVE_LEAGUE_BLACKLIST.has(lg))
+    .sort();
 
   if (!global && leagueNames.length === 0) {
     if (_charts.calibrationCurves) { _charts.calibrationCurves.destroy(); _charts.calibrationCurves = null; }
@@ -1036,12 +1110,31 @@ function renderCalibrationCurves(isotonic) {
   canvas.style.display = "";
   if (empty) empty.style.display = "none";
 
+  // Discover the actual x-range across every fitted curve so the axis tracks
+  // the data. We log lines down to 0.30, so the lower bound is fixed there;
+  // the upper bound floats to whatever the highest recorded probability is
+  // (capped at 1.0 for sanity).
+  const X_MIN = 0.30;
+  let xMaxObserved = X_MIN;
+  const _scanCurve = (curve) => {
+    if (!curve || !curve.length) return;
+    for (const pt of curve) {
+      const x = Array.isArray(pt) ? pt[0] : pt.x;
+      if (Number.isFinite(x) && x > xMaxObserved) xMaxObserved = x;
+    }
+  };
+  if (global && global.curve) _scanCurve(global.curve);
+  leagueNames.forEach(lg => _scanCurve((leagues[lg] || {}).curve));
+  // Pad slightly so the rightmost point isn't flush with the axis edge,
+  // and clamp to a reasonable display ceiling.
+  const xMax = Math.min(1.0, Math.max(0.85, Math.ceil((xMaxObserved + 0.02) * 20) / 20));
+
   // Identity (perfect calibration) reference line — drawn first so it sits behind.
   // Using {x,y} parsing for everything so we can mix line types cleanly.
   const datasets = [{
     type: "line",
     label: "Perfect calibration",
-    data: [{ x: 0.3, y: 0.3 }, { x: 0.85, y: 0.85 }],
+    data: [{ x: X_MIN, y: X_MIN }, { x: xMax, y: xMax }],
     borderColor: "rgba(255,255,255,0.30)",
     borderDash: [5, 4],
     borderWidth: 1,
@@ -1134,7 +1227,7 @@ function renderCalibrationCurves(isotonic) {
       scales: {
         x: {
           type: "linear",
-          min: 0.3, max: 0.85,
+          min: X_MIN, max: xMax,
           title: { display: true, text: "Model probability", color: _chartTextColor() },
           ticks: { color: _chartTextColor(), callback: (v) => (v * 100).toFixed(0) + "%" },
           grid: { color: "rgba(255,255,255,0.06)" },
@@ -1182,29 +1275,30 @@ function renderObservatoryMultipliers(multipliers) {
     return;
   }
 
-  // Sort: calibrated rows first (by strongest edge), then neutrals grouped by league.
+  // Sort: calibrated rows first by strongest edge (smallest multiplier =
+  // biggest correction the model is applying), then neutrals alphabetically.
   rows.sort((a, b) => {
     if (a.calibrated !== b.calibrated) return a.calibrated ? -1 : 1;
-    if (a.calibrated) return b.value - a.value;
+    if (a.calibrated) return a.value - b.value;
     return a.key.localeCompare(b.key);
   });
 
   tbody.innerHTML = rows.map(m => {
-    const [league, prop] = m.key.split("|");
+    const league = m.key.split("|")[0];
     const val = m.value;
     if (!m.calibrated) {
       return `<tr class="obs-neutral">
-        <td><strong>${league}</strong> ${prop || ""}</td>
+        <td><strong>${league}</strong></td>
         <td class="line-value">1.00x</td>
-        <td class="obs-neutral-text">Awaiting data (≥100 resolved legs)</td>
+        <td class="obs-neutral-text">Awaiting league data — using global fallback</td>
       </tr>`;
     }
     // val is calibrated_prob / raw_prob at the anchor: 1.00 = no change, 0.95 = 5% haircut.
-    const strengthClass = val >= 0.99 ? "ev-mid" : (val >= 0.9 ? "ev-low" : "ev-low");
+    const strengthClass = val >= 0.99 ? "ev-high" : (val >= 0.90 ? "ev-mid" : "ev-low");
     const shrinkagePct = Math.round((1 - val) * 100);
     const strengthText = shrinkagePct <= 0 ? "No shrinkage" : `−${shrinkagePct}% shrinkage`;
     return `<tr>
-      <td><strong>${league}</strong> ${prop || ""}</td>
+      <td><strong>${league}</strong></td>
       <td class="line-value ${strengthClass}">${val.toFixed(2)}x</td>
       <td class="${strengthClass}">${strengthText}</td>
     </tr>`;
@@ -1251,17 +1345,31 @@ function renderObservatoryFeed(observations) {
   }
 
   tbody.innerHTML = filtered.map(obs => {
-    const resClass = obs.result === "hit" ? "hit" : (obs.result === "miss" ? "miss" : "pending");
-    const loggedDate = new Date(obs.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    
+    const result = (obs.result || "pending").toLowerCase();
+    const side = (obs.side || "").toLowerCase();
+    const sideClass = side ? `side-${side}` : "";
+    const tp = Number(obs.true_prob);
+    const tpStr = Number.isFinite(tp) ? `${(tp * 100).toFixed(1)}%` : "—";
+    let loggedStr = "—";
+    if (obs.created_at) {
+      const d = new Date(obs.created_at);
+      if (!isNaN(d.getTime())) {
+        const sameDay = d.toDateString() === new Date().toDateString();
+        loggedStr = sameDay
+          ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : d.toLocaleDateString([], { month: 'numeric', day: 'numeric' }) + ' ' +
+            d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+    }
+
     return `<tr>
-      <td>${obs.player}</td>
-      <td><span class="league-tag league-${obs.league}">${obs.league}</span> ${obs.prop}</td>
-      <td class="line-value">${obs.line} <span class="side-${obs.side}">${obs.side.toUpperCase()}</span></td>
-      <td class="line-value">${(obs.true_prob * 100).toFixed(1)}%</td>
-      <td><span class="result-tag res-${resClass}">${obs.result.toUpperCase()}</span></td>
-      <td class="line-value">${obs.stat_actual !== null ? obs.stat_actual : "—"}</td>
-      <td style="color:var(--text-muted)">${loggedDate}</td>
+      <td>${obs.player ?? ""}</td>
+      <td><span class="league-tag league-${obs.league || ""}">${obs.league || ""}</span> ${obs.prop || ""}</td>
+      <td class="line-value">${obs.line ?? "—"} ${side ? `<span class="${sideClass}">${side.toUpperCase()}</span>` : ""}</td>
+      <td class="line-value">${tpStr}</td>
+      <td><span class="result-tag res-${result}">${result.toUpperCase()}</span></td>
+      <td class="line-value">${obs.stat_actual !== null && obs.stat_actual !== undefined ? obs.stat_actual : "—"}</td>
+      <td style="color:var(--text-muted)">${loggedStr}</td>
     </tr>`;
   }).join("");
 }
@@ -2553,7 +2661,7 @@ function _renderCalibrationPlot(data) {
         {
           type: "line",
           label: "Perfect",
-          data: [{ x: 0.5, y: 0.5 }, { x: 0.8, y: 0.8 }],
+          data: [{ x: 0.3, y: 0.3 }, { x: 1.0, y: 1.0 }],
           borderColor: "rgba(255,255,255,0.4)",
           borderDash: [5, 5],
           pointRadius: 0,
@@ -2566,7 +2674,7 @@ function _renderCalibrationPlot(data) {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        x: { min: 0.45, max: 0.85, title: { display: true, text: "Predicted" }, ticks: { color: _chartTextColor() } },
+        x: { min: 0.30, max: 1.00, title: { display: true, text: "Predicted" }, ticks: { color: _chartTextColor() } },
         y: { min: 0.30, max: 1.00, title: { display: true, text: "Actual"   }, ticks: { color: _chartTextColor() } },
       },
     },
