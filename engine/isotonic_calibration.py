@@ -603,28 +603,24 @@ HEATMAP_BUCKETS: list[tuple[float, float]] = [
     (round(lo / 100, 2), round((lo + 5) / 100, 2)) for lo in range(30, 100, 5)
 ]
 
-# Minimum recency-weighted outcome n_eff for a (league, prop) row to qualify
-# for the heatmap. Below this the per-bucket actuals are just noise — a row
-# of "33%, 100%, 0%, 80%" from a handful of resolved legs is misleading. 30
-# matches the rule-of-thumb threshold for a per-prop hit rate to mean
-# anything above sampling variance at the 5% bucket scale.
-HEATMAP_MIN_ROW_N_EFF = 30.0
+# Minimum recency-weighted outcome n_eff for a (league, prop, side) row to
+# qualify for the heatmap. Set low so something useful surfaces while data
+# accumulates — buckets within a row still need MIN_BUCKET_N_EFF to render
+# individually, so per-cell noise is already controlled. The row threshold
+# only gates whether we show the row at all.
+HEATMAP_MIN_ROW_N_EFF = 5.0
+
+# How far back the DB-direct fallback reaches when state is empty or still
+# in the legacy 2-key format. Matches the calibrator's recency lookback.
+HEATMAP_FALLBACK_LOOKBACK_DAYS = RECENCY_LOOKBACK_DAYS
 
 
-def export_heatmap() -> dict:
-    """Build the per-(league, prop) × expected-probability heatmap from the
-    incremental state. Cell value is the recency-weighted actual hit rate
-    of that prop within that 5% expected-probability band, using only
-    outcome observations (CLV signal is excluded so the number is a true
-    hit rate, not a closing-line blend)."""
-    state = _load_state()
-
+def _heatmap_from_state(state: dict) -> list[dict]:
+    """Render heatmap rows directly from the incremental sufficient
+    statistics. Only emits 3-key (league|prop|side) entries; legacy 2-key
+    entries are skipped because they conflate over/under."""
     rows: list[dict] = []
     for bucket_key, by_bin in (state.get("props") or {}).items():
-        # New 3-key format: "league|prop|side". Skip legacy 2-key entries
-        # ("league|prop") that pre-date the per-side split — they decay out
-        # naturally over the next refits and shouldn't be displayed since
-        # they conflate over/under hit rates.
         parts = bucket_key.split("|")
         if len(parts) != 3:
             continue
@@ -635,10 +631,8 @@ def export_heatmap() -> dict:
         cells: list[dict | None] = []
         total_n_eff = 0.0
         total_hits_w = 0.0
-        total_expected_w = 0.0  # Σ expected_prob × n_eff, for an avg-expected anchor
+        total_expected_w = 0.0
         for lo, hi in HEATMAP_BUCKETS:
-            # Sum the outcome-only accumulators for the 0.5% bins that fall
-            # inside this 5% display bucket.
             bin_lo = int(round(lo * _BIN_COUNT))
             bin_hi = int(round(hi * _BIN_COUNT))
             sum_w = 0.0
@@ -666,14 +660,153 @@ def export_heatmap() -> dict:
             "prop":     f"{prop} ({side})",
             "side":     side,
             "n_eff":    round(total_n_eff, 2),
-            # Overall recency-weighted hit rate across all qualifying buckets,
-            # plus the volume-weighted average expected probability so the UI
-            # can show the gap between what the model expects and what the
-            # prop actually delivers without picking an arbitrary anchor.
             "actual":   round(total_hits_w / total_n_eff, 4),
             "expected": round(total_expected_w / total_n_eff, 4),
             "cells":    cells,
         })
+    return rows
+
+
+def _heatmap_from_db() -> list[dict]:
+    """DB-direct fallback used when the incremental state is empty or only
+    contains legacy 2-key entries (e.g., right after the per-side split was
+    introduced, before any new outcomes have resolved into the 3-key state).
+
+    Pulls resolved outcomes from `legs` and `market_observatory` within the
+    recency lookback window, applies the same exponential decay used by the
+    calibrator, and aggregates by (league, prop, side, expected-bucket).
+    Returns a list shaped identically to `_heatmap_from_state` so callers
+    are agnostic to the source.
+    """
+    db = get_db()
+    if not db:
+        return []
+
+    now = datetime.now(timezone.utc)
+    cutoff_iso = (now - timedelta(days=HEATMAP_FALLBACK_LOOKBACK_DAYS)).isoformat()
+
+    # {(league, prop, side): {bucket_idx: [sum_w, sum_hits_w]}}
+    aggs: dict[tuple[str, str, str], dict[int, list[float]]] = {}
+
+    def _bucket_idx(prob: float) -> int | None:
+        for i, (lo, hi) in enumerate(HEATMAP_BUCKETS):
+            if lo <= prob < hi:
+                return i
+        return None
+
+    def _ingest_rows(table: str) -> None:
+        page_size = 1000
+        offset = 0
+        while True:
+            try:
+                q = (db.table(table)
+                       .select("league, prop, side, true_prob, result, resolved_at")
+                       .gte("resolved_at", cutoff_iso)
+                       .order("resolved_at", desc=False)
+                       .range(offset, offset + page_size - 1))
+                res = q.execute()
+            except Exception as exc:
+                logger.warning(
+                    "Heatmap fallback: %s pull failed (resolved_at missing?): %s",
+                    table, exc,
+                )
+                return
+            chunk = res.data or []
+            for r in chunk:
+                league = (r.get("league") or "").strip()
+                prop = (r.get("prop") or "").strip()
+                side = (r.get("side") or "").lower()
+                if not league or not prop or side not in ("over", "under"):
+                    continue
+                try:
+                    tp = float(r.get("true_prob") or 0.0)
+                except (ValueError, TypeError):
+                    continue
+                if not (0.0 < tp < 1.0):
+                    continue
+                idx = _bucket_idx(tp)
+                if idx is None:
+                    continue
+                result = (r.get("result") or "").lower()
+                if result in ("hit", "won", "win"):
+                    y = 1.0
+                elif result in ("miss", "lost", "loss"):
+                    y = 0.0
+                else:
+                    # push/dnp/pending: no outcome signal for the heatmap
+                    continue
+                w = _recency_weight(_parse_dt(r.get("resolved_at")), now)
+                if w <= 0:
+                    continue
+                key = (league, prop, side)
+                cells = aggs.setdefault(key, {})
+                cell = cells.setdefault(idx, [0.0, 0.0])
+                cell[0] += w
+                cell[1] += y * w
+            if len(chunk) < page_size:
+                break
+            offset += page_size
+
+    _ingest_rows("legs")
+    _ingest_rows("market_observatory")
+
+    rows: list[dict] = []
+    for (league, prop, side), per_bucket in aggs.items():
+        cells: list[dict | None] = []
+        total_n_eff = 0.0
+        total_hits_w = 0.0
+        total_expected_w = 0.0
+        for i, (lo, hi) in enumerate(HEATMAP_BUCKETS):
+            cell = per_bucket.get(i)
+            if cell and cell[0] >= MIN_BUCKET_N_EFF:
+                sum_w, sum_hits_w = cell
+                cells.append({
+                    "actual":   round(sum_hits_w / sum_w, 4),
+                    "expected": round((lo + hi) / 2, 4),
+                    "n_eff":    round(sum_w, 2),
+                })
+                total_n_eff += sum_w
+                total_hits_w += sum_hits_w
+                total_expected_w += ((lo + hi) / 2) * sum_w
+            else:
+                cells.append(None)
+        if total_n_eff < HEATMAP_MIN_ROW_N_EFF:
+            continue
+        rows.append({
+            "league":   league,
+            "prop":     f"{prop} ({side})",
+            "side":     side,
+            "n_eff":    round(total_n_eff, 2),
+            "actual":   round(total_hits_w / total_n_eff, 4),
+            "expected": round(total_expected_w / total_n_eff, 4),
+            "cells":    cells,
+        })
+    return rows
+
+
+def export_heatmap() -> dict:
+    """Build the per-(league, prop, side) × expected-probability heatmap.
+
+    Primary path uses the incremental sufficient-statistics state so the
+    cell values match the recency weighting the calibrator itself sees.
+    When the state has no qualifying 3-key entries — which happens
+    immediately after the legacy 2-key state is in place but before any
+    new outcomes have resolved into per-side buckets — we fall back to a
+    DB-direct aggregation over the same recency window. This keeps the
+    panel populated rather than silently empty during state transitions
+    or fresh deploys.
+    """
+    state = _load_state()
+    rows = _heatmap_from_state(state)
+    source = "state"
+
+    if not rows:
+        try:
+            rows = _heatmap_from_db()
+            if rows:
+                source = "db-fallback"
+        except Exception as exc:
+            logger.warning("Heatmap DB fallback failed: %s", exc)
 
     rows.sort(key=lambda r: (r["league"], -r["n_eff"]))
 
@@ -684,6 +817,7 @@ def export_heatmap() -> dict:
         ],
         "rows": rows,
         "fitted_at": state.get("fitted_at"),
+        "source": source,
     }
 
 

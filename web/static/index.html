@@ -9,7 +9,7 @@
   <!-- Preconnect: start TLS handshakes early -->
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <link rel="preconnect" href="https://gxufqwvmkgjaqudqaapw.supabase.co" crossorigin />
-  <link rel="stylesheet" href="/static/style.css?v=110" />
+  <link rel="stylesheet" href="/static/style.css?v=111" />
   <!-- Preload Chart.js so it arrives alongside app.js instead of blocking the
        Analytics tab when the user first clicks into it. -->
   <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" crossorigin />
@@ -768,8 +768,8 @@
             </div>
             <div class="control-group">
               <label>Stat Types <span style="font-size:0.85em; opacity:0.6;">(none = all)</span></label>
-              <div id="sb-prop-chips" style="max-height: 240px; overflow-y: auto;">
-                <div style="font-size:0.8em; opacity:0.5; padding:8px 0;">Loading…</div>
+              <div id="sb-prop-chips" class="sb-prop-chips">
+                <div class="sb-prop-chips-msg">Loading…</div>
               </div>
             </div>
             <div class="control-group">
@@ -880,7 +880,7 @@
 
 
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script defer src="/static/app.js?v=30"></script>
+  <script defer src="/static/app.js?v=31"></script>
 </body>
 
 </html>

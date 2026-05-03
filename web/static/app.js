@@ -3059,9 +3059,23 @@ function initSandbox() {
     }
 }
 
+function _renderSandboxStatTypesMessage(text, withRetry = false) {
+    const container = $("sb-prop-chips");
+    if (!container) return;
+    const retryHtml = withRetry
+        ? `<button type="button" class="btn btn-secondary btn-retry" id="btn-sb-prop-retry">Retry</button>`
+        : "";
+    container.innerHTML = `<div class="sb-prop-chips-msg">${escapeHtml(text)}${retryHtml}</div>`;
+    if (withRetry) {
+        const btn = $("btn-sb-prop-retry");
+        if (btn) btn.addEventListener("click", () => loadSandboxStatTypes());
+    }
+}
+
 async function loadSandboxStatTypes() {
     const container = $("sb-prop-chips");
     if (!container) return;
+    _renderSandboxStatTypesMessage("Loading…");
     try {
         const res = await apiFetch("/api/sandbox/stat-types");
         if (!res.ok) {
@@ -3070,7 +3084,7 @@ async function loadSandboxStatTypes() {
                 const err = await res.json();
                 if (err && err.detail) msg = err.detail;
             } catch (_) { /* not JSON */ }
-            container.innerHTML = `<div style="font-size:0.8em; opacity:0.6; padding:8px 0;">Failed to load stat types: ${escapeHtml(msg)}</div>`;
+            _renderSandboxStatTypesMessage(`Failed to load stat types: ${msg}`, true);
             return;
         }
         const groups = await res.json();
@@ -3088,16 +3102,20 @@ async function loadSandboxStatTypes() {
         for (const lg of sortedLeagues) {
             const props = groups[lg] || [];
             if (!props.length) continue;
-            parts.push(`<div style="font-size:0.75em; font-weight:600; opacity:0.65; margin:6px 0 4px; letter-spacing:0.05em;">${escapeHtml(lg)}</div>`);
+            parts.push(`<div class="sb-prop-league-label" style="font-size:0.75em; font-weight:600; opacity:0.65; margin:6px 0 4px; letter-spacing:0.05em;">${escapeHtml(lg)}</div>`);
             parts.push('<div class="league-chips">');
             for (const p of props) {
                 parts.push(`<button class="chip" data-val="${escapeHtml(p)}" title="${escapeHtml(p)}">${escapeHtml(p)}</button>`);
             }
             parts.push('</div>');
         }
-        container.innerHTML = parts.join('') || '<div style="font-size:0.8em; opacity:0.5; padding:8px 0;">No stat types found yet.</div>';
+        if (parts.length === 0) {
+            _renderSandboxStatTypesMessage("No stat types found yet.", true);
+        } else {
+            container.innerHTML = parts.join('');
+        }
     } catch (e) {
-        container.innerHTML = '<div style="font-size:0.8em; opacity:0.5; padding:8px 0;">Network error loading stat types.</div>';
+        _renderSandboxStatTypesMessage("Network error loading stat types.", true);
     }
 }
 
