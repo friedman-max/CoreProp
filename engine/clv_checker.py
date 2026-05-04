@@ -43,7 +43,19 @@ class CLVTracker:
         # (raw worst_case_prob -> isotonic curve), so the closing side must
         # apply the identical calibration or CLV shows a phantom jump the
         # size of the calibration gap the moment the bet is logged.
+        # Curves are reloaded at the start of each update pass so we never
+        # apply stale isotonic curves while ev_calculator is using fresh
+        # ones — that drift was a second source of phantom CLV deltas.
         self._isotonic_curves = load_isotonic_calibration()
+
+    def _refresh_calibration(self) -> None:
+        """Reload the on-disk isotonic curves. Cheap (single JSON read);
+        called once per pipeline tick so closing-side calibration tracks
+        whatever ev_calculator is currently using."""
+        try:
+            self._isotonic_curves = load_isotonic_calibration()
+        except Exception as exc:
+            logger.warning("CLVTracker: isotonic curve reload failed: %s", exc)
 
     def update_closing_lines(self, matches: list[Any]) -> int:
         """
@@ -68,6 +80,10 @@ class CLVTracker:
         db = get_db()
         if not db:
             return 0
+
+        # Pick up any calibration refit that happened since the last tick so
+        # closing-side calibration matches what ev_calculator is using now.
+        self._refresh_calibration()
 
         # Fetch pending legs from Supabase
         try:
@@ -288,13 +304,22 @@ class CLVTracker:
         """
         Build a lookup: (player_lower, prop_lower, side, line) -> worst_case_prob.
 
-        Uses the **exact same pipeline as live bet placement** in
-        `_run_pipeline_body`: `compute_true_probability(books_from_match(
-        m.fd, m.dk, m.pin), side)` → worst_case_prob. This guarantees that
-        when the lines haven't moved, closing_prob == stored true_prob and
-        clv_pct == 0. Previous versions dropped Pinnacle from the book set
-        and/or used a different estimator, which produced instantly-negative
-        CLV on every bet.
+        Mirrors the bet-placement pipeline in `_run_pipeline_body` exactly:
+
+            books = books_from_match(m.fd, m.dk, m.pin)            # ALL books
+            consensus, worst_case, _ = compute_true_probability(books, side)
+
+        Critically, no per-book line-match filter is applied here even when
+        a book is quoting a different number than PrizePicks — placement
+        also uses the full book set, so CLV must use the same set or the
+        very first post-placement closing-line write produces a phantom
+        delta the size of "(consensus over n books) − (consensus over the
+        subset that happens to match PP's line)".
+
+        Subsequent isotonic calibration is applied identically on both
+        sides (BetResult.__init__ at placement, update_closing_lines_from_probs
+        on the closing side), so when nothing has moved between placement
+        and the first CLV pass, clv_pct ≈ 0.
         """
         current_probs: dict[tuple[str, str, str, float], float] = {}
         for m in matches:
@@ -306,15 +331,10 @@ class CLVTracker:
             line = float(m.pp.line_score)
             sides = ["over", "under"] if getattr(m.pp, "side", "both") == "both" else [m.pp.side]
 
-            # Drop books that no longer quote the same line we care about so the
-            # closing prob reflects the same contract the bet was placed on.
-            valid_fd  = m.fd  if (m.fd  and abs(m.fd.line  - line) < 1e-4) else None
-            valid_dk  = m.dk  if (m.dk  and abs(m.dk.line  - line) < 1e-4) else None
-            valid_pin = m.pin if (m.pin and abs(m.pin.line - line) < 1e-4) else None
-            if valid_fd is None and valid_dk is None and valid_pin is None:
+            books = books_from_match(m.fd, m.dk, m.pin)
+            if not books:
                 continue
 
-            books = books_from_match(valid_fd, valid_dk, valid_pin)
             for side in sides:
                 _consensus, worst_case, _meta = compute_true_probability(books, side)
                 if worst_case is not None:

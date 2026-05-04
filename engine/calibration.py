@@ -212,28 +212,24 @@ def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows:
 
 def evaluate_analytics(user_jwt: str) -> dict:
     """
-    Richer analytics payload for the Analytics tab.
+    Analytics payload for the Analytics tab.
 
     Computes:
-      - All of evaluate_calibration()
-      - Per-league performance (legs, hits, actual vs expected rate)
-      - Per-prop-type performance (top 10 by volume)
-      - Slip outcome mix (hit / miss / pending counts)
-      - Cumulative P&L timeline (one point per resolved slip, using PrizePicks
-        payout tables and a 1-unit stake per slip — positive values = profit).
+      - All of evaluate_calibration() (Brier, log-loss, hit-rate cards, CLV).
+      - Cumulative P&L timeline: one point per resolved slip with the slip's
+        timestamp, using PrizePicks payout tables and a 1-unit stake per
+        slip. Positive values = profit. The frontend's date-range selector
+        filters this client-side so the server can serve the same payload
+        for every range.
     """
     from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS
 
-    # Fetch EVERY leg once and derive resolved rows in-process. This collapses
-    # what used to be 3 separate Supabase legs queries (_load_resolved_rows x2
-    # + the slip-aggregation legs pull) into a single round trip.
+    # Fetch every leg in a single round trip; both the calibration metrics
+    # and the slip aggregation read from this list.
     db = get_user_db(user_jwt)
     all_legs: list = []
     if db:
         try:
-            # Project the union of fields used by all downstream consumers
-            # (resolved-rows, CLV rows, slip aggregation). Avoids dragging the
-            # full leg row — odds, devig metadata, etc. — through Python.
             cols = "result, true_prob, player, prop, side, league, slip_id, closing_prob, clv_pct"
             all_legs = (db.table("legs").select(cols).execute().data) or []
         except Exception as exc:
@@ -262,7 +258,6 @@ def evaluate_analytics(user_jwt: str) -> dict:
             "slip_id":   leg.get("slip_id", ""),
         })
 
-    # Derive CLV rows from the same single legs query.
     clv_rows: list[dict] = []
     _seen_start = False
     _sorted_legs = sorted(all_legs, key=lambda x: x.get("slip_id", ""))
@@ -279,41 +274,13 @@ def evaluate_analytics(user_jwt: str) -> dict:
 
     base = evaluate_calibration(user_jwt, _rows=rows, _clv_rows=clv_rows)
 
-    # --- Per-league ----------------------------------------------------------
-    def _group(rows, key):
-        agg: dict[str, dict] = {}
-        for r in rows:
-            k = (r.get(key) or "").strip() or "—"
-            g = agg.setdefault(k, {"key": k, "legs": 0, "hits": 0, "pred_sum": 0.0})
-            g["legs"]     += 1
-            g["hits"]     += r["outcome"]
-            g["pred_sum"] += r["true_prob"]
-        out = []
-        for g in agg.values():
-            legs = g["legs"]
-            out.append({
-                "key":      g["key"],
-                "legs":     legs,
-                "hits":     g["hits"],
-                "actual":   round(g["hits"] / legs, 4) if legs else None,
-                "expected": round(g["pred_sum"] / legs, 4) if legs else None,
-                "delta":    round(g["hits"] / legs - g["pred_sum"] / legs, 4) if legs else None,
-            })
-        out.sort(key=lambda x: x["legs"], reverse=True)
-        return out
-
-    by_league = _group(rows, "league")
-    by_prop = _group(rows, "prop")[:10]
-
-    # --- Slip mix + cumulative P&L (needs full slip payload) -----------------
-    slip_mix = {"won": 0, "lost": 0, "pending": 0, "partial": 0}
+    # --- Cumulative P&L timeline --------------------------------------------
     pnl_timeline: list[dict] = []
     resolved_slips = won_slips = 0
 
     if db:
         try:
             slips_res = db.table("slips").select("id, timestamp, slip_type").order("timestamp", desc=False).execute()
-            # Reuse `all_legs` from above — no second legs query.
             legs_by_slip: dict[str, list] = {}
             for l in all_legs:
                 legs_by_slip.setdefault(l["slip_id"], []).append(l)
@@ -322,12 +289,11 @@ def evaluate_analytics(user_jwt: str) -> dict:
             for s in (slips_res.data or []):
                 sid = s["id"]
                 legs = legs_by_slip.get(sid, [])
-                results = [str(l.get("result", "pending")).lower() for l in legs]
                 if not legs:
                     continue
+                results = [str(l.get("result", "pending")).lower() for l in legs]
                 completed = all(r in ("hit", "miss", "push", "dnp", "won", "win", "lost", "loss") for r in results)
                 if not completed:
-                    slip_mix["pending"] += 1
                     continue
 
                 effective = [r for r in results if r not in ("push", "dnp")]
@@ -348,15 +314,8 @@ def evaluate_analytics(user_jwt: str) -> dict:
                 pnl = float(payout) - 1.0  # 1-unit stake per slip
                 cum_pnl += pnl
                 resolved_slips += 1
-                if payout > 1.0:
+                if payout > 1.0 or (hits_eff == n_eff and n_eff > 0):
                     won_slips += 1
-                    slip_mix["won"] += 1
-                elif hits_eff == n_eff and n_eff > 0:
-                    slip_mix["won"] += 1
-                elif hits_eff == 0:
-                    slip_mix["lost"] += 1
-                else:
-                    slip_mix["partial"] += 1
 
                 pnl_timeline.append({
                     "slip_id":   sid,
@@ -372,12 +331,9 @@ def evaluate_analytics(user_jwt: str) -> dict:
         roi = round(pnl_timeline[-1]["cum_pnl"] / resolved_slips, 4)
 
     base.update({
-        "by_league":        by_league,
-        "by_prop":          by_prop,
-        "slip_mix":         slip_mix,
-        "pnl_timeline":     pnl_timeline,
-        "resolved_slips":   resolved_slips,
-        "won_slips":        won_slips,
-        "roi_per_slip":     roi,
+        "pnl_timeline":   pnl_timeline,
+        "resolved_slips": resolved_slips,
+        "won_slips":      won_slips,
+        "roi_per_slip":   roi,
     })
     return base

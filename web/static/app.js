@@ -2386,22 +2386,6 @@ function renderAnalyticsSkeleton() {
       el.innerHTML = `<div class="skeleton-bar" style="width:70%; height:20px; display:inline-block;"></div>`;
     }
   }
-  const tbodyIds = ["cal-tbody", "league-perf-tbody", "prop-perf-tbody"];
-  for (const id of tbodyIds) {
-    const el = $(id);
-    if (!el) continue;
-    // Don't overwrite already-rendered data; only skeleton when empty.
-    const hasEmpty = el.querySelector(".empty-msg");
-    if (hasEmpty) {
-      el.innerHTML = Array.from({ length: 5 }).map(() =>
-        `<tr class="skeleton-row">${
-          Array.from({ length: id === "cal-tbody" ? 5 : 6 }).map((_, i) =>
-            `<td><div class="skeleton-bar" style="width:${i === 0 ? 60 : 40}%"></div></td>`
-          ).join("")
-        }</tr>`
-      ).join("");
-    }
-  }
 }
 
 // Render the non-chart pieces first (cards + tables); chart rendering is
@@ -2496,54 +2480,6 @@ function renderCalibration(data) {
     }
   }
 
-  // Calibration buckets table (50-80%)
-  const tbody = $("cal-tbody");
-  const buckets = data.calibration_buckets || [];
-
-  if (!tbody) return;
-  if (buckets.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No high-prop data available yet.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = buckets.map(b => {
-    if (b.count === 0) {
-      return `<tr>
-        <td><div style="font-weight:700;">${b.bucket}</div></td>
-        <td style="font-family:var(--font-mono); opacity:0.3;">\u2014</td>
-        <td style="font-family:var(--font-mono); opacity:0.3;">\u2014</td>
-        <td style="opacity:0.3;">0</td>
-        <td><span class="cal-tag" style="opacity:0.2;">No Data</span></td>
-      </tr>`;
-    }
-
-    const predicted = (b.predicted_avg * 100).toFixed(1) + "%";
-    const actual = (b.actual_avg * 100).toFixed(1) + "%";
-    const diff = b.actual_avg - b.predicted_avg;
-    const diffPct = (diff * 100).toFixed(1);
-    const diffSign = diff >= 0 ? "+" : "";
-    
-    // Status Logic
-    const absDiff = Math.abs(diff);
-    let statusClass = "off";
-    if (absDiff < 0.02) statusClass = "perfect";
-    else if (absDiff < 0.05) statusClass = "good";
-
-    const alignLabel = diff > 0.02 ? "Under" : diff < -0.02 ? "Over" : "OK";
-
-    return `<tr>
-      <td data-label="Bucket"><div style="font-weight:700;">${b.bucket}</div></td>
-      <td data-label="Predicted" style="font-family:var(--font-mono); opacity:0.8;">${predicted}</td>
-      <td data-label="Actual" style="font-family:var(--font-mono); font-weight:700;">${actual}</td>
-      <td data-label="Count" style="opacity:0.7;">${b.count}</td>
-      <td data-label="Delta">
-        <div style="display:flex; align-items:center; gap:6px;">
-          <span class="cal-delta ${statusClass}">${diffSign}${diffPct}pp</span>
-          <span class="cal-tag">${alignLabel}</span>
-        </div>
-      </td>
-    </tr>`;
-  }).join("");
   // CLV Tracking section
   $("clv-count").textContent = data.n_clv_tracked || 0;
 
@@ -2568,82 +2504,140 @@ function renderCalibration(data) {
 }
 
 
-// ── Analytics extras: charts + per-league/prop tables ─────────────────────
+// ── Analytics extras: P&L chart with range selector ──────────────────────
 function renderAnalyticsExtras(data) {
   if (typeof Chart === "undefined") {
     console.warn("Chart.js not loaded — skipping analytics charts.");
     return;
   }
-  _renderPnlChart(data);
-  _renderCalibrationPlot(data);
-  _renderSlipMixChart(data);
-  _renderPerfTable("league-perf-tbody", data.by_league || []);
-  _renderPerfTable("prop-perf-tbody",   data.by_prop   || []);
-
-  // PnL summary line
-  const subtitle = $("pnl-summary");
-  if (subtitle) {
-    const n = data.resolved_slips || 0;
-    const roi = data.roi_per_slip;
-    const total = (data.pnl_timeline && data.pnl_timeline.length)
-      ? data.pnl_timeline[data.pnl_timeline.length - 1].cum_pnl : 0;
-    subtitle.textContent = n > 0
-      ? `${n} resolved slips · net ${total >= 0 ? "+" : ""}${total.toFixed(2)}u · ROI/slip ${roi != null ? (roi * 100).toFixed(1) + "%" : "—"}`
-      : "No resolved slips yet.";
-  }
-
-  const mixSub = $("slip-mix-subtitle");
-  if (mixSub) {
-    const m = data.slip_mix || {};
-    mixSub.textContent = `Won ${m.won || 0} · Partial ${m.partial || 0} · Lost ${m.lost || 0} · Pending ${m.pending || 0}`;
-  }
-}
-
-function _renderPerfTable(tbodyId, rows) {
-  const tbody = $(tbodyId);
-  if (!tbody) return;
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">No resolved legs yet.</td></tr>';
-    return;
-  }
-  tbody.innerHTML = rows.map(r => {
-    const actual = r.actual != null ? (r.actual * 100).toFixed(1) + "%" : "—";
-    const expect = r.expected != null ? (r.expected * 100).toFixed(1) + "%" : "—";
-    const d = r.delta;
-    const dTxt = d != null ? ((d >= 0 ? "+" : "") + (d * 100).toFixed(1) + "pp") : "—";
-    const dCls = d == null ? "" : d > 0.005 ? "positive" : d < -0.005 ? "negative" : "";
-    return `<tr>
-      <td>${r.key}</td>
-      <td>${r.legs}</td>
-      <td>${r.hits}</td>
-      <td>${actual}</td>
-      <td style="opacity:0.75">${expect}</td>
-      <td class="${dCls}">${dTxt}</td>
-    </tr>`;
-  }).join("");
+  _pnlData = data;
+  _drawPnlChart();
 }
 
 function _chartTextColor() {
   return getComputedStyle(document.body).getPropertyValue("--text") || "#ddd";
 }
 
-function _renderPnlChart(data) {
+// ── P&L date-range selector ───────────────────────────────────────────────
+// Robinhood-style range buttons. Filters the cumulative timeline to the
+// chosen window and rebases so the chart starts at 0 for that window —
+// the y-value is "P&L gained over the last X" rather than a clipped slice
+// of the absolute curve. MAX shows the full absolute curve.
+const _PNL_RANGES = {
+  "1D":  86400000,
+  "1W":  7   * 86400000,
+  "1M":  30  * 86400000,
+  "3M":  90  * 86400000,
+  "1Y":  365 * 86400000,
+  "MAX": null,
+};
+let _pnlRange = "1M";
+let _pnlData  = null;
+let _pnlSelectorBound = false;
+
+function _bindPnlRangeSelector() {
+  if (_pnlSelectorBound) return;
+  const root = document.getElementById("pnl-range-selector");
+  if (!root) return;
+  root.addEventListener("click", (e) => {
+    const btn = e.target.closest(".pnl-range-btn");
+    if (!btn || !root.contains(btn)) return;
+    const r = btn.dataset.range;
+    if (!r || !(r in _PNL_RANGES)) return;
+    _pnlRange = r;
+    root.querySelectorAll(".pnl-range-btn").forEach(b => b.classList.toggle("active", b === btn));
+    _drawPnlChart();
+  });
+  _pnlSelectorBound = true;
+}
+
+function _filterPnlForRange(timeline, rangeKey) {
+  // Returns { points, baseline } where points have absolute timestamps
+  // already rebased so y starts at 0 for the window. baseline is what we
+  // subtracted (used by the summary line so it can show net ± in window).
+  const all = (timeline || []).filter(p => p && p.timestamp);
+  const ms = _PNL_RANGES[rangeKey];
+
+  // Parse timestamps once
+  const parsed = all.map(p => ({
+    t: new Date(p.timestamp).getTime(),
+    cum: Number(p.cum_pnl) || 0,
+    pnl: Number(p.pnl)     || 0,
+  })).filter(p => Number.isFinite(p.t));
+
+  if (ms == null) {
+    // MAX: show absolute curve, baseline 0
+    return { points: parsed, baseline: 0 };
+  }
+
+  const cutoff = Date.now() - ms;
+  const firstInIdx = parsed.findIndex(p => p.t >= cutoff);
+  if (firstInIdx === -1) return { points: [], baseline: 0 };
+
+  const baseline = firstInIdx > 0 ? parsed[firstInIdx - 1].cum : 0;
+  const points = parsed.slice(firstInIdx).map(p => ({
+    t: p.t,
+    cum: p.cum - baseline,
+    pnl: p.pnl,
+  }));
+  return { points, baseline };
+}
+
+function _formatPnlTick(ms, rangeKey) {
+  const d = new Date(ms);
+  if (rangeKey === "1D") {
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  if (rangeKey === "1W" || rangeKey === "1M") {
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  return d.toLocaleDateString([], { month: "short", year: "2-digit" });
+}
+
+function _drawPnlChart() {
+  if (!_pnlData) return;
   const ctx = document.getElementById("chart-pnl");
   if (!ctx) return;
-  const points = data.pnl_timeline || [];
-  const labels = points.map((_, i) => i + 1);
-  const cum    = points.map(p => p.cum_pnl);
+
+  const root = document.getElementById("pnl-range-selector");
+  if (root) {
+    root.querySelectorAll(".pnl-range-btn").forEach(b =>
+      b.classList.toggle("active", b.dataset.range === _pnlRange));
+  }
+
+  const { points } = _filterPnlForRange(_pnlData.pnl_timeline || [], _pnlRange);
+
+  // Empty-window case: kill the existing chart and fall through to subtitle.
+  const subtitle = $("pnl-summary");
+  if (!points.length) {
+    if (_charts.pnl) { _charts.pnl.destroy(); _charts.pnl = null; }
+    if (subtitle) {
+      const total = (_pnlData.pnl_timeline || []).length;
+      subtitle.textContent = total
+        ? `No resolved slips in the selected window.`
+        : `No resolved slips yet.`;
+    }
+    return;
+  }
+
+  // Color the line green when ending in profit, red when in the red.
+  const last = points[points.length - 1].cum;
+  const positive = last >= 0;
+  const lineColor = positive ? "#4ade80" : "#f87171";
+  const fillColor = positive ? "rgba(74, 222, 128, 0.15)" : "rgba(248, 113, 113, 0.15)";
+  if (root) root.classList.toggle("negative", !positive);
+
+  const dataPoints = points.map(p => ({ x: p.t, y: p.cum }));
 
   if (_charts.pnl) _charts.pnl.destroy();
   _charts.pnl = new Chart(ctx, {
     type: "line",
     data: {
-      labels,
       datasets: [{
         label: "Cumulative P&L (units)",
-        data: cum,
-        borderColor: "#4ade80",
-        backgroundColor: "rgba(74, 222, 128, 0.15)",
+        data: dataPoints,
+        borderColor: lineColor,
+        backgroundColor: fillColor,
         fill: true,
         tension: 0.2,
         pointRadius: 0,
@@ -2651,78 +2645,50 @@ function _renderPnlChart(data) {
       }],
     },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      responsive: true,
+      maintainAspectRatio: false,
+      parsing: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              if (!items.length) return "";
+              return new Date(items[0].parsed.x).toLocaleString();
+            },
+            label: (item) => {
+              const v = item.parsed.y;
+              return `${v >= 0 ? "+" : ""}${v.toFixed(2)}u`;
+            },
+          },
+        },
+      },
       scales: {
-        x: { title: { display: true, text: "Resolved slip #" }, ticks: { color: _chartTextColor() } },
-        y: { title: { display: true, text: "Units"   }, ticks: { color: _chartTextColor() } },
+        x: {
+          type: "linear",
+          ticks: {
+            color: _chartTextColor(),
+            maxTicksLimit: 6,
+            callback: (val) => _formatPnlTick(val, _pnlRange),
+          },
+          grid: { color: "rgba(255,255,255,0.04)" },
+        },
+        y: {
+          title: { display: true, text: "Units" },
+          ticks: { color: _chartTextColor() },
+          grid: { color: "rgba(255,255,255,0.04)" },
+        },
       },
     },
   });
-}
 
-function _renderCalibrationPlot(data) {
-  const ctx = document.getElementById("chart-cal");
-  if (!ctx) return;
-  const buckets = (data.calibration_buckets || []).filter(b => b.count > 0);
-  const pts = buckets.map(b => ({ x: b.predicted_avg, y: b.actual_avg, r: Math.max(4, Math.sqrt(b.count) * 2) }));
-
-  if (_charts.cal) _charts.cal.destroy();
-  _charts.cal = new Chart(ctx, {
-    type: "bubble",
-    data: {
-      datasets: [
-        {
-          label: "Buckets",
-          data: pts,
-          backgroundColor: "rgba(96, 165, 250, 0.6)",
-          borderColor: "#60a5fa",
-        },
-        {
-          type: "line",
-          label: "Perfect",
-          data: [{ x: 0.3, y: 0.3 }, { x: 1.0, y: 1.0 }],
-          borderColor: "rgba(255,255,255,0.4)",
-          borderDash: [5, 5],
-          pointRadius: 0,
-          fill: false,
-          borderWidth: 1,
-        },
-      ],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { min: 0.30, max: 1.00, title: { display: true, text: "Predicted" }, ticks: { color: _chartTextColor() } },
-        y: { min: 0.30, max: 1.00, title: { display: true, text: "Actual"   }, ticks: { color: _chartTextColor() } },
-      },
-    },
-  });
-}
-
-function _renderSlipMixChart(data) {
-  const ctx = document.getElementById("chart-slip-mix");
-  if (!ctx) return;
-  const m = data.slip_mix || {};
-  const values = [m.won || 0, m.partial || 0, m.lost || 0, m.pending || 0];
-
-  if (_charts.slipMix) _charts.slipMix.destroy();
-  _charts.slipMix = new Chart(ctx, {
-    type: "doughnut",
-    data: {
-      labels: ["Won", "Partial", "Lost", "Pending"],
-      datasets: [{
-        data: values,
-        backgroundColor: ["#4ade80", "#fbbf24", "#f87171", "#6b7280"],
-        borderWidth: 0,
-      }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: "bottom", labels: { color: _chartTextColor() } } },
-    },
-  });
+  // Subtitle: window-specific net change, plus all-time count for context.
+  if (subtitle) {
+    const totalSlips = _pnlData.resolved_slips || 0;
+    const winLabel = _pnlRange === "MAX" ? "all-time" : _pnlRange;
+    const sign = last >= 0 ? "+" : "";
+    subtitle.textContent = `${winLabel} ${sign}${last.toFixed(2)}u · ${totalSlips} resolved slips total`;
+  }
 }
 
 
@@ -2795,6 +2761,8 @@ window.addEventListener('DOMContentLoaded', () => {
             if (window.innerWidth <= 768) sp.classList.toggle("open");
         });
     }
+
+    _bindPnlRangeSelector();
 
     // Auto-backtest toggle: hydrate immediately from localStorage
     const abToggle = document.getElementById("auto-backtest-toggle");
