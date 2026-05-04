@@ -2551,38 +2551,6 @@ function _bindPnlRangeSelector() {
   _pnlSelectorBound = true;
 }
 
-function _filterPnlForRange(timeline, rangeKey) {
-  // Returns { points, baseline } where points have absolute timestamps
-  // already rebased so y starts at 0 for the window. baseline is what we
-  // subtracted (used by the summary line so it can show net ± in window).
-  const all = (timeline || []).filter(p => p && p.timestamp);
-  const ms = _PNL_RANGES[rangeKey];
-
-  // Parse timestamps once
-  const parsed = all.map(p => ({
-    t: new Date(p.timestamp).getTime(),
-    cum: Number(p.cum_pnl) || 0,
-    pnl: Number(p.pnl)     || 0,
-  })).filter(p => Number.isFinite(p.t));
-
-  if (ms == null) {
-    // MAX: show absolute curve, baseline 0
-    return { points: parsed, baseline: 0 };
-  }
-
-  const cutoff = Date.now() - ms;
-  const firstInIdx = parsed.findIndex(p => p.t >= cutoff);
-  if (firstInIdx === -1) return { points: [], baseline: 0 };
-
-  const baseline = firstInIdx > 0 ? parsed[firstInIdx - 1].cum : 0;
-  const points = parsed.slice(firstInIdx).map(p => ({
-    t: p.t,
-    cum: p.cum - baseline,
-    pnl: p.pnl,
-  }));
-  return { points, baseline };
-}
-
 function _formatPnlTick(ms, rangeKey) {
   const d = new Date(ms);
   if (rangeKey === "1D") {
@@ -2605,42 +2573,83 @@ function _drawPnlChart() {
       b.classList.toggle("active", b.dataset.range === _pnlRange));
   }
 
-  const { points } = _filterPnlForRange(_pnlData.pnl_timeline || [], _pnlRange);
-
-  // Empty-window case: kill the existing chart and fall through to subtitle.
   const subtitle = $("pnl-summary");
-  if (!points.length) {
+  const ms = _PNL_RANGES[_pnlRange];
+  const now = Date.now();
+
+  // X-axis bounds always reflect the chosen window: from (now - range) to
+  // now for fixed-length ranges, from the first slip to now for MAX.
+  const allParsed = (_pnlData.pnl_timeline || [])
+    .filter(p => p && p.timestamp)
+    .map(p => ({
+      t: new Date(p.timestamp).getTime(),
+      cum: Number(p.cum_pnl) || 0,
+    }))
+    .filter(p => Number.isFinite(p.t))
+    .sort((a, b) => a.t - b.t);
+
+  if (!allParsed.length) {
     if (_charts.pnl) { _charts.pnl.destroy(); _charts.pnl = null; }
-    if (subtitle) {
-      const total = (_pnlData.pnl_timeline || []).length;
-      subtitle.textContent = total
-        ? `No resolved slips in the selected window.`
-        : `No resolved slips yet.`;
-    }
+    if (subtitle) subtitle.textContent = "No resolved slips yet.";
     return;
   }
 
-  // Color the line green when ending in profit, red when in the red.
-  const last = points[points.length - 1].cum;
-  const positive = last >= 0;
+  const xMin = ms == null ? allParsed[0].t : (now - ms);
+  const xMax = now;
+
+  // Rebase: anything strictly before xMin is the baseline cumulative;
+  // points within [xMin, xMax] get the baseline subtracted so the line
+  // starts at 0 inside the window. MAX uses baseline 0 (full curve).
+  let baseline = 0;
+  if (ms != null) {
+    let lastBefore = null;
+    for (const p of allParsed) {
+      if (p.t < xMin) lastBefore = p; else break;
+    }
+    baseline = lastBefore ? lastBefore.cum : 0;
+  }
+
+  const inWindow = allParsed
+    .filter(p => p.t >= xMin && p.t <= xMax)
+    .map(p => ({ t: p.t, y: p.cum - baseline }));
+
+  // Anchor points: prepend (xMin, 0) so the line starts at the left edge,
+  // append (xMax, last_y) so it extends flat to "now" — Robinhood-style.
+  // The end anchor uses the last in-window y; if no in-window points
+  // exist, the line is flat at 0 (or at the rebased baseline carry-over).
+  const startY = 0;
+  const endY = inWindow.length ? inWindow[inWindow.length - 1].y : 0;
+
+  const dataPoints = [
+    { x: xMin, y: startY },
+    ...inWindow.map(p => ({ x: p.t, y: p.y })),
+    { x: xMax, y: endY },
+  ];
+
+  // Color reflects window result: green if ending up, red if down.
+  const positive = endY >= 0;
   const lineColor = positive ? "#4ade80" : "#f87171";
   const fillColor = positive ? "rgba(74, 222, 128, 0.15)" : "rgba(248, 113, 113, 0.15)";
   if (root) root.classList.toggle("negative", !positive);
-
-  const dataPoints = points.map(p => ({ x: p.t, y: p.cum }));
 
   if (_charts.pnl) _charts.pnl.destroy();
   _charts.pnl = new Chart(ctx, {
     type: "line",
     data: {
       datasets: [{
-        label: "Cumulative P&L (units)",
+        label: "Cumulative P&L",
         data: dataPoints,
         borderColor: lineColor,
         backgroundColor: fillColor,
         fill: true,
-        tension: 0.2,
+        // Stepped line: cumulative P&L is event-driven, not interpolated.
+        // 'before' = each value carries forward until the next event.
+        stepped: "before",
         pointRadius: 0,
+        pointHoverRadius: 4,
+        pointHoverBackgroundColor: lineColor,
+        pointHoverBorderColor: "#0d0f14",
+        pointHoverBorderWidth: 2,
         borderWidth: 2,
       }],
     },
@@ -2648,13 +2657,35 @@ function _drawPnlChart() {
       responsive: true,
       maintainAspectRatio: false,
       parsing: false,
+      // Stock-chart hover: tooltip and crosshair point follow the cursor's
+      // x position even when not directly on a data point. Combined with
+      // the stepped line, the tooltip's y is exactly "P&L through this
+      // moment" — the value the cumulative line had at the cursor's x.
+      interaction: {
+        mode: "index",
+        intersect: false,
+        axis: "x",
+      },
+      hover: {
+        mode: "index",
+        intersect: false,
+      },
       plugins: {
         legend: { display: false },
         tooltip: {
+          mode: "index",
+          intersect: false,
+          axis: "x",
+          displayColors: false,
           callbacks: {
             title: (items) => {
               if (!items.length) return "";
-              return new Date(items[0].parsed.x).toLocaleString();
+              return new Date(items[0].parsed.x).toLocaleString([], {
+                month: "short", day: "numeric",
+                hour: _pnlRange === "1D" ? "numeric" : undefined,
+                minute: _pnlRange === "1D" ? "2-digit" : undefined,
+                year: (_pnlRange === "1Y" || _pnlRange === "MAX") ? "numeric" : undefined,
+              });
             },
             label: (item) => {
               const v = item.parsed.y;
@@ -2666,6 +2697,8 @@ function _drawPnlChart() {
       scales: {
         x: {
           type: "linear",
+          min: xMin,
+          max: xMax,
           ticks: {
             color: _chartTextColor(),
             maxTicksLimit: 6,
@@ -2686,8 +2719,8 @@ function _drawPnlChart() {
   if (subtitle) {
     const totalSlips = _pnlData.resolved_slips || 0;
     const winLabel = _pnlRange === "MAX" ? "all-time" : _pnlRange;
-    const sign = last >= 0 ? "+" : "";
-    subtitle.textContent = `${winLabel} ${sign}${last.toFixed(2)}u · ${totalSlips} resolved slips total`;
+    const sign = endY >= 0 ? "+" : "";
+    subtitle.textContent = `${winLabel} ${sign}${endY.toFixed(2)}u · ${totalSlips} resolved slips total`;
   }
 }
 
