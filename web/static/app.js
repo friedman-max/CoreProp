@@ -1020,52 +1020,82 @@ function renderCalibrationHeatmap(heat) {
     return;
   }
 
-  // Header: League, Prop, overall Hit Rate, then one column per 5% bucket.
+  // Header: League, Prop, Side, overall Hit Rate, then one column per
+  // 5% expected-probability bucket.
   const headCells = [
     `<th>League</th>`,
     `<th>Prop</th>`,
+    `<th style="text-align:center;">Side</th>`,
     `<th style="text-align:center;" title="Overall recency-weighted hit rate across all qualifying buckets, alongside the volume-weighted average expected probability.">Hit Rate</th>`,
     ...buckets.map(b => `<th style="text-align:center;">${b.label}</th>`),
   ].join("");
   thead.innerHTML = `<tr>${headCells}</tr>`;
 
-  // Group rows by league so we can show a visual divider between leagues.
+  const cellColor = (actual, expected) => {
+    const delta = actual - expected;
+    const intensity = Math.min(1, Math.abs(delta) / 0.15);
+    const hue = delta >= 0 ? 140 : 0;
+    return `hsla(${hue}, 70%, 45%, ${0.15 + intensity * 0.55})`;
+  };
+
+  const renderRowCells = (r) => {
+    const cells = r.cells.map((c, i) => {
+      if (!c) return `<td class="heat-cell heat-empty"></td>`;
+      const expected = (buckets[i].lo + buckets[i].hi) / 2;
+      const bg = cellColor(c.actual, expected);
+      const pct = (c.actual * 100).toFixed(0) + "%";
+      const title = `Actual ${(c.actual*100).toFixed(1)}% vs expected ${(expected*100).toFixed(0)}%\nn_eff=${c.n_eff}`;
+      return `<td class="heat-cell" style="background:${bg};" title="${title}">${pct}</td>`;
+    }).join("");
+    const overallBg    = cellColor(r.actual, r.expected);
+    const overallTitle = `Overall hit rate ${(r.actual*100).toFixed(1)}% vs avg expected ${(r.expected*100).toFixed(1)}% (n_eff=${r.n_eff})`;
+    const overallCell  = `<td class="heat-cell heat-overall" style="background:${overallBg};" title="${overallTitle}">${(r.actual*100).toFixed(0)}%</td>`;
+    const sideCls   = r.side === "under" ? "side-under" : "side-over";
+    const sideLabel = r.side === "under" ? "U" : "O";
+    const sideCell  = `<td class="heat-side-cell ${sideCls}" title="${r.side}">${sideLabel}</td>`;
+    return `${sideCell}${overallCell}${cells}`;
+  };
+
+  // Two-level grouping: league → prop, where each prop pairs its over and
+  // under rows so calibration can be compared directly. Within a league,
+  // props are sorted by combined volume; within a prop, over comes first.
   const byLeague = {};
   for (const r of rows) {
-    (byLeague[r.league] = byLeague[r.league] || []).push(r);
+    const lg = byLeague[r.league] = byLeague[r.league] || {};
+    const pr = lg[r.prop] = lg[r.prop] || { over: null, under: null, n: 0 };
+    pr[r.side] = r;
+    pr.n += r.n_eff || 0;
   }
 
   const html = [];
   for (const league of Object.keys(byLeague).sort()) {
-    const group = byLeague[league];
-    group.sort((a, b) => b.n_eff - a.n_eff);
-    let first = true;
-    for (const r of group) {
-      const cellColor = (actual, expected) => {
-        const delta = actual - expected;
-        const intensity = Math.min(1, Math.abs(delta) / 0.15);
-        const hue = delta >= 0 ? 140 : 0;
-        return `hsla(${hue}, 70%, 45%, ${0.15 + intensity * 0.55})`;
-      };
+    const propMap = byLeague[league];
+    const propEntries = Object.entries(propMap)
+      .sort((a, b) => b[1].n - a[1].n);
 
-      const cells = r.cells.map((c, i) => {
-        if (!c) return `<td class="heat-cell heat-empty"></td>`;
-        const expected = (buckets[i].lo + buckets[i].hi) / 2;
-        const bg = cellColor(c.actual, expected);
-        const pct = (c.actual * 100).toFixed(0) + "%";
-        const title = `Actual ${(c.actual*100).toFixed(1)}% vs expected ${(expected*100).toFixed(0)}%\nn_eff=${c.n_eff}`;
-        return `<td class="heat-cell" style="background:${bg};" title="${title}">${pct}</td>`;
-      }).join("");
+    // rowspan for the league cell = sum of over+under rows present.
+    const leagueRowSpan = propEntries.reduce(
+      (n, [, p]) => n + (p.over ? 1 : 0) + (p.under ? 1 : 0),
+      0,
+    );
 
-      const overallBg    = cellColor(r.actual, r.expected);
-      const overallTitle = `Overall hit rate ${(r.actual*100).toFixed(1)}% vs avg expected ${(r.expected*100).toFixed(1)}% (n_eff=${r.n_eff})`;
-      const overallCell  = `<td class="heat-cell heat-overall" style="background:${overallBg};" title="${overallTitle}">${(r.actual*100).toFixed(0)}%</td>`;
-
-      html.push(
-        `<tr>${first ? `<td class="heat-league-cell" rowspan="${group.length}">${league}</td>` : ""}` +
-        `<td class="heat-prop-cell">${r.prop}</td>${overallCell}${cells}</tr>`
-      );
-      first = false;
+    let leagueShown = false;
+    for (const [propName, pair] of propEntries) {
+      const sides = [];
+      if (pair.over)  sides.push(pair.over);
+      if (pair.under) sides.push(pair.under);
+      let propShown = false;
+      for (const r of sides) {
+        const leagueCell = leagueShown
+          ? ""
+          : `<td class="heat-league-cell" rowspan="${leagueRowSpan}">${league}</td>`;
+        const propCell = propShown
+          ? ""
+          : `<td class="heat-prop-cell" rowspan="${sides.length}">${propName}</td>`;
+        html.push(`<tr>${leagueCell}${propCell}${renderRowCells(r)}</tr>`);
+        leagueShown = true;
+        propShown = true;
+      }
     }
   }
 

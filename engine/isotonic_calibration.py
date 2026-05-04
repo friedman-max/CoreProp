@@ -657,7 +657,7 @@ def _heatmap_from_state(state: dict) -> list[dict]:
             continue
         rows.append({
             "league":   league,
-            "prop":     f"{prop} ({side})",
+            "prop":     prop,
             "side":     side,
             "n_eff":    round(total_n_eff, 2),
             "actual":   round(total_hits_w / total_n_eff, 4),
@@ -774,7 +774,7 @@ def _heatmap_from_db() -> list[dict]:
             continue
         rows.append({
             "league":   league,
-            "prop":     f"{prop} ({side})",
+            "prop":     prop,
             "side":     side,
             "n_eff":    round(total_n_eff, 2),
             "actual":   round(total_hits_w / total_n_eff, 4),
