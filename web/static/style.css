@@ -1937,6 +1937,14 @@ tr.in-backtest.selected {
   overflow: auto;
 }
 
+/* Heatmap panel: now that rows are paired (over/under per prop) the table
+   can run long. Cap its wrapper so it scrolls inside the panel and the
+   rest of the Observatory tab — Market Feed, etc. — stays reachable. */
+.heatmap-wrapper {
+  max-height: 480px;
+  overflow: auto;
+}
+
 /* Mobile responsive for Observatory */
 @media (max-width: 900px) {
   #observatory-view {

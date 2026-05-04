@@ -9,7 +9,7 @@
   <!-- Preconnect: start TLS handshakes early -->
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <link rel="preconnect" href="https://gxufqwvmkgjaqudqaapw.supabase.co" crossorigin />
-  <link rel="stylesheet" href="/static/style.css?v=113" />
+  <link rel="stylesheet" href="/static/style.css?v=114" />
   <!-- Preload Chart.js so it arrives alongside app.js instead of blocking the
        Analytics tab when the user first clicks into it. -->
   <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" crossorigin />
@@ -585,7 +585,7 @@
             <h3>Prop Hit Rate by Expected Probability</h3>
             <span class="analytics-subtitle">Rows: prop type (grouped by league). Columns: expected hit rate in 5% bands. Cells: actual recency-weighted hit rate (outcome-only).</span>
           </div>
-          <div class="table-wrapper">
+          <div class="table-wrapper heatmap-wrapper">
             <table id="cal-heatmap-table" class="heatmap-table">
               <thead id="cal-heatmap-thead"></thead>
               <tbody id="cal-heatmap-tbody">
