@@ -1937,12 +1937,21 @@ tr.in-backtest.selected {
   overflow: auto;
 }
 
-/* Heatmap panel: now that rows are paired (over/under per prop) the table
-   can run long. Cap its wrapper so it scrolls inside the panel and the
-   rest of the Observatory tab — Market Feed, etc. — stays reachable. */
+/* Heatmap panel: rows are paired (over/under per prop) so the table runs
+   long. Let the panel grow to fit every row and rely on the page itself
+   for vertical scrolling — capping the wrapper hid rows below the fold.
+   Horizontal overflow stays so the wide bucket grid can scroll sideways. */
 .heatmap-wrapper {
-  max-height: 480px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+/* Sticky header: keep the bucket labels visible while scrolling the page
+   through the long paired-side row list. */
+.heatmap-wrapper thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface2);
 }
 
 /* Mobile responsive for Observatory */
