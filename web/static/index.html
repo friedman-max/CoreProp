@@ -546,20 +546,21 @@
       <div class="analytics-row">
         <div class="analytics-panel">
           <div class="analytics-panel-header">
-            <h3>Per-League Calibration</h3>
-            <span class="analytics-subtitle">Isotonic shrinkage applied to each league's devigged probabilities</span>
+            <h3>Per-Prop Calibration</h3>
+            <span class="analytics-subtitle">Boost/nerf applied to each (league, prop, side) bucket at p=0.60, based on historical hit rate. 1.00x = no adjustment. n = effective sample size for that bucket.</span>
           </div>
-          <div class="table-wrapper">
-            <table>
+          <div class="table-wrapper heatmap-wrapper">
+            <table id="obs-multiplier-table" class="heatmap-table">
               <thead>
                 <tr>
                   <th>League</th>
-                  <th>Shrinkage @ p=0.60</th>
-                  <th>Status</th>
+                  <th>Prop</th>
+                  <th style="text-align:center;">Over</th>
+                  <th style="text-align:center;">Under</th>
                 </tr>
               </thead>
               <tbody id="obs-multiplier-tbody">
-                <tr><td colspan="3" class="empty-msg">Waiting for next hourly calibration refit...</td></tr>
+                <tr><td colspan="4" class="empty-msg">Waiting for next hourly calibration refit...</td></tr>
               </tbody>
             </table>
           </div>

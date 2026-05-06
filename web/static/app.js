@@ -1044,12 +1044,14 @@ function renderCalibrationHeatmap(heat) {
       const expected = (buckets[i].lo + buckets[i].hi) / 2;
       const bg = cellColor(c.actual, expected);
       const pct = (c.actual * 100).toFixed(0) + "%";
+      const n   = Math.round(c.n_eff);
       const title = `Actual ${(c.actual*100).toFixed(1)}% vs expected ${(expected*100).toFixed(0)}%\nn_eff=${c.n_eff}`;
-      return `<td class="heat-cell" style="background:${bg};" title="${title}">${pct}</td>`;
+      return `<td class="heat-cell" style="background:${bg};" title="${title}">${pct} <span class="cal-neff">n=${n}</span></td>`;
     }).join("");
     const overallBg    = cellColor(r.actual, r.expected);
+    const overallN     = Math.round(r.n_eff);
     const overallTitle = `Overall hit rate ${(r.actual*100).toFixed(1)}% vs avg expected ${(r.expected*100).toFixed(1)}% (n_eff=${r.n_eff})`;
-    const overallCell  = `<td class="heat-cell heat-overall" style="background:${overallBg};" title="${overallTitle}">${(r.actual*100).toFixed(0)}%</td>`;
+    const overallCell  = `<td class="heat-cell heat-overall" style="background:${overallBg};" title="${overallTitle}">${(r.actual*100).toFixed(0)}% <span class="cal-neff">n=${overallN}</span></td>`;
     const sideCls   = r.side === "under" ? "side-under" : "side-over";
     const sideLabel = r.side === "under" ? "U" : "O";
     const sideCell  = `<td class="heat-side-cell ${sideCls}" title="${r.side}">${sideLabel}</td>`;
@@ -1291,68 +1293,67 @@ function renderCalibrationCurves(isotonic) {
   }
 }
 
-function renderObservatoryMultipliers(multipliers) {
+function renderObservatoryMultipliers(payload) {
   const tbody = $("obs-multiplier-tbody");
   if (!tbody) return;
 
-  // Normalize: accept both the legacy flat {key: value} shape and the
-  // new {key: {value, calibrated}} shape.
-  const rows = Object.entries(multipliers).map(([key, entry]) => {
-    let value, calibrated;
-    if (entry && typeof entry === "object") {
-      value = Number(entry.value);
-      calibrated = !!entry.calibrated;
-    } else {
-      value = Number(entry);
-      calibrated = true;
-    }
-    return { key, value, calibrated };
-  });
+  const rows   = (payload && payload.rows) || [];
+  const anchor = (payload && payload.anchor) || 0.60;
 
-  if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="3" class="empty-msg">No prop types registered.</td></tr>`;
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-msg">No fitted prop curves yet — needs resolved outcomes.</td></tr>`;
     return;
   }
 
-  // Sort: calibrated rows first by largest absolute correction (either
-  // direction is a meaningful signal), then neutrals alphabetically.
-  rows.sort((a, b) => {
-    if (a.calibrated !== b.calibrated) return a.calibrated ? -1 : 1;
-    if (a.calibrated) return Math.abs(b.value - 1) - Math.abs(a.value - 1);
-    return a.key.localeCompare(b.key);
-  });
+  // Group by league so we can rowspan the league cell, mirroring the heatmap.
+  const byLeague = {};
+  for (const r of rows) {
+    (byLeague[r.league] = byLeague[r.league] || []).push(r);
+  }
 
-  tbody.innerHTML = rows.map(m => {
-    const league = m.key.split("|")[0];
-    const val = m.value;
-    if (!m.calibrated) {
-      return `<tr class="obs-neutral">
-        <td><strong>${league}</strong></td>
-        <td class="line-value">1.00x</td>
-        <td class="obs-neutral-text">Awaiting league data — using global fallback</td>
-      </tr>`;
+  // Cell color: green for upward correction, red for shrinkage, scaled by
+  // |delta| in percentage points (clamped at 8pp for full intensity).
+  const cellColor = (deltaPp) => {
+    const intensity = Math.min(1, Math.abs(deltaPp) / 8);
+    const hue = deltaPp >= 0 ? 140 : 0;
+    return `hsla(${hue}, 70%, 45%, ${0.15 + intensity * 0.55})`;
+  };
+
+  const renderSideCell = (side) => {
+    if (!side || !side.calibrated) {
+      return `<td class="heat-cell heat-empty" title="No fitted curve — falls back to global">1.00x <span class="cal-neff">n=0</span></td>`;
     }
-    // val is calibrated_prob / raw_prob at the anchor: 1.00 = no change,
-    // 0.95 = 5% haircut, 1.04 = 4% upward correction (now possible since
-    // calibrate() no longer caps at raw_prob).
-    const adjPct = Math.round((val - 1) * 100);
-    let strengthClass, strengthText;
-    if (adjPct === 0) {
-      strengthClass = "ev-mid";
-      strengthText  = "No adjustment";
-    } else if (adjPct > 0) {
-      strengthClass = "ev-high";
-      strengthText  = `+${adjPct}% boost`;
-    } else {
-      strengthClass = "ev-low";
-      strengthText  = `${adjPct}% shrinkage`;  // already has minus sign
+    // Multiplier vs the raw devigged probability at the anchor: 1.00 = no
+    // change, 0.95 = 5% nerf, 1.04 = 4% buff. Mirrors the old per-league
+    // display, just bucketed per (league, prop, side).
+    const mult = anchor > 0 ? side.q / anchor : 1.0;
+    const pct  = Math.round((mult - 1) * 100);
+    const n    = Math.round(side.n_eff);
+    const sign = pct > 0 ? "+" : "";
+    const bg   = cellColor(side.delta_pp);
+    const title = `${mult.toFixed(3)}x at raw=${(anchor*100).toFixed(0)}% (${sign}${pct}% ${pct >= 0 ? "boost" : "nerf"}) · n_eff=${side.n_eff}`;
+    return `<td class="heat-cell" style="background:${bg};" title="${title}">${mult.toFixed(2)}x <span class="cal-neff">n=${n}</span></td>`;
+  };
+
+  const html = [];
+  for (const league of Object.keys(byLeague).sort()) {
+    const propRows = byLeague[league].slice().sort((a, b) => a.prop.localeCompare(b.prop));
+    let leagueShown = false;
+    for (const r of propRows) {
+      const leagueCell = leagueShown
+        ? ""
+        : `<td class="heat-league-cell" rowspan="${propRows.length}">${league}</td>`;
+      html.push(
+        `<tr>${leagueCell}` +
+        `<td class="heat-prop-cell">${r.prop}</td>` +
+        renderSideCell(r.over) +
+        renderSideCell(r.under) +
+        `</tr>`
+      );
+      leagueShown = true;
     }
-    return `<tr>
-      <td><strong>${league}</strong></td>
-      <td class="line-value ${strengthClass}">${val.toFixed(2)}x</td>
-      <td class="${strengthClass}">${strengthText}</td>
-    </tr>`;
-  }).join("");
+  }
+  tbody.innerHTML = html.join("");
 }
 
 let _obsFeedCache = [];

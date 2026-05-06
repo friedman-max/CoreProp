@@ -2599,52 +2599,73 @@ def get_observatory_data():
 
 @app.get("/api/observatory/multipliers")
 def get_calibration_map_api():
-    """Per-league calibration summary for the Observatory tab.
+    """Per-(league, prop, side) calibration summary for the Observatory tab.
 
-    Each entry reports the *effective* shrinkage applied at the p=0.60
-    anchor — i.e. the post-Bayesian-shrinkage calibrated probability divided
-    by 0.60. A value of 1.00 means no shrinkage; 0.95 means a 5% haircut,
-    etc. Leagues without any data report `calibrated: false`.
+    For every fitted prop curve, reports the calibrated probability at the
+    DISPLAY_ANCHOR (currently 0.60) — i.e. exactly what `calibrate()` would
+    return for raw_prob = anchor. This is the calibration we *actually*
+    apply on the bet path, surfaced per (league, prop, side) so over and
+    under correction asymmetries are visible.
 
-    The shape matches the legacy multiplier endpoint
-    (`{key: {value, calibrated}}`) so the existing UI renderer keeps working
-    without changes.
+    Shape:
+
+        {
+          "anchor": 0.60,
+          "fitted_at": "...",
+          "rows": [
+            {"league": "NBA", "prop": "Points",
+             "over":  {"q": 0.573, "delta_pp": -2.7, "n_eff": 120.0, "calibrated": true},
+             "under": {"q": 0.612, "delta_pp":  1.2, "n_eff":  95.0, "calibrated": true}}
+          ]
+        }
+
+    A side reports `calibrated: false` when its prop curve is too thin to
+    surface (the apply path then falls through to global, which is still
+    reflected by `q`).
     """
     try:
         from engine.isotonic_calibration import (
             load_isotonic_calibration, _interp, _shrink, DISPLAY_ANCHOR,
         )
-        from engine.constants import PROP_TYPE_MAP
         curves = load_isotonic_calibration()
-
-        # Display-only league shrinkage: the apply path no longer routes through
-        # the league level (prop curves shrink directly toward global), so we
-        # compute the league posterior here purely for the diagnostic chart.
         global_level = curves.get("global")
         q_global = _interp(global_level["curve"], DISPLAY_ANCHOR) if global_level else DISPLAY_ANCHOR
 
-        def _league_ratio(lg: str) -> float:
-            league_level = curves.get("leagues", {}).get(lg)
-            q_league = _shrink(q_global, league_level, DISPLAY_ANCHOR)
-            return (q_league / DISPLAY_ANCHOR) if DISPLAY_ANCHOR > 0 else 1.0
-
-        out: dict = {}
-        for league in sorted(PROP_TYPE_MAP.keys()):
-            key = f"{league}|Calibration @ p={DISPLAY_ANCHOR:.2f}"
-            has_league_curve = curves.get("leagues", {}).get(league) is not None
-            out[key] = {"value": round(_league_ratio(league), 4), "calibrated": bool(has_league_curve)}
-
-        # Surface any fitted league not in PROP_TYPE_MAP (e.g. NCAAF).
-        for league in (curves.get("leagues") or {}).keys():
-            key = f"{league}|Calibration @ p={DISPLAY_ANCHOR:.2f}"
-            if key in out:
+        # Bucket prop curves into rows keyed by (league, prop), with over/under
+        # as siblings. Mirrors the heatmap's pairing so the two panels read
+        # the same way.
+        rows: dict[tuple[str, str], dict] = {}
+        for key, level in (curves.get("props") or {}).items():
+            if not level:
                 continue
-            out[key] = {"value": round(_league_ratio(league), 4), "calibrated": True}
+            parts = key.split("|")
+            if len(parts) != 3:
+                continue
+            league, prop, side = parts
+            if side not in ("over", "under"):
+                continue
+            q = _shrink(q_global, level, DISPLAY_ANCHOR)
+            rows.setdefault((league, prop), {"league": league, "prop": prop,
+                                             "over": None, "under": None})
+            rows[(league, prop)][side] = {
+                "q":          round(q, 4),
+                "delta_pp":   round((q - DISPLAY_ANCHOR) * 100, 2),
+                "n_eff":      round(float(level.get("n_eff") or 0.0), 2),
+                "calibrated": True,
+            }
 
-        return out
+        out_rows = sorted(
+            rows.values(),
+            key=lambda r: (r["league"], r["prop"]),
+        )
+        return {
+            "anchor":    DISPLAY_ANCHOR,
+            "fitted_at": curves.get("fitted_at"),
+            "rows":      out_rows,
+        }
     except Exception as e:
         logger.error("API: calibration fetch error: %s", e)
-        return {}
+        return {"anchor": 0.60, "fitted_at": None, "rows": []}
 
 
 @app.get("/api/calibration/heatmap")
