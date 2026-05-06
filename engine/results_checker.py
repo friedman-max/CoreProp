@@ -45,6 +45,29 @@ GAME_DURATION_MINUTES = {
 
 FUZZY_THRESHOLD = 80   # Strict threshold for name matching
 
+# Tolerance for the actual==line comparison. Lines are quoted in halves or
+# whole numbers, and `actual` for every supported stat is integral or comes
+# from a small integer sum (soccer cards/goals). 1e-9 is comfortably below
+# any meaningful difference but absorbs float-precision noise from arithmetic
+# done in `_compute_stat` (e.g. fantasy-point weighting on integers).
+PUSH_TOLERANCE = 1e-9
+
+
+def grade_leg(actual: float, line: float, side: str) -> str:
+    """Pure grader used after `actual` and `line` are known.
+
+    Returns one of "hit", "miss", or "push". A leg pushes iff `actual`
+    equals `line` (within PUSH_TOLERANCE) — only possible on whole-number
+    PrizePicks lines, since `actual` is always integral. Pushes are written
+    to the DB and treated like DNPs by every downstream consumer (slip P&L,
+    accuracy, calibration ingest)."""
+    side = (side or "").lower()
+    if abs(actual - line) <= PUSH_TOLERANCE:
+        return "push"
+    if side == "over":
+        return "hit" if actual > line else "miss"
+    return "hit" if actual < line else "miss"
+
 
 class ESPNResultsChecker:
     """Checks ESPN box scores and back-fills result + stat_actual in Supabase."""
@@ -165,10 +188,7 @@ class ESPNResultsChecker:
                     )
                 continue
 
-            if actual == line:
-                result = "push"
-            else:
-                result = "hit" if (actual > line if side == "over" else actual < line) else "miss"
+            result = grade_leg(actual, line, side)
 
             try:
                 sid = row.get("slip_id")
@@ -275,10 +295,7 @@ class ESPNResultsChecker:
                         logger.error("Observatory DB update failed: %s", db_exc)
                 continue
 
-            if actual == line:
-                result = "push"
-            else:
-                result = "hit" if (actual > line if side == "over" else actual < line) else "miss"
+            result = grade_leg(actual, line, side)
 
             try:
                 db.table("market_observatory").update({
