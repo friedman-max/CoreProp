@@ -438,28 +438,9 @@
 
       </div>
 
-      <!-- Slips table -->
-      <div class="table-section" style="flex:1;">
-        <div class="table-wrapper">
-          <table id="bt-table">
-            <thead>
-              <tr>
-                <th>Player</th>
-                <th>League</th>
-                <th>Prop Type</th>
-                <th>Line</th>
-                <th>Side</th>
-                <th>True Prob</th>
-                <th>Closing</th>
-                <th>CLV%</th>
-                <th>Game Start</th>
-                <th>Result</th>
-                <th>Actual</th>
-              </tr>
-            </thead>
-            <tbody id="bt-tbody"></tbody>
-          </table>
-        </div>
+      <!-- Slip cards (responsive grid) -->
+      <div class="bt-slips-section">
+        <div id="bt-slips-grid" class="bt-slips-grid"></div>
       </div>
     </div>
 
@@ -618,6 +599,7 @@
           <div class="chart-wrap"><canvas id="chart-slip-mix"></canvas></div>
         </div>
       </div>
+
     </div>
 
     <!-- ── Observatory view ── -->

@@ -1942,15 +1942,17 @@ function loadBacktestCache() {
 }
 
 function renderBacktestSkeleton() {
-  const tbody = $("bt-tbody");
-  if (!tbody) return;
-  // 11 columns in the backtest table (Player, League, Prop Type, Line,
-  // Side, True Prob, Closing, CLV%, Game Start, Result, Actual);
-  // render 8 skeleton rows.
-  const cells = Array.from({ length: 11 })
-    .map((_, i) => `<td><div class="skeleton-bar" style="width:${i === 0 ? 60 : 45}%"></div></td>`)
-    .join("");
-  tbody.innerHTML = Array.from({ length: 8 }).map(() => `<tr class="skeleton-row">${cells}</tr>`).join("");
+  const grid = $("bt-slips-grid");
+  if (!grid) return;
+  const legSkeleton = `<div class="bt-leg-row skeleton-leg">
+      <div class="skeleton-bar" style="width:55%"></div>
+      <div class="skeleton-bar" style="width:30%"></div>
+    </div>`;
+  const cardSkeleton = `<div class="bt-slip-card skeleton-card">
+      <div class="bt-slip-card-header"><div class="skeleton-bar" style="width:40%"></div></div>
+      <div class="bt-slip-card-legs">${legSkeleton.repeat(4)}</div>
+    </div>`;
+  grid.innerHTML = cardSkeleton.repeat(6);
 }
 
 async function fetchBacktest() {
@@ -2094,101 +2096,159 @@ function renderBacktest() {
   $("bt-roi").className = "bt-card-value" + (roiPositive ? " positive" : totalWagered > 0 ? " negative" : "");
 
 
-  // ── Table ──────────────────────────────────────────────────────────────
-  const tbody = $("bt-tbody");
+  // ── Slip cards (responsive grid) ───────────────────────────────────────
+  const grid = $("bt-slips-grid");
 
-  // Paginate by SLIP (not leg) so a slip's legs never straddle a page.
-  // NOTE: `totalSlips` is already declared in the summary block above, so
-  // rename the destructured field to `pagedSlipTotal`.
-  const { paginatedLegs: paginated, totalSlips: pagedSlipTotal, page: clampedPage } =
+  // Paginate by SLIP. We render full slip cards, so use pageSlips directly.
+  const { pageSlips, totalSlips: pagedSlipTotal, page: clampedPage } =
     paginateSlipsForBacktest(slipsFiltered, btState);
   btState.page = clampedPage;
   const totalItems = pagedSlipTotal;
 
-  // renderPagination expects totalItems & pageSize that divide to totalPages.
   renderPagination("bt-pagination", btState, totalItems, renderBacktest);
 
   if (totalItems === 0) {
-    tbody.innerHTML = `<tr><td colspan="20" class="empty-msg">No backtest data yet. Slips will appear here as they are logged.</td></tr>`;
+    grid.innerHTML = `<div class="empty-msg" style="grid-column:1/-1; padding:40px; text-align:center;">No backtest data yet. Slips will appear here as they are logged.</div>`;
     return;
   }
 
-  let prevSlipId = null;
-  tbody.innerHTML = paginated.map(l => {
-    const isFirst = l.slip_id !== prevSlipId;
-    prevSlipId = l.slip_id;
-    const evPct = l.proj_slip_ev_pct != null ? (parseFloat(l.proj_slip_ev_pct) * 100).toFixed(1) + "%" : "";
-    const trueP = l.true_prob != null ? (parseFloat(l.true_prob) * 100).toFixed(1) + "%" : "";
-    const closeP = (l.closing_prob !== undefined && l.closing_prob !== null && l.closing_prob !== "") ? (parseFloat(l.closing_prob) * 100).toFixed(1) + "%" : "—";
-    const clvPctVal = (l.clv_pct !== undefined && l.clv_pct !== null && l.clv_pct !== "") ? parseFloat(l.clv_pct) : null;
-    const clvPctText = clvPctVal !== null ? (clvPctVal > 0 ? "+" : "") + (clvPctVal * 100).toFixed(1) + "%" : "—";
-    const clvCls = clvPctVal !== null ? (clvPctVal > 0 ? "ev-high" : clvPctVal < 0 ? "ev-low" : "") : "";
+  const fmtPct = (v) => v != null && v !== "" ? (parseFloat(v) * 100).toFixed(1) + "%" : "—";
 
-    const resultCls = l.result === "hit" ? "result-hit" : l.result === "miss" ? "result-miss" : l.result === "dnp" ? "result-dnp" : "result-pending";
-    const resultText = l.result || "pending";
-    const gameTime = l.game_start ? new Date(l.game_start).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
-    const ts = l.timestamp ? new Date(l.timestamp).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
+  grid.innerHTML = pageSlips.map(slip => {
+    const first = slip.legs[0] || {};
+    const ts = first.timestamp ? new Date(first.timestamp).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
+    const evPct = first.proj_slip_ev_pct != null ? (parseFloat(first.proj_slip_ev_pct) * 100).toFixed(1) + "%" : "—";
 
-    // Payout cell: only show on the first row of a slip
-    let payoutHtml = "";
-    if (isFirst) {
-      if (l.slip_completed) {
-        const p = l.slip_payout || 0;
-        const cls = p > 1 ? "ev-high" : p > 0 ? "ev-medium" : "ev-low";
-        const hitsLabel = l.slip_hits + "/" + l.n_legs;
-        payoutHtml = `<span class="${cls}" style="font-weight:700;">${p}x</span> <span style="color:var(--text-muted);font-size:11px;">(${hitsLabel})</span>`;
-      } else {
-        payoutHtml = `<span class="result-pending">—</span>`;
-      }
+    let payoutHtml;
+    const isPowerBusted = (first.slip_type || "").toLowerCase() === "power"
+      && slip.legs.some(l => l.result === "miss");
+    if (isPowerBusted && !first.slip_completed) {
+      payoutHtml = `<span class="ev-low" style="font-weight:700;">0x</span> <span class="result-pending">(Pending)</span>`;
+    } else if (first.slip_completed) {
+      const p = first.slip_payout || 0;
+      const cls = p > 1 ? "ev-high" : p > 0 ? "ev-medium" : "ev-low";
+      payoutHtml = `<span class="${cls}" style="font-weight:700;">${p}x</span> <span class="bt-slip-hits">(${first.slip_hits}/${first.n_legs})</span>`;
+    } else {
+      payoutHtml = `<span class="result-pending">Pending</span>`;
     }
 
-    let headerHtml = "";
-    if (isFirst) {
-      headerHtml = `<tr class="slip-header-row">
-        <td colspan="11">
-          <div class="slip-header-content">
-            <button class="btn-delete-slip" data-slip-id="${l.slip_id}" title="Delete this slip">🗑</button>
-            <span class="slip-header-stat">
-              <span class="slip-header-label">Slip</span>
-              <span class="slip-header-id">${l.slip_id}</span>
-            </span>
-            <span class="slip-header-stat">
-              <span class="slip-header-value">${ts}</span>
-            </span>
-            <span class="slip-header-stat">
-              <span class="slip-header-value">${l.slip_type}</span>
-              <span class="slip-header-label">(${l.n_legs} Legs)</span>
-            </span>
-            <span class="slip-header-stat">
-              <span class="slip-header-label">Proj EV</span>
-              <span class="slip-header-value ev-high">${evPct}</span>
-            </span>
-            <span class="slip-header-stat">
-              <span class="slip-header-label">Payout</span>
-              <span class="slip-header-value" style="color:var(--yellow);">${payoutHtml}</span>
-            </span>
-          </div>
-        </td>
-      </tr>`;
-    }
+    const legsHtml = slip.legs.map(l => {
+      const trueP = fmtPct(l.true_prob);
+      const resultKey = (l.result || "pending").toLowerCase();
+      const resultCls = `bt-leg-result result-${resultKey}`;
+      const resultText = (l.result || "pending").toUpperCase();
+      const gameTime = l.game_start ? new Date(l.game_start).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "—";
+      const sideText = (l.side || "").toUpperCase();
+      const sideCls = l.side === "over" ? "side-over" : "side-under";
+      const actual = (l.stat_actual !== null && l.stat_actual !== undefined && l.stat_actual !== "") ? l.stat_actual : "—";
 
-    return headerHtml + `<tr>
-      <td data-label="Player"><strong>${l.player || ""}</strong></td>
-      <td data-label="League"><span class="league-tag league-${(l.league || "").toUpperCase()}">${l.league || ""}</span></td>
-      <td data-label="Prop">${l.prop || ""}</td>
-      <td data-label="Line" class="line-value">${l.line || ""}</td>
-      <td data-label="Side" class="${l.side === "over" ? "side-over" : "side-under"}">${(l.side || "").toUpperCase()}</td>
-      <td data-label="True Prob">${trueP}</td>
-      <td data-label="Close Prob">${closeP}</td>
-      <td data-label="CLV%" class="${clvCls}" style="font-weight:600;">${clvPctText}</td>
-      <td data-label="Game Time">${gameTime}</td>
-      <td data-label="Result"><span class="${resultCls}">${resultText.toUpperCase()}</span></td>
-      <td data-label="Actual">${(l.stat_actual !== null && l.stat_actual !== undefined && l.stat_actual !== "") ? l.stat_actual : "—"}</td>
-    </tr>`;
+      return `<div class="bt-leg-row">
+        <div class="bt-leg-line-1">
+          <span class="bt-leg-player-name">${l.player || ""}</span>
+          <span class="league-tag league-${(l.league || "").toUpperCase()}">${l.league || ""}</span>
+          <span class="bt-leg-true-prob">${trueP}</span>
+          <div class="${resultCls}">${resultText}</div>
+        </div>
+        <div class="bt-leg-line-2">
+          <span class="bt-leg-prop-name">${l.prop || ""}</span>
+          <span class="${sideCls} bt-leg-side">${sideText}</span>
+          <span class="bt-leg-line-num">${l.line || ""}</span>
+          <span class="bt-leg-actual">${actual !== "—" ? "Actual: <b>" + actual + "</b>" : gameTime}</span>
+        </div>
+      </div>`;
+    }).join("");
+
+    return `<div class="bt-slip-card" data-slip-id="${slip.slip_id}">
+      <div class="bt-slip-card-header">
+        <div class="bt-slip-card-title">
+          <span class="bt-slip-type-badge">${first.slip_type || ""}</span>
+          <span class="bt-slip-legs-count">${first.n_legs || slip.legs.length} Legs</span>
+        </div>
+        <div class="bt-slip-card-actions">
+          <button class="btn-place-pp" data-slip-id="${slip.slip_id}" title="Checking availability…" disabled>
+            <span class="pp-btn-icon">▶</span> Place on PrizePicks
+          </button>
+          <button class="btn-delete-slip" data-slip-id="${slip.slip_id}" title="Delete this slip">🗑</button>
+        </div>
+      </div>
+      <div class="bt-slip-card-stats">
+        <div class="bt-slip-stat"><span class="bt-slip-stat-label">Logged</span><span class="bt-slip-stat-value">${ts}</span></div>
+        <div class="bt-slip-stat"><span class="bt-slip-stat-label">Proj EV</span><span class="bt-slip-stat-value ev-high">${evPct}</span></div>
+        <div class="bt-slip-stat"><span class="bt-slip-stat-label">Payout</span><span class="bt-slip-stat-value">${payoutHtml}</span></div>
+      </div>
+      <div class="bt-slip-card-legs">${legsHtml}</div>
+    </div>`;
   }).join("");
 
+  // Wire up Place on PrizePicks buttons — check availability, then handle click
+  grid.querySelectorAll(".btn-place-pp").forEach(btn => {
+    const slipId = btn.dataset.slipId;
+    const slip = pageSlips.find(s => s.slip_id === slipId);
+    if (!slip) return;
+
+    const legs = slip.legs.map(l => ({
+      player: l.player,
+      league: l.league,
+      prop:   l.prop,
+      line:   l.line,
+      side:   l.side,
+    }));
+
+    // Async availability check — runs immediately on render
+    (async () => {
+      try {
+        const resp = await apiFetch("/api/check-pp-availability", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ legs }),
+        });
+        if (!resp.ok) throw new Error("check failed");
+        const data = await resp.json();
+        if (data.available) {
+          btn.disabled = false;
+          btn.title = "All legs available on PrizePicks — click to build slip";
+          btn.classList.add("pp-btn-ready");
+        } else {
+          const missing = (data.legs || []).filter(l => !l.available).map(l => `${l.player} ${l.prop}`).join(", ");
+          btn.disabled = true;
+          btn.title = `Not available: ${missing || "some legs"}`;
+          btn.classList.add("pp-btn-unavailable");
+        }
+      } catch {
+        btn.disabled = true;
+        btn.title = "Could not check availability";
+      }
+    })();
+
+    // Click: store pending slip then open PrizePicks
+    btn.addEventListener("click", async () => {
+      const slip = pageSlips.find(s => s.slip_id === slipId);
+      if (!slip) return;
+      btn.disabled = true;
+      btn.textContent = "Opening…";
+      try {
+        const resp = await apiFetch("/api/pending-slip", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            legs: slip.legs.map(l => ({ player: l.player, league: l.league, prop: l.prop, line: l.line, side: l.side })),
+            slip_type: (slip.legs[0] || {}).slip_type || "Power",
+            n_legs: slip.legs.length,
+          }),
+        });
+        if (!resp.ok) throw new Error("store failed");
+        window.open("https://app.prizepicks.com/board", "_blank");
+      } catch (err) {
+        showToast("Could not store pending slip: " + err.message, "error");
+      }
+      // Restore button state
+      btn.innerHTML = '<span class="pp-btn-icon">▶</span> Place on PrizePicks';
+      btn.disabled = false;
+    });
+  });
+
   // Wire up delete buttons
-  tbody.querySelectorAll(".btn-delete-slip").forEach(btn => {
+  grid.querySelectorAll(".btn-delete-slip").forEach(btn => {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const slipId = btn.dataset.slipId;
@@ -2347,7 +2407,7 @@ const _charts = { pnl: null, cal: null, slipMix: null, calibrationCurves: null }
 
 // Client-side cache of the last analytics payload so a page refresh (or tab
 // re-click) can paint instantly from memory while the server response arrives.
-const ANALYTICS_CACHE_KEY = "coreprop_analytics_cache_v1";
+const ANALYTICS_CACHE_KEY = "coreprop_analytics_cache_v2";
 const ANALYTICS_CACHE_FRESH_SEC = 300;
 
 function saveAnalyticsCache(data) {
@@ -2568,7 +2628,6 @@ function renderAnalyticsExtras(data) {
   _renderSlipMixChart(data);
   _renderPerfTable("league-perf-tbody", data.by_league || []);
   _renderPerfTable("prop-perf-tbody",   data.by_prop   || []);
-
   // PnL summary line
   const subtitle = $("pnl-summary");
   if (subtitle) {
