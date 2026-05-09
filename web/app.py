@@ -32,6 +32,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.jobstores.base import JobLookupError
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from engine.ev_calculator import reload_calibration
@@ -68,6 +69,17 @@ app = FastAPI(title="CoreProp")
 # compress 6-10x with gzip, dramatically reducing network time and response-
 # buffer memory on the 512MB tier.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+# CORS: allow the CoreProp Chrome extension to call the pending-slip endpoints
+# from app.prizepicks.com origin. Content scripts in MV3 inherit the page's
+# origin and are subject to CORS, so we need explicit Access-Control headers.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://app.prizepicks.com", "https://prizepicks.com"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
 
 # Results checker / CLV singletons (stateless, run in background via service role)
 _results_checker  = ESPNResultsChecker()
@@ -117,6 +129,13 @@ _payload_cache = {
     "etag":      None,   # str | None
 }
 _payload_lock = threading.Lock()
+
+# Pending PrizePicks slip store: user_id -> (slip_data, expires_at monotonic).
+# Written by POST /api/pending-slip (authenticated), read by GET /api/pending-slip
+# (called by the browser extension from app.prizepicks.com — no auth required).
+_pending_slips: dict = {}
+_pending_slips_lock = threading.Lock()
+_PENDING_SLIP_TTL_SEC = 300.0  # 5-minute TTL
 
 # Per-user analytics cache. /api/analytics is the slowest endpoint — it does
 # 3 legs-table scans + 1 slips scan, all unbounded. But the underlying data
@@ -510,6 +529,19 @@ def _run_pipeline_body():
         # keeps the last good snapshot (avoids clearing screens on a bad cycle).
         if not pp_lines and not fd_props and not dk_props and not pin_props:
             logger.warning("Pipeline: all scrapers returned 0 — preserving previous state.")
+            with _lock:
+                _state["scrape_errors"] = errors
+            return
+
+        # PrizePicks is the source of truth for what we match against. If PP
+        # alone fails (transient rate-limit / connection rejection), we must
+        # NOT wipe the previous match graph — there's nothing to match against
+        # without PP. Preserve the last good state and try again next cycle.
+        if not pp_lines:
+            logger.warning(
+                "Pipeline: PrizePicks returned 0 lines (other books OK) — "
+                "preserving previous state to avoid wiping the match graph."
+            )
             with _lock:
                 _state["scrape_errors"] = errors
             return
@@ -2146,6 +2178,123 @@ def get_analytics(user: dict = Depends(get_current_user)):
     with _analytics_cache_lock:
         _analytics_cache[uid] = (now, data)
     return data
+
+
+# ---------------------------------------------------------------------------
+# PrizePicks 1-click slip endpoints
+# ---------------------------------------------------------------------------
+
+class PendingSlipRequest(BaseModel):
+    legs: list[dict]   # [{player, league, prop, line, side}, ...]
+    slip_type: str = "Power"
+    n_legs: int = 6
+
+
+@app.post("/api/pending-slip")
+def set_pending_slip(req: PendingSlipRequest, user: dict = Depends(get_current_user)):
+    """Store a slip for the PP browser extension to pick up. TTL: 5 min."""
+    uid = user["id"]
+    expires_at = time.monotonic() + _PENDING_SLIP_TTL_SEC
+    payload = {
+        "user_id": uid,
+        "slip_type": req.slip_type,
+        "n_legs": req.n_legs,
+        "legs": req.legs,
+    }
+    with _pending_slips_lock:
+        _pending_slips[uid] = (payload, expires_at)
+    return {"ok": True}
+
+
+@app.get("/api/pending-slip")
+def get_pending_slip():
+    """
+    Return the most recent non-expired pending slip.
+    No auth — called by the Chrome extension from app.prizepicks.com context.
+    Returns {} when nothing is pending.
+    """
+    now = time.monotonic()
+    with _pending_slips_lock:
+        # Evict expired entries
+        expired = [k for k, (_, exp) in _pending_slips.items() if exp < now]
+        for k in expired:
+            del _pending_slips[k]
+        if not _pending_slips:
+            return {}
+        # Return the most recently stored slip
+        latest = max(_pending_slips.items(), key=lambda kv: kv[1][1])
+        slip_data, _ = latest[1]
+        return slip_data
+
+
+@app.delete("/api/pending-slip")
+def clear_pending_slip():
+    """Extension calls this after successfully building the slip on PP."""
+    with _pending_slips_lock:
+        _pending_slips.clear()
+    return {"ok": True}
+
+
+class PPAvailabilityRequest(BaseModel):
+    legs: list[dict]
+
+
+@app.post("/api/check-pp-availability")
+def check_pp_availability(req: PPAvailabilityRequest):
+    """
+    Given a list of leg dicts [{player, prop, line, side}], check whether
+    each leg is currently available on PrizePicks (matches live pp_lines).
+    Returns {available: bool, legs: [{...leg, available: bool, matched_line: float|null}]}.
+    """
+    from rapidfuzz import fuzz
+
+    legs = req.legs
+    if not legs:
+        return {"available": False, "legs": []}
+
+    with _lock:
+        pp_lines = list(_state.get("pp_lines") or [])
+
+    results = []
+    all_available = True
+
+    for leg in legs:
+        player = (leg.get("player") or "").strip()
+        prop   = (leg.get("prop") or "").strip().lower()
+        line   = float(leg.get("line") or 0)
+        side   = (leg.get("side") or "").strip().lower()
+
+        best_score = 0
+        matched_line = None
+
+        for pp in pp_lines:
+            pp_player = (pp.get("player_name") or "").strip()
+            pp_stat   = (pp.get("stat_type") or "").strip().lower()
+            pp_line   = float(pp.get("line_score") or 0)
+            pp_side   = (pp.get("side") or "").strip().lower()
+
+            # Stat type must match (case-insensitive)
+            if pp_stat != prop:
+                continue
+            # Side must match the requested side
+            if pp_side != side:
+                continue
+            # Line must be exact
+            if abs(pp_line - line) > 0.01:
+                continue
+
+            score = fuzz.ratio(player.lower(), pp_player.lower())
+            if score > best_score:
+                best_score = score
+                matched_line = pp_line
+
+        available = best_score >= 85
+        if not available:
+            all_available = False
+
+        results.append({**leg, "available": available, "matched_line": matched_line, "match_score": best_score})
+
+    return {"available": all_available, "legs": results}
 
 
 # ---------------------------------------------------------------------------

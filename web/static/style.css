@@ -917,6 +917,301 @@ tr.slip-header-row:hover {
   opacity: 0.7;
 }
 
+/* ── Sportsbook Accuracy table ── */
+.brier-good { color: var(--green, #2ecc71); font-weight: 700; }
+.brier-mid  { color: var(--yellow, #f1c40f); font-weight: 600; }
+.brier-bad  { color: var(--red, #e74c3c); font-weight: 700; }
+.prob-over  { color: var(--green, #2ecc71); font-weight: 600; }
+.prob-under { color: var(--red, #e74c3c); font-weight: 600; }
+
+/* ── Backtest slip-card grid (responsive) ── */
+.bt-slips-section {
+  flex: 1;
+  padding: 12px 16px 24px;
+  overflow-y: auto;
+}
+
+.bt-slips-grid {
+  display: grid;
+  gap: 16px;
+  /* Auto-fit cards: at least 360px wide. On large screens this yields 2-3
+     columns; on tablets, 1-2; on mobile, always 1. */
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+}
+
+.bt-slip-card {
+  background: var(--card-bg, #1a1f2b);
+  border: 1px solid var(--border, #2a3142);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.bt-slip-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--border, #2a3142);
+  padding-bottom: 8px;
+}
+
+.bt-slip-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.bt-slip-type-badge {
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--accent-bg, #2a3142);
+  color: var(--accent, #4f8cff);
+}
+
+.bt-slip-legs-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.bt-slip-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Place on PrizePicks button */
+.btn-place-pp {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2a3142);
+  background: var(--surface, #1a2035);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.5;
+  transition: background 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.btn-place-pp .pp-btn-icon { font-size: 9px; }
+.btn-place-pp.pp-btn-ready {
+  opacity: 1;
+  cursor: pointer;
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.4);
+  color: var(--green, #22c55e);
+}
+.btn-place-pp.pp-btn-ready:hover {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: var(--green, #22c55e);
+}
+.btn-place-pp.pp-btn-unavailable {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.bt-slip-card .btn-delete-slip {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+.bt-slip-card .btn-delete-slip:hover {
+  background: rgba(255, 60, 60, 0.1);
+  color: var(--red, #ff5c5c);
+}
+
+.bt-slip-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12px;
+}
+
+.bt-slip-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bt-slip-stat-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+
+.bt-slip-stat-value {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.bt-slip-hits {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  margin-left: 4px;
+}
+
+.bt-slip-card-legs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bt-leg-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle, #232938);
+}
+
+/* Line 1: Player name (big) — League chip — True Prob — Result pill */
+.bt-leg-line-1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.bt-leg-player-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary, #e8edf5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.bt-leg-true-prob {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary, #e8edf5);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.bt-leg-true-prob::before {
+  content: "TP ";
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+/* Line 2: Prop type (big) — SIDE — Line number (big) — Actual / Game time */
+.bt-leg-line-2 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+}
+
+.bt-leg-prop-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary, #b8c1d4);
+  white-space: nowrap;
+}
+
+.bt-leg-side {
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.bt-leg-line-num {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary, #e8edf5);
+  font-variant-numeric: tabular-nums;
+}
+
+.bt-leg-actual {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.bt-leg-actual b {
+  color: var(--text-primary, #e8edf5);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.bt-leg-row .league-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+.bt-leg-result {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.bt-leg-result.result-hit {
+  background: rgba(46, 204, 113, 0.15);
+  color: var(--green, #2ecc71);
+}
+.bt-leg-result.result-miss {
+  background: rgba(231, 76, 60, 0.15);
+  color: var(--red, #e74c3c);
+}
+.bt-leg-result.result-pending {
+  background: rgba(241, 196, 15, 0.15);
+  color: var(--yellow, #f1c40f);
+}
+.bt-leg-result.result-dnp {
+  background: rgba(160, 160, 160, 0.12);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.skeleton-leg {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+@media (max-width: 600px) {
+  .bt-slips-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .bt-slip-card {
+    padding: 12px;
+  }
+  .bt-leg-meta {
+    gap: 8px;
+  }
+}
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {
   width: 6px;
