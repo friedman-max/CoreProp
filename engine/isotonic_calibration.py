@@ -28,8 +28,12 @@ Design notes:
      size scales with #(distinct buckets), not with history depth — no row
      limits needed.
 
-Output is conservative: `calibrated_prob ≤ raw_prob` always — calibration
-shrinks but never inflates.
+Output is symmetric: a (league, prop) bucket whose empirical hit rate
+exceeds the raw devig probability at high n_eff is allowed to push the
+calibrated number above raw. The Bayesian shrinkage (κ=SHRINKAGE_KAPPA)
+is the only guardrail against overfitting — thin buckets pool toward
+global, well-attested ones move the number meaningfully in either
+direction. Stake-sizing (quarter-Kelly) is where variance control lives.
 """
 from __future__ import annotations
 
@@ -353,18 +357,25 @@ def _save_state(state: dict) -> None:
         logger.warning("IsotonicCalibration: state mirror failed: %s", exc)
 
 
-def _ingest_into_state(state: dict, league: str, prop: str,
+def _ingest_into_state(state: dict, league: str, prop: str, side: str,
                        x: float, y: float, w: float, *, is_outcome: bool = False) -> None:
-    """Add one observation to all three hierarchy levels."""
+    """Add one observation to all three hierarchy levels.
+
+    The (league, prop) bucket is keyed by side too — over and under tend to
+    be miscalibrated asymmetrically (books often shade one side for variance
+    protection), and pooling them washes the signal out. `side` must be
+    "over" or "under"; anything else (legacy "both", missing, etc.) is
+    skipped at the prop level but still contributes to global and league.
+    """
     if w <= 0 or not (0.0 < x < 1.0):
         return
     _accum_bin_set(state["global"], x, y, w, is_outcome=is_outcome)
     _accum(state["leagues"], league, x, y, w, is_outcome=is_outcome)
-    if prop:
-        _accum(state["props"], f"{league}|{prop}", x, y, w, is_outcome=is_outcome)
+    if prop and side in ("over", "under"):
+        _accum(state["props"], f"{league}|{prop}|{side}", x, y, w, is_outcome=is_outcome)
 
 
-def _ingest_resolved_row(state: dict, league: str, prop: str,
+def _ingest_resolved_row(state: dict, league: str, prop: str, side: str,
                          true_prob: float, result: str,
                          closing_prob: float | None,
                          resolved_at: datetime | None,
@@ -380,9 +391,9 @@ def _ingest_resolved_row(state: dict, league: str, prop: str,
 
     r = (result or "").lower()
     if r in ("hit", "won", "win"):
-        _ingest_into_state(state, league, prop, true_prob, 1.0, rec_w, is_outcome=True)
+        _ingest_into_state(state, league, prop, side, true_prob, 1.0, rec_w, is_outcome=True)
     elif r in ("miss", "lost", "loss"):
-        _ingest_into_state(state, league, prop, true_prob, 0.0, rec_w, is_outcome=True)
+        _ingest_into_state(state, league, prop, side, true_prob, 0.0, rec_w, is_outcome=True)
     # push/dnp contribute no outcome signal but do contribute CLV below.
 
     if closing_prob is not None:
@@ -391,7 +402,7 @@ def _ingest_resolved_row(state: dict, league: str, prop: str,
         except (ValueError, TypeError):
             cp = None
         if cp is not None and 0.0 < cp < 1.0:
-            _ingest_into_state(state, league, prop, true_prob, cp,
+            _ingest_into_state(state, league, prop, side, true_prob, cp,
                                rec_w * CLV_OBSERVATION_WEIGHT, is_outcome=False)
 
 
@@ -492,8 +503,8 @@ def update_isotonic_calibration() -> dict | None:
                 _decay_stats(state["props"], decay)
 
     # ── 2. Cursor pulls ─────────────────────────────────────────────────
-    obs_cols  = "league, prop, true_prob, result, closing_prob, resolved_at"
-    legs_cols = "league, prop, true_prob, result, closing_prob, resolved_at"
+    obs_cols  = "league, prop, side, true_prob, result, closing_prob, resolved_at"
+    legs_cols = "league, prop, side, true_prob, result, closing_prob, resolved_at"
     obs_rows  = _pull_resolved_since(db, "market_observatory", state.get("hwm_observatory"), obs_cols)
     leg_rows  = _pull_resolved_since(db, "legs", state.get("hwm_legs"), legs_cols)
 
@@ -514,7 +525,8 @@ def update_isotonic_calibration() -> dict | None:
             continue
         ra = r.get("resolved_at")
         ra_dt = _parse_dt(ra)
-        _ingest_resolved_row(state, league, r.get("prop") or "", tp,
+        _ingest_resolved_row(state, league, r.get("prop") or "",
+                             (r.get("side") or "").lower(), tp,
                              r.get("result") or "", r.get("closing_prob"),
                              ra_dt, now)
         n_ingested += 1
@@ -533,7 +545,8 @@ def update_isotonic_calibration() -> dict | None:
             continue
         ra = r.get("resolved_at")
         ra_dt = _parse_dt(ra)
-        _ingest_resolved_row(state, league, r.get("prop") or "", tp,
+        _ingest_resolved_row(state, league, r.get("prop") or "",
+                             (r.get("side") or "").lower(), tp,
                              r.get("result") or "", r.get("closing_prob"),
                              ra_dt, now)
         n_ingested += 1
@@ -590,35 +603,36 @@ HEATMAP_BUCKETS: list[tuple[float, float]] = [
     (round(lo / 100, 2), round((lo + 5) / 100, 2)) for lo in range(30, 100, 5)
 ]
 
-# Minimum recency-weighted outcome n_eff for a (league, prop) row to qualify
-# for the heatmap. Below this the per-bucket actuals are just noise — a row
-# of "33%, 100%, 0%, 80%" from a handful of resolved legs is misleading. 30
-# matches the rule-of-thumb threshold for a per-prop hit rate to mean
-# anything above sampling variance at the 5% bucket scale.
-HEATMAP_MIN_ROW_N_EFF = 30.0
+# Minimum recency-weighted outcome n_eff for a (league, prop, side) row to
+# qualify for the heatmap. Set low so something useful surfaces while data
+# accumulates — buckets within a row still need MIN_BUCKET_N_EFF to render
+# individually, so per-cell noise is already controlled. The row threshold
+# only gates whether we show the row at all.
+HEATMAP_MIN_ROW_N_EFF = 5.0
+
+# How far back the DB-direct fallback reaches when state is empty or still
+# in the legacy 2-key format. Matches the calibrator's recency lookback.
+HEATMAP_FALLBACK_LOOKBACK_DAYS = RECENCY_LOOKBACK_DAYS
 
 
-def export_heatmap() -> dict:
-    """Build the per-(league, prop) × expected-probability heatmap from the
-    incremental state. Cell value is the recency-weighted actual hit rate
-    of that prop within that 5% expected-probability band, using only
-    outcome observations (CLV signal is excluded so the number is a true
-    hit rate, not a closing-line blend)."""
-    state = _load_state()
-
+def _heatmap_from_state(state: dict) -> list[dict]:
+    """Render heatmap rows directly from the incremental sufficient
+    statistics. Only emits 3-key (league|prop|side) entries; legacy 2-key
+    entries are skipped because they conflate over/under."""
     rows: list[dict] = []
-    for league_prop, by_bin in (state.get("props") or {}).items():
-        if "|" not in league_prop:
+    for bucket_key, by_bin in (state.get("props") or {}).items():
+        parts = bucket_key.split("|")
+        if len(parts) != 3:
             continue
-        league, prop = league_prop.split("|", 1)
+        league, prop, side = parts
+        if side not in ("over", "under"):
+            continue
 
         cells: list[dict | None] = []
         total_n_eff = 0.0
         total_hits_w = 0.0
-        total_expected_w = 0.0  # Σ expected_prob × n_eff, for an avg-expected anchor
+        total_expected_w = 0.0
         for lo, hi in HEATMAP_BUCKETS:
-            # Sum the outcome-only accumulators for the 0.5% bins that fall
-            # inside this 5% display bucket.
             bin_lo = int(round(lo * _BIN_COUNT))
             bin_hi = int(round(hi * _BIN_COUNT))
             sum_w = 0.0
@@ -644,15 +658,155 @@ def export_heatmap() -> dict:
         rows.append({
             "league":   league,
             "prop":     prop,
+            "side":     side,
             "n_eff":    round(total_n_eff, 2),
-            # Overall recency-weighted hit rate across all qualifying buckets,
-            # plus the volume-weighted average expected probability so the UI
-            # can show the gap between what the model expects and what the
-            # prop actually delivers without picking an arbitrary anchor.
             "actual":   round(total_hits_w / total_n_eff, 4),
             "expected": round(total_expected_w / total_n_eff, 4),
             "cells":    cells,
         })
+    return rows
+
+
+def _heatmap_from_db() -> list[dict]:
+    """DB-direct fallback used when the incremental state is empty or only
+    contains legacy 2-key entries (e.g., right after the per-side split was
+    introduced, before any new outcomes have resolved into the 3-key state).
+
+    Pulls resolved outcomes from `legs` and `market_observatory` within the
+    recency lookback window, applies the same exponential decay used by the
+    calibrator, and aggregates by (league, prop, side, expected-bucket).
+    Returns a list shaped identically to `_heatmap_from_state` so callers
+    are agnostic to the source.
+    """
+    db = get_db()
+    if not db:
+        return []
+
+    now = datetime.now(timezone.utc)
+    cutoff_iso = (now - timedelta(days=HEATMAP_FALLBACK_LOOKBACK_DAYS)).isoformat()
+
+    # {(league, prop, side): {bucket_idx: [sum_w, sum_hits_w]}}
+    aggs: dict[tuple[str, str, str], dict[int, list[float]]] = {}
+
+    def _bucket_idx(prob: float) -> int | None:
+        for i, (lo, hi) in enumerate(HEATMAP_BUCKETS):
+            if lo <= prob < hi:
+                return i
+        return None
+
+    def _ingest_rows(table: str) -> None:
+        page_size = 1000
+        offset = 0
+        while True:
+            try:
+                q = (db.table(table)
+                       .select("league, prop, side, true_prob, result, resolved_at")
+                       .gte("resolved_at", cutoff_iso)
+                       .order("resolved_at", desc=False)
+                       .range(offset, offset + page_size - 1))
+                res = q.execute()
+            except Exception as exc:
+                logger.warning(
+                    "Heatmap fallback: %s pull failed (resolved_at missing?): %s",
+                    table, exc,
+                )
+                return
+            chunk = res.data or []
+            for r in chunk:
+                league = (r.get("league") or "").strip()
+                prop = (r.get("prop") or "").strip()
+                side = (r.get("side") or "").lower()
+                if not league or not prop or side not in ("over", "under"):
+                    continue
+                try:
+                    tp = float(r.get("true_prob") or 0.0)
+                except (ValueError, TypeError):
+                    continue
+                if not (0.0 < tp < 1.0):
+                    continue
+                idx = _bucket_idx(tp)
+                if idx is None:
+                    continue
+                result = (r.get("result") or "").lower()
+                if result in ("hit", "won", "win"):
+                    y = 1.0
+                elif result in ("miss", "lost", "loss"):
+                    y = 0.0
+                else:
+                    # push/dnp/pending: no outcome signal for the heatmap
+                    continue
+                w = _recency_weight(_parse_dt(r.get("resolved_at")), now)
+                if w <= 0:
+                    continue
+                key = (league, prop, side)
+                cells = aggs.setdefault(key, {})
+                cell = cells.setdefault(idx, [0.0, 0.0])
+                cell[0] += w
+                cell[1] += y * w
+            if len(chunk) < page_size:
+                break
+            offset += page_size
+
+    _ingest_rows("legs")
+    _ingest_rows("market_observatory")
+
+    rows: list[dict] = []
+    for (league, prop, side), per_bucket in aggs.items():
+        cells: list[dict | None] = []
+        total_n_eff = 0.0
+        total_hits_w = 0.0
+        total_expected_w = 0.0
+        for i, (lo, hi) in enumerate(HEATMAP_BUCKETS):
+            cell = per_bucket.get(i)
+            if cell and cell[0] >= MIN_BUCKET_N_EFF:
+                sum_w, sum_hits_w = cell
+                cells.append({
+                    "actual":   round(sum_hits_w / sum_w, 4),
+                    "expected": round((lo + hi) / 2, 4),
+                    "n_eff":    round(sum_w, 2),
+                })
+                total_n_eff += sum_w
+                total_hits_w += sum_hits_w
+                total_expected_w += ((lo + hi) / 2) * sum_w
+            else:
+                cells.append(None)
+        if total_n_eff < HEATMAP_MIN_ROW_N_EFF:
+            continue
+        rows.append({
+            "league":   league,
+            "prop":     prop,
+            "side":     side,
+            "n_eff":    round(total_n_eff, 2),
+            "actual":   round(total_hits_w / total_n_eff, 4),
+            "expected": round(total_expected_w / total_n_eff, 4),
+            "cells":    cells,
+        })
+    return rows
+
+
+def export_heatmap() -> dict:
+    """Build the per-(league, prop, side) × expected-probability heatmap.
+
+    Primary path uses the incremental sufficient-statistics state so the
+    cell values match the recency weighting the calibrator itself sees.
+    When the state has no qualifying 3-key entries — which happens
+    immediately after the legacy 2-key state is in place but before any
+    new outcomes have resolved into per-side buckets — we fall back to a
+    DB-direct aggregation over the same recency window. This keeps the
+    panel populated rather than silently empty during state transitions
+    or fresh deploys.
+    """
+    state = _load_state()
+    rows = _heatmap_from_state(state)
+    source = "state"
+
+    if not rows:
+        try:
+            rows = _heatmap_from_db()
+            if rows:
+                source = "db-fallback"
+        except Exception as exc:
+            logger.warning("Heatmap DB fallback failed: %s", exc)
 
     rows.sort(key=lambda r: (r["league"], -r["n_eff"]))
 
@@ -663,6 +817,7 @@ def export_heatmap() -> dict:
         ],
         "rows": rows,
         "fitted_at": state.get("fitted_at"),
+        "source": source,
     }
 
 
@@ -765,33 +920,42 @@ def _shrink(parent_q: float, level: dict | None, raw_prob: float) -> float:
     return alpha * q_child + (1.0 - alpha) * parent_q
 
 
-def calibrate(curves: dict, league: str | None, prop: str | None, raw_prob: float) -> float:
+def calibrate(curves: dict, league: str | None, prop: str | None,
+              side: str | None, raw_prob: float) -> float:
     """
     Apply isotonic calibration with Bayesian shrinkage.
 
-    Hierarchy on the apply path is global → (league, prop). The league level
-    is fitted and surfaced for diagnostics (Observatory chart) but is
+    Hierarchy on the apply path is global → (league, prop, side). The league
+    level is fitted and surfaced for diagnostics (Observatory chart) but is
     intentionally NOT a parent of the prop level: we choose props, not
     leagues, so a bad prop type must not get lifted by the league's overall
     performance, and a good prop must not get dragged down by a poor league.
 
-    Conservative cap: the calibrated probability never exceeds the raw input.
+    The bucket key includes `side` because miscalibration tends to be
+    side-asymmetric — books often shade one side for variance protection,
+    so over and under hit at meaningfully different rates and pooling them
+    averages out the signal. When `side` is missing or not "over"/"under"
+    we fall through to global directly (the legacy 2-key bucket is no
+    longer consulted).
+
+    Symmetric output: when empirical hit rate exceeds the raw devig number
+    at high n_eff, the result is allowed to exceed raw_prob. The Bayesian
+    shrinkage (κ=SHRINKAGE_KAPPA) is the only guardrail; variance control
+    belongs in stake sizing (quarter-Kelly), not the point estimate.
     """
     if not curves:
         return raw_prob
 
     global_level = curves.get("global")
     if not global_level or not global_level.get("curve"):
-        # No fits at all yet — pass through.
         return raw_prob
     q_global = _interp(global_level["curve"], raw_prob)
 
-    # (league, prop) shrinks directly toward global, bypassing the league
-    # posterior so prop performance is the dominant signal at apply time.
+    # (league, prop, side) shrinks directly toward global, bypassing the
+    # league posterior so prop performance is the dominant signal at apply
+    # time and side asymmetry isn't washed out.
     prop_level = None
-    if league and prop:
-        prop_level = curves.get("props", {}).get(f"{league}|{prop}")
-    q_prop = _shrink(q_global, prop_level, raw_prob)
-
-    # Conservative cap: never inflate.
-    return min(q_prop, raw_prob)
+    side_norm = (side or "").lower()
+    if league and prop and side_norm in ("over", "under"):
+        prop_level = curves.get("props", {}).get(f"{league}|{prop}|{side_norm}")
+    return _shrink(q_global, prop_level, raw_prob)

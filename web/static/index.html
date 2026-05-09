@@ -9,7 +9,7 @@
   <!-- Preconnect: start TLS handshakes early -->
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <link rel="preconnect" href="https://gxufqwvmkgjaqudqaapw.supabase.co" crossorigin />
-  <link rel="stylesheet" href="/static/style.css?v=109" />
+  <link rel="stylesheet" href="/static/style.css?v=116" />
   <!-- Preload Chart.js so it arrives alongside app.js instead of blocking the
        Analytics tab when the user first clicks into it. -->
   <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" crossorigin />
@@ -478,94 +478,22 @@
         </div>
       </div>
 
-      <!-- Row: cumulative bankroll / ROI chart -->
+      <!-- Row: cumulative P&L chart with date-range selector -->
       <div class="analytics-row">
         <div class="analytics-panel">
           <div class="analytics-panel-header">
             <h3>Cumulative P&amp;L (Unit Stake / Slip)</h3>
             <span class="analytics-subtitle" id="pnl-summary">—</span>
           </div>
+          <div class="pnl-range-selector" id="pnl-range-selector" role="tablist" aria-label="Date range">
+            <button type="button" class="pnl-range-btn" data-range="1D">1D</button>
+            <button type="button" class="pnl-range-btn" data-range="1W">1W</button>
+            <button type="button" class="pnl-range-btn active" data-range="1M">1M</button>
+            <button type="button" class="pnl-range-btn" data-range="3M">3M</button>
+            <button type="button" class="pnl-range-btn" data-range="1Y">1Y</button>
+            <button type="button" class="pnl-range-btn" data-range="MAX">MAX</button>
+          </div>
           <div class="chart-wrap"><canvas id="chart-pnl"></canvas></div>
-        </div>
-      </div>
-
-      <!-- Row: calibration plot + calibration table side by side -->
-      <div class="analytics-row">
-        <div class="analytics-panel">
-          <div class="analytics-panel-header">
-            <h3>Calibration Plot (Predicted vs Actual)</h3>
-            <span class="analytics-subtitle">Diagonal = perfectly calibrated</span>
-          </div>
-          <div class="chart-wrap"><canvas id="chart-cal"></canvas></div>
-        </div>
-        <div class="analytics-panel">
-          <div class="analytics-panel-header">
-            <h3>Calibration Buckets (50–79%)</h3>
-          </div>
-          <div class="table-wrapper">
-            <table id="cal-table">
-              <thead>
-                <tr>
-                  <th>Range</th>
-                  <th>Predicted</th>
-                  <th>Actual</th>
-                  <th>Count</th>
-                  <th>Delta</th>
-                </tr>
-              </thead>
-              <tbody id="cal-tbody">
-                <tr><td colspan="5" class="empty-msg">No resolved legs yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- Row: league breakdown + prop-type breakdown -->
-      <div class="analytics-row">
-        <div class="analytics-panel">
-          <div class="analytics-panel-header">
-            <h3>Performance by League</h3>
-          </div>
-          <div class="table-wrapper">
-            <table id="league-perf-table">
-              <thead>
-                <tr>
-                  <th>League</th>
-                  <th>Legs</th>
-                  <th>Hits</th>
-                  <th>Actual</th>
-                  <th>Expected</th>
-                  <th>Δ</th>
-                </tr>
-              </thead>
-              <tbody id="league-perf-tbody">
-                <tr><td colspan="6" class="empty-msg">No resolved legs yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <div class="analytics-panel">
-          <div class="analytics-panel-header">
-            <h3>Top Prop Types (by volume)</h3>
-          </div>
-          <div class="table-wrapper">
-            <table id="prop-perf-table">
-              <thead>
-                <tr>
-                  <th>Prop Type</th>
-                  <th>Legs</th>
-                  <th>Hits</th>
-                  <th>Actual</th>
-                  <th>Expected</th>
-                  <th>Δ</th>
-                </tr>
-              </thead>
-              <tbody id="prop-perf-tbody">
-                <tr><td colspan="6" class="empty-msg">No resolved legs yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
         </div>
       </div>
 
@@ -591,13 +519,6 @@
             </div>
           </div>
         </div>
-        <div class="analytics-panel">
-          <div class="analytics-panel-header">
-            <h3>Slip Outcome Mix</h3>
-            <span class="analytics-subtitle" id="slip-mix-subtitle">—</span>
-          </div>
-          <div class="chart-wrap"><canvas id="chart-slip-mix"></canvas></div>
-        </div>
       </div>
 
     </div>
@@ -607,20 +528,21 @@
       <div class="analytics-row">
         <div class="analytics-panel">
           <div class="analytics-panel-header">
-            <h3>Per-League Calibration</h3>
-            <span class="analytics-subtitle">Isotonic shrinkage applied to each league's devigged probabilities</span>
+            <h3>Per-Prop Calibration</h3>
+            <span class="analytics-subtitle">Boost/nerf applied to each (league, prop, side) bucket at p=0.60, based on historical hit rate. 1.00x = no adjustment. n = effective sample size for that bucket.</span>
           </div>
-          <div class="table-wrapper">
-            <table>
+          <div class="table-wrapper heatmap-wrapper">
+            <table id="obs-multiplier-table" class="heatmap-table">
               <thead>
                 <tr>
                   <th>League</th>
-                  <th>Shrinkage @ p=0.60</th>
-                  <th>Status</th>
+                  <th>Prop</th>
+                  <th style="text-align:center;">Over</th>
+                  <th style="text-align:center;">Under</th>
                 </tr>
               </thead>
               <tbody id="obs-multiplier-tbody">
-                <tr><td colspan="3" class="empty-msg">Waiting for next hourly calibration refit...</td></tr>
+                <tr><td colspan="4" class="empty-msg">Waiting for next hourly calibration refit...</td></tr>
               </tbody>
             </table>
           </div>
@@ -646,7 +568,7 @@
             <h3>Prop Hit Rate by Expected Probability</h3>
             <span class="analytics-subtitle">Rows: prop type (grouped by league). Columns: expected hit rate in 5% bands. Cells: actual recency-weighted hit rate (outcome-only).</span>
           </div>
-          <div class="table-wrapper">
+          <div class="table-wrapper heatmap-wrapper">
             <table id="cal-heatmap-table" class="heatmap-table">
               <thead id="cal-heatmap-thead"></thead>
               <tbody id="cal-heatmap-tbody">
@@ -750,8 +672,8 @@
             </div>
             <div class="control-group">
               <label>Stat Types <span style="font-size:0.85em; opacity:0.6;">(none = all)</span></label>
-              <div id="sb-prop-chips" style="max-height: 240px; overflow-y: auto;">
-                <div style="font-size:0.8em; opacity:0.5; padding:8px 0;">Loading…</div>
+              <div id="sb-prop-chips" class="sb-prop-chips">
+                <div class="sb-prop-chips-msg">Loading…</div>
               </div>
             </div>
             <div class="control-group">
@@ -862,7 +784,7 @@
 
 
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script defer src="/static/app.js?v=29"></script>
+  <script defer src="/static/app.js?v=34"></script>
 </body>
 
 </html>

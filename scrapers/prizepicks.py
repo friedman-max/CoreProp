@@ -150,42 +150,26 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
                 except (ValueError, TypeError):
                     continue
 
-                if line_score % 1 == 0:
-                    # Whole number → split into restrictive Over/Under lines
-                    all_lines.append(
-                        PrizePickLine(
-                            league=league_name,
-                            player_name=player_name,
-                            stat_type=stat_type,
-                            line_score=line_score + 0.5,
-                            player_id=player_id,
-                            start_time=start_time or "",
-                            side="over",
-                        )
+                # Keep the raw line_score regardless of whether it's a half
+                # (no push possible) or a whole number (push possible at
+                # actual == line). PrizePicks refunds push legs and reduces
+                # the effective slip size by one — that's how the resolver
+                # in `engine/results_checker.py` and the slip P&L in
+                # `engine/calibration.py::evaluate_analytics` already treat
+                # the "actual == line" case, so the only thing we need to do
+                # here is stop fabricating offset half-lines that don't exist
+                # on the actual board (and don't match book lines either).
+                all_lines.append(
+                    PrizePickLine(
+                        league=league_name,
+                        player_name=player_name,
+                        stat_type=stat_type,
+                        line_score=line_score,
+                        player_id=player_id,
+                        start_time=start_time or "",
+                        side="both",
                     )
-                    all_lines.append(
-                        PrizePickLine(
-                            league=league_name,
-                            player_name=player_name,
-                            stat_type=stat_type,
-                            line_score=line_score - 0.5,
-                            player_id=player_id,
-                            start_time=start_time or "",
-                            side="under",
-                        )
-                    )
-                else:
-                    all_lines.append(
-                        PrizePickLine(
-                            league=league_name,
-                            player_name=player_name,
-                            stat_type=stat_type,
-                            line_score=line_score,
-                            player_id=player_id,
-                            start_time=start_time or "",
-                            side="both",
-                        )
-                    )
+                )
 
             # ── Pagination ───────────────────────────────────────────────
             meta = data.get("meta", {})

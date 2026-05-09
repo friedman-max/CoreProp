@@ -75,9 +75,11 @@ class BetResult:
         self.pp_player_id = pp_player_id
         self.start_time = start_time
 
-        # Hierarchical isotonic calibration (global → league → prop) with
-        # Bayesian shrinkage; conservative cap so the output never inflates.
-        calibrated_prob = min(_apply_isotonic(_isotonic_curves, league, prop_type, true_prob), 0.999)
+        # Per-side isotonic calibration (global → (league, prop, side)) with
+        # Bayesian shrinkage. The 0.999 ceiling is a numerical guard to keep
+        # log-loss / EV math finite, not a "never inflate" cap — the curve
+        # itself is allowed to push above raw_prob when the data warrants.
+        calibrated_prob = min(_apply_isotonic(_isotonic_curves, league, prop_type, side, true_prob), 0.999)
         self.true_prob = calibrated_prob
         self.true_odds = prob_to_american(calibrated_prob)
 
