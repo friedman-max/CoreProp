@@ -3225,9 +3225,11 @@ async function runSandbox() {
     const slipStrategy = $("sb-select-strategy") ? $("sb-select-strategy").value : "live_replay";
     const perGameCapEl = $("sb-per-game-cap");
     const perGameCap = perGameCapEl ? Math.max(1, Math.min(6, parseInt(perGameCapEl.value) || 3)) : 3;
-    const startDate = $("sb-start-date") && $("sb-start-date").value ? $("sb-start-date").value : null;
-    const endDate   = $("sb-end-date")   && $("sb-end-date").value   ? $("sb-end-date").value   : null;
     const bootstrap = $("sb-bootstrap") ? $("sb-bootstrap").checked : true;
+    // Date range is now a chart-level toggle (#sb-range-selector). Server
+    // always simulates over MAX history; the client filters in memory on
+    // toggle clicks. Reset to MAX so a re-run shows the new full data.
+    _sbRange = "MAX";
 
     btnRun.disabled = true;
     btnRun.textContent = "Simulating...";
@@ -3246,8 +3248,6 @@ async function runSandbox() {
                 included_props: includedProps,
                 slip_strategy: slipStrategy,
                 per_game_cap: perGameCap,
-                start_date: startDate,
-                end_date: endDate,
                 bootstrap,
             })
         });
@@ -3299,8 +3299,17 @@ async function optimizeSandboxThreshold() {
         const slipStrategy = $("sb-select-strategy") ? $("sb-select-strategy").value : "live_replay";
         const perGameCapEl = $("sb-per-game-cap");
         const perGameCap = perGameCapEl ? Math.max(1, Math.min(6, parseInt(perGameCapEl.value) || 3)) : 3;
-        const startDate = $("sb-start-date") && $("sb-start-date").value ? $("sb-start-date").value : null;
-        const endDate   = $("sb-end-date")   && $("sb-end-date").value   ? $("sb-end-date").value   : null;
+
+        // Derive a date range for the optimizer from the currently-selected
+        // chart toggle so "Auto-Optimize" optimizes the same window the user
+        // is looking at. MAX → no date bounds.
+        const _rangeMs = _SB_RANGES[_sbRange];
+        let startDate = null, endDate = null;
+        if (_rangeMs != null) {
+            const cutoff = new Date(Date.now() - _rangeMs);
+            startDate = cutoff.toISOString().slice(0, 10);   // YYYY-MM-DD
+            endDate   = new Date().toISOString().slice(0, 10);
+        }
 
         const res = await apiFetch("/api/sandbox/optimize", {
             method: "POST",
@@ -3359,6 +3368,237 @@ async function optimizeSandboxThreshold() {
         btnOpt.disabled = false;
         btnOpt.textContent = originalText;
     }
+}
+
+// ── Sandbox date-range toggle ─────────────────────────────────────────
+// Server returns the full simulation; the client filters in memory on
+// toggle clicks so MAX→3M→1W is instant. CIs are only valid on MAX
+// (the server bootstrapped the full set), so they're hidden on smaller
+// ranges to avoid implying precision the resampled data doesn't have.
+
+const _SB_RANGES = {
+  "1D":  86400000,
+  "1W":  7   * 86400000,
+  "1M":  30  * 86400000,
+  "3M":  90  * 86400000,
+  "1Y":  365 * 86400000,
+  "MAX": null,
+};
+let _sbRange = "MAX";
+let _sbFullData = null;     // unfiltered server response
+let _sbRangeBound = false;
+
+function _bindSbRangeSelector() {
+    if (_sbRangeBound) return;
+    const root = document.getElementById("sb-range-selector");
+    if (!root) return;
+    root.addEventListener("click", (e) => {
+        const btn = e.target.closest(".pnl-range-btn");
+        if (!btn || !root.contains(btn)) return;
+        const r = btn.dataset.range;
+        if (!r || !(r in _SB_RANGES)) return;
+        _sbRange = r;
+        root.querySelectorAll(".pnl-range-btn").forEach(b =>
+            b.classList.toggle("active", b === btn));
+        if (_sbFullData) {
+            renderSandboxResults(_filterSandboxData(_sbFullData, _sbRange));
+        }
+    });
+    _sbRangeBound = true;
+}
+
+// Filter cached server data by a chart-level date range. Recomputes
+// every aggregate (summary, equity_curve, drawdown_curve, rolling,
+// monthly, breakdowns) from the in-window slips so the cards and the
+// chart can never disagree. Funnel stays as-is (it describes the
+// pre-slip-formation pipeline). Bootstrap CIs are removed from the
+// summary because resampling a sub-window in the browser would be
+// inconsistent with the server's CI methodology.
+function _filterSandboxData(data, rangeKey) {
+    if (!data) return data;
+    const ms = _SB_RANGES[rangeKey];
+    if (ms == null) {
+        // MAX — return the original payload, with a label tag so the
+        // renderer knows CIs are valid here.
+        return Object.assign({}, data, { _sbRange: "MAX" });
+    }
+    const cutoff = Date.now() - ms;
+    const slips = (data.slips || []).filter(s => {
+        const t = new Date(s.timestamp).getTime();
+        return Number.isFinite(t) && t >= cutoff;
+    });
+
+    // Summary recomputed from the filtered slips.
+    const betSlips = slips.filter(s => (s.bet_size || 0) > 0);
+    const totalBet = betSlips.reduce((sum, s) => sum + (s.bet_size || 0), 0);
+    const totalProfit = slips.reduce((sum, s) => sum + (s.profit || 0), 0);
+    const wins = betSlips.filter(s => (s.payout || 0) > (s.bet_size || 0)).length;
+    const roiPct = totalBet > 0 ? (totalProfit / totalBet) * 100 : 0;
+    const winRatePct = betSlips.length ? (wins / betSlips.length) * 100 : 0;
+
+    // Equity + drawdown rebuilt in chronological order.
+    const sorted = [...slips].sort((a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    const equity = [];
+    const drawdown = [];
+    let runningCum = 0;
+    let peak = 0;
+    let runningBank = 0;
+    let maxDdPct = 0;
+    for (const s of sorted) {
+        runningCum += s.profit || 0;
+        equity.push({ x: s.timestamp, y: Math.round(runningCum * 100) / 100 });
+        runningBank += s.profit || 0;
+        if (runningBank > peak) peak = runningBank;
+        // Use peak-relative drawdown like the server does. Bankroll baseline
+        // 0 means we report drawdowns as $ off peak — close enough for the
+        // visual; the dollar value matters more than the % at chart-zoom level.
+        const ddPct = peak > 0 ? ((peak - runningBank) / peak) * 100 : 0;
+        if (ddPct > maxDdPct) maxDdPct = ddPct;
+        drawdown.push({ x: s.timestamp, y: Math.round(ddPct * 1000) / 1000 });
+    }
+
+    // Rolling window — same sizing rule as the server.
+    const window = Math.max(20, Math.min(100, Math.floor(sorted.length / 10) || 20));
+    const rolling = [];
+    for (let i = 0; i < sorted.length; i++) {
+        const lo = Math.max(0, i - window + 1);
+        const wnd = sorted.slice(lo, i + 1);
+        const wbet = wnd.reduce((sum, s) => sum + (s.bet_size || 0), 0);
+        const wprof = wnd.reduce((sum, s) => sum + (s.profit || 0), 0);
+        const wndBet = wnd.filter(s => (s.bet_size || 0) > 0);
+        const wWins = wndBet.filter(s => (s.payout || 0) > (s.bet_size || 0)).length;
+        rolling.push({
+            x: wnd[wnd.length - 1].timestamp,
+            roi: wbet > 0 ? Math.round((wprof / wbet) * 10000) / 100 : 0,
+            win_rate: wndBet.length ? Math.round((wWins / wndBet.length) * 10000) / 100 : 0,
+        });
+    }
+
+    // Monthly bucket recomputed over the in-window slips. Keys are
+    // YYYY-MM in the user's local timezone — same as the server uses
+    // pandas UTC strftime for, close enough for display purposes.
+    const monthlyMap = {};
+    for (const s of slips) {
+        const d = new Date(s.timestamp);
+        if (!Number.isFinite(d.getTime())) continue;
+        const key = d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+        const b = monthlyMap[key] = monthlyMap[key] || {
+            month: key, slips: 0, bet: 0, profit: 0, bet_slips: 0, wins: 0,
+        };
+        b.slips++;
+        b.bet += s.bet_size || 0;
+        b.profit += s.profit || 0;
+        if ((s.bet_size || 0) > 0) {
+            b.bet_slips++;
+            if ((s.payout || 0) > (s.bet_size || 0)) b.wins++;
+        }
+    }
+    const monthly = Object.keys(monthlyMap).sort().map(k => {
+        const b = monthlyMap[k];
+        const roi = b.bet > 0 ? (b.profit / b.bet) * 100 : 0;
+        const wr  = b.bet_slips > 0 ? (b.wins / b.bet_slips) * 100 : 0;
+        return {
+            month: b.month, slips: b.slips,
+            bet: Math.round(b.bet * 100) / 100,
+            profit: Math.round(b.profit * 100) / 100,
+            roi_pct: Math.round(roi * 100) / 100,
+            win_rate_pct: Math.round(wr * 100) / 100,
+        };
+    });
+
+    // Breakdowns recomputed (no CI on filtered slices — CI is server-side
+    // and only valid for the full data the server actually saw).
+    const breakdowns = _recomputeSandboxBreakdowns(slips);
+
+    return {
+        summary: {
+            total_slips: slips.length,
+            bet_slips: betSlips.length,
+            total_bet: Math.round(totalBet * 100) / 100,
+            total_profit: Math.round(totalProfit * 100) / 100,
+            roi_pct: Math.round(roiPct * 100) / 100,
+            win_rate_pct: Math.round(winRatePct * 100) / 100,
+            max_drawdown_pct: Math.round(maxDdPct * 100) / 100,
+            rolling_window: window,
+            ci: {},  // intentionally empty on a filtered slice
+        },
+        equity_curve: equity,
+        drawdown_curve: drawdown,
+        rolling: rolling,
+        monthly: monthly,
+        breakdowns: breakdowns,
+        funnel: data.funnel,   // pre-slip funnel, unchanged
+        slips: slips,
+        _sbRange: rangeKey,
+    };
+}
+
+// Mirror of strategy_tester._build_breakdowns, simplified for client use.
+function _recomputeSandboxBreakdowns(slips) {
+    const MIN_BUCKET = 20;
+    const byLeague = {};
+    const byHits   = {};
+    const byStat   = {};
+
+    for (const s of slips) {
+        const wasBet = (s.bet_size || 0) > 0;
+        const isWin  = wasBet && (s.payout || 0) > (s.bet_size || 0);
+
+        const lg = s.league || "Unknown";
+        let b = byLeague[lg] = byLeague[lg] || { slips: 0, bet_slips: 0, bet: 0, profit: 0, wins: 0 };
+        b.slips++; b.bet += s.bet_size || 0; b.profit += s.profit || 0;
+        if (wasBet) { b.bet_slips++; if (isWin) b.wins++; }
+
+        const h = parseInt(s.hits) || 0;
+        b = byHits[h] = byHits[h] || { slips: 0, bet_slips: 0, bet: 0, profit: 0, wins: 0 };
+        b.slips++; b.bet += s.bet_size || 0; b.profit += s.profit || 0;
+        if (wasBet) { b.bet_slips++; if (isWin) b.wins++; }
+
+        const perLegBet = s.n_legs ? (s.bet_size || 0) / s.n_legs : 0;
+        const perLegProf = s.n_legs ? (s.profit || 0) / s.n_legs : 0;
+        for (const leg of (s.legs || [])) {
+            const prop = (leg.prop || "Unknown").trim() || "Unknown";
+            const sb = byStat[prop] = byStat[prop] || { legs: 0, bet: 0, profit: 0, hits: 0 };
+            sb.legs++; sb.bet += perLegBet; sb.profit += perLegProf;
+            if (leg.result === "hit") sb.hits++;
+        }
+    }
+
+    const finalizeSlipGroup = (d, key) => Object.entries(d).map(([k, v]) => {
+        const roi = v.bet > 0 ? (v.profit / v.bet) * 100 : 0;
+        const wr  = v.bet_slips > 0 ? (v.wins / v.bet_slips) * 100 : 0;
+        const row = {
+            slips: v.slips,
+            bet: Math.round(v.bet * 100) / 100,
+            profit: Math.round(v.profit * 100) / 100,
+            roi_pct: Math.round(roi * 100) / 100,
+            win_rate_pct: Math.round(wr * 100) / 100,
+            is_thin: v.slips < MIN_BUCKET,
+        };
+        row[key] = key === "hits" ? parseInt(k) : k;
+        return row;
+    }).sort((a, b) => b.profit - a.profit);
+
+    const finalizeStat = () => Object.entries(byStat).map(([prop, v]) => {
+        const roi = v.bet > 0 ? (v.profit / v.bet) * 100 : 0;
+        const wr  = v.legs > 0 ? (v.hits / v.legs) * 100 : 0;
+        return {
+            stat_type: prop,
+            slips: v.legs,
+            bet: Math.round(v.bet * 100) / 100,
+            profit: Math.round(v.profit * 100) / 100,
+            roi_pct: Math.round(roi * 100) / 100,
+            win_rate_pct: Math.round(wr * 100) / 100,
+            is_thin: v.legs < MIN_BUCKET,
+        };
+    }).sort((a, b) => b.profit - a.profit);
+
+    return {
+        by_league: finalizeSlipGroup(byLeague, "league"),
+        by_hits:   finalizeSlipGroup(byHits, "hits"),
+        by_stat:   finalizeStat(),
+    };
 }
 
 function _ciSpan(ci) {
@@ -3431,6 +3671,24 @@ function _renderSandboxFunnel(funnel) {
 }
 
 function renderSandboxResults(data) {
+    // Cache the *unfiltered* server response on first render so the
+    // date-range toggle can re-derive views without another network round
+    // trip. A toggle click hands a filtered view back into this function
+    // (carrying _sbRange), so we gate the cache update to skip those.
+    if (!data._sbRange) {
+        _sbFullData = data;
+    }
+
+    // Make the chart-level range selector visible after the first run
+    // and bind its click handler exactly once.
+    const rangeRoot = document.getElementById("sb-range-selector");
+    if (rangeRoot) {
+        rangeRoot.style.display = "flex";
+        rangeRoot.querySelectorAll(".pnl-range-btn").forEach(b =>
+            b.classList.toggle("active", b.dataset.range === _sbRange));
+    }
+    _bindSbRangeSelector();
+
     const s = data.summary;
     const ci = s.ci || {};
     $("sb-metrics").style.display = "flex";

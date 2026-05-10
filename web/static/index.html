@@ -726,16 +726,6 @@
               <input type="number" id="sb-per-game-cap" min="1" max="6" step="1" value="3" />
             </div>
             <div class="control-group">
-              <label>Date Range
-                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Restrict the simulation to game starts within this UTC range. Leave blank for all history.">ⓘ</span>
-              </label>
-              <div style="display:flex; gap:6px; align-items:center;">
-                <input type="date" id="sb-start-date" style="flex:1;" />
-                <span style="opacity:0.5;">→</span>
-                <input type="date" id="sb-end-date" style="flex:1;" />
-              </div>
-            </div>
-            <div class="control-group">
               <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text); cursor: pointer;">
                 <input type="checkbox" id="sb-use-kelly" checked style="width: 16px; height: 16px; cursor: pointer;" />
                 Use Kelly Sizing
@@ -758,6 +748,14 @@
             <div class="analytics-panel-header">
               <h3>Cumulative Performance</h3>
               <span class="analytics-subtitle" id="sb-subtitle">Historical ROI based on your strategy</span>
+            </div>
+            <div class="pnl-range-selector" id="sb-range-selector" role="tablist" aria-label="Date range" style="display:none;">
+              <button type="button" class="pnl-range-btn" data-range="1D">1D</button>
+              <button type="button" class="pnl-range-btn" data-range="1W">1W</button>
+              <button type="button" class="pnl-range-btn" data-range="1M">1M</button>
+              <button type="button" class="pnl-range-btn" data-range="3M">3M</button>
+              <button type="button" class="pnl-range-btn" data-range="1Y">1Y</button>
+              <button type="button" class="pnl-range-btn active" data-range="MAX">MAX</button>
             </div>
             <div class="chart-wrap" style="height:300px;"><canvas id="chart-sandbox-equity"></canvas></div>
           </div>
