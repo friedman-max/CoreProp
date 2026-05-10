@@ -709,10 +709,44 @@
               </select>
             </div>
             <div class="control-group">
+              <label>Slip-Construction Strategy
+                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="live_replay mirrors the production BacktestLogger (EV-sorted, per-game cap, player-game dedup). top_ev / top_ev_capped trade off correlation control vs raw EV. top_prob is the legacy v1 behavior for comparison.">ⓘ</span>
+              </label>
+              <select id="sb-select-strategy">
+                <option value="live_replay" selected>Live System Replay</option>
+                <option value="top_ev_capped">Top EV (per-game cap)</option>
+                <option value="top_ev">Top EV (no cap)</option>
+                <option value="top_prob">Top Probability (legacy v1)</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label>Per-Game Cap
+                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Maximum legs from the same (league, game date) within a slip. Production system uses 3.">ⓘ</span>
+              </label>
+              <input type="number" id="sb-per-game-cap" min="1" max="6" step="1" value="3" />
+            </div>
+            <div class="control-group">
+              <label>Date Range
+                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Restrict the simulation to game starts within this UTC range. Leave blank for all history.">ⓘ</span>
+              </label>
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input type="date" id="sb-start-date" style="flex:1;" />
+                <span style="opacity:0.5;">→</span>
+                <input type="date" id="sb-end-date" style="flex:1;" />
+              </div>
+            </div>
+            <div class="control-group">
               <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text); cursor: pointer;">
                 <input type="checkbox" id="sb-use-kelly" checked style="width: 16px; height: 16px; cursor: pointer;" />
                 Use Kelly Sizing
                 <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Mathematically optimal sizing based on EV and bankroll. Slips with negative Expected Value will be bet at $0.00, resulting in flat lines on the graph.">ⓘ</span>
+              </label>
+            </div>
+            <div class="control-group">
+              <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text); cursor: pointer;">
+                <input type="checkbox" id="sb-bootstrap" checked style="width: 16px; height: 16px; cursor: pointer;" />
+                Show Confidence Intervals
+                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Bootstrap (N=500) the slip set to compute 95% CIs on ROI, win rate, and drawdown. Off saves ~1s on large datasets.">ⓘ</span>
               </label>
             </div>
             <button class="btn btn-accent btn-full" id="btn-run-sandbox" style="margin-top:20px;">Run Simulation</button>
@@ -742,6 +776,30 @@
                 <span class="analytics-subtitle" id="sb-rolling-subtitle">Window: —</span>
               </div>
               <div class="chart-wrap" style="height:200px;"><canvas id="chart-sandbox-rolling"></canvas></div>
+            </div>
+          </div>
+
+          <div id="sb-monthly" style="display:none;">
+            <div class="analytics-panel-header">
+              <h3>Monthly Performance</h3>
+              <span class="analytics-subtitle">ROI / win rate per calendar month — watch for performance decay over time.</span>
+            </div>
+            <div class="table-wrapper" style="max-height:240px; overflow:auto;">
+              <table><thead><tr>
+                <th>Month</th><th style="text-align:right;">Slips</th><th style="text-align:right;">Bet</th><th style="text-align:right;">Profit</th><th style="text-align:right;">ROI %</th><th style="text-align:right;">Win %</th>
+              </tr></thead><tbody id="sb-monthly-tbody"></tbody></table>
+            </div>
+          </div>
+
+          <div id="sb-funnel" style="display:none;">
+            <div class="analytics-panel-header">
+              <h3>Filter Funnel</h3>
+              <span class="analytics-subtitle">How many observations survived each filter step. If the slip count is low, this tells you which filter culled the rest.</span>
+            </div>
+            <div class="table-wrapper" style="max-height:240px; overflow:auto;">
+              <table><thead><tr>
+                <th>Stage</th><th style="text-align:right;">Count</th>
+              </tr></thead><tbody id="sb-funnel-tbody"></tbody></table>
             </div>
           </div>
 

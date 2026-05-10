@@ -3220,6 +3220,15 @@ async function runSandbox() {
     const slipType = $("sb-select-type").value;
     const useKelly = $("sb-use-kelly") ? $("sb-use-kelly").checked : false;
 
+    // v2 controls — fall back to safe defaults if the element isn't on the page
+    // (older index.html cached by browser).
+    const slipStrategy = $("sb-select-strategy") ? $("sb-select-strategy").value : "live_replay";
+    const perGameCapEl = $("sb-per-game-cap");
+    const perGameCap = perGameCapEl ? Math.max(1, Math.min(6, parseInt(perGameCapEl.value) || 3)) : 3;
+    const startDate = $("sb-start-date") && $("sb-start-date").value ? $("sb-start-date").value : null;
+    const endDate   = $("sb-end-date")   && $("sb-end-date").value   ? $("sb-end-date").value   : null;
+    const bootstrap = $("sb-bootstrap") ? $("sb-bootstrap").checked : true;
+
     btnRun.disabled = true;
     btnRun.textContent = "Simulating...";
 
@@ -3234,7 +3243,12 @@ async function runSandbox() {
                 slip_type: slipType,
                 bet_size: 1.0,
                 use_kelly: useKelly,
-                included_props: includedProps
+                included_props: includedProps,
+                slip_strategy: slipStrategy,
+                per_game_cap: perGameCap,
+                start_date: startDate,
+                end_date: endDate,
+                bootstrap,
             })
         });
 
@@ -3282,6 +3296,12 @@ async function optimizeSandboxThreshold() {
     }
 
     try {
+        const slipStrategy = $("sb-select-strategy") ? $("sb-select-strategy").value : "live_replay";
+        const perGameCapEl = $("sb-per-game-cap");
+        const perGameCap = perGameCapEl ? Math.max(1, Math.min(6, parseInt(perGameCapEl.value) || 3)) : 3;
+        const startDate = $("sb-start-date") && $("sb-start-date").value ? $("sb-start-date").value : null;
+        const endDate   = $("sb-end-date")   && $("sb-end-date").value   ? $("sb-end-date").value   : null;
+
         const res = await apiFetch("/api/sandbox/optimize", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -3291,7 +3311,11 @@ async function optimizeSandboxThreshold() {
                 slip_type: slipType,
                 bet_size: 1.0,
                 use_kelly: useKelly,
-                included_props: includedProps
+                included_props: includedProps,
+                slip_strategy: slipStrategy,
+                per_game_cap: perGameCap,
+                start_date: startDate,
+                end_date: endDate,
             })
         });
 
@@ -3337,16 +3361,90 @@ async function optimizeSandboxThreshold() {
     }
 }
 
+function _ciSpan(ci) {
+    if (!ci) return "";
+    return ` <span style="font-size:0.55em; opacity:0.7; vertical-align:middle;">[${ci.lo}, ${ci.hi}]</span>`;
+}
+
+function _renderSandboxMonthly(monthly) {
+    const panel = $("sb-monthly");
+    const tbody = $("sb-monthly-tbody");
+    if (!panel || !tbody) return;
+    if (!monthly || !monthly.length) {
+        panel.style.display = "none";
+        tbody.innerHTML = "";
+        return;
+    }
+    panel.style.display = "block";
+    const sign = v => (v >= 0 ? "positive" : "negative");
+    const fmtPct = v => (v == null ? "—" : v.toFixed(2) + "%");
+    tbody.innerHTML = monthly.map(m => `
+        <tr>
+          <td>${escapeHtml(m.month)}</td>
+          <td style="text-align:right;">${m.slips}</td>
+          <td style="text-align:right;">${fmt.dollar(m.bet)}</td>
+          <td style="text-align:right;" class="${sign(m.profit)}">${fmt.dollar(m.profit)}</td>
+          <td style="text-align:right;" class="${sign(m.roi_pct)}">${fmtPct(m.roi_pct)}</td>
+          <td style="text-align:right;">${fmtPct(m.win_rate_pct)}</td>
+        </tr>
+    `).join('');
+}
+
+// Stages we expose, in display order. Anything missing on the response is
+// silently skipped — keeps the table tidy on a partial-funnel response
+// (e.g., when the run errored out early).
+const _SB_FUNNEL_LABELS = [
+    ["rows_pulled",            "Rows pulled from observatory"],
+    ["after_game_start_parse", "→ with valid game_start"],
+    ["after_date_filter",      "→ inside date range"],
+    ["after_prop_filter",      "→ matching prop filters"],
+    ["after_calibration",      "→ with calibrated probability"],
+    ["after_min_prob",         "→ above min_prob threshold"],
+    ["distinct_slates",        "Distinct slates (calendar days)"],
+    ["slates_with_qualifying", "Slates that produced ≥1 slip"],
+    ["slates_without_full_slip", "Slates without enough legs to fill a slip"],
+    ["slips_formed",           "Slips formed"],
+    ["push_legs_in_slips",     "  · of which push legs"],
+    ["dnp_legs_in_slips",      "  · of which DNP legs"],
+];
+
+function _renderSandboxFunnel(funnel) {
+    const panel = $("sb-funnel");
+    const tbody = $("sb-funnel-tbody");
+    if (!panel || !tbody) return;
+    if (!funnel || !Object.keys(funnel).length) {
+        panel.style.display = "none";
+        tbody.innerHTML = "";
+        return;
+    }
+    panel.style.display = "block";
+    const rows = _SB_FUNNEL_LABELS
+        .filter(([k]) => k in funnel)
+        .map(([k, label]) => `
+          <tr>
+            <td>${escapeHtml(label)}</td>
+            <td style="text-align:right;">${funnel[k]}</td>
+          </tr>
+        `)
+        .join('');
+    tbody.innerHTML = rows;
+}
+
 function renderSandboxResults(data) {
     const s = data.summary;
+    const ci = s.ci || {};
     $("sb-metrics").style.display = "flex";
     $("sb-metric-slips").textContent = s.total_slips;
     $("sb-metric-profit").textContent = fmt.dollar(s.total_profit);
     $("sb-metric-profit").className = "bt-card-value " + (s.total_profit >= 0 ? "positive" : "negative");
-    $("sb-metric-roi").textContent = s.roi_pct + "%";
+    $("sb-metric-roi").innerHTML = s.roi_pct + "%" + _ciSpan(ci.roi_pct);
     $("sb-metric-roi").className = "bt-card-value " + (s.roi_pct >= 0 ? "positive" : "negative");
-    $("sb-metric-winrate").textContent = s.win_rate_pct + "%";
+    $("sb-metric-winrate").innerHTML = s.win_rate_pct + "%" + _ciSpan(ci.win_rate_pct);
     $("sb-metric-drawdown").textContent = s.max_drawdown_pct + "%";
+
+    // Render monthly + funnel diagnostics.
+    _renderSandboxMonthly(data.monthly || []);
+    _renderSandboxFunnel(data.funnel || {});
 
     sandboxLastSlips = data.slips || [];
 
@@ -3480,27 +3578,36 @@ function renderSandboxResults(data) {
         $("sb-breakdowns").style.display = "flex";
     }
 
+    // Helpers for breakdown rows: greyed if thin, inline CI on ROI when present.
+    const thinStyle = ' style="opacity:0.5;" title="Sample too small to be statistically meaningful (< 20 slips). Treat the numbers as directional, not predictive."';
+    const roiCell = (r) => {
+        const sciHtml = (r.ci && r.ci.roi_pct) ? _ciSpan(r.ci.roi_pct) : "";
+        return `<td style="text-align:right;" class="${sign(r.roi_pct)}">${pct(r.roi_pct)}${sciHtml}</td>`;
+    };
+
     if (bd.by_stat) {
-        $("sb-breakdown-stat").innerHTML = bd.by_stat.map(r => `
-            <tr>
-              <td>${escapeHtml(r.stat_type)}</td>
+        $("sb-breakdown-stat").innerHTML = bd.by_stat.map(r => {
+            const ts = r.is_thin ? thinStyle : "";
+            return `<tr${ts}>
+              <td>${escapeHtml(r.stat_type)}${r.is_thin ? ' <span style="font-size:0.85em; opacity:0.7;">(thin)</span>' : ''}</td>
               <td style="text-align:right;">${r.slips}</td>
               <td style="text-align:right;">${pct(r.win_rate_pct)}</td>
-              <td style="text-align:right;" class="${sign(r.roi_pct)}">${pct(r.roi_pct)}</td>
+              ${roiCell(r)}
               <td style="text-align:right;" class="${sign(r.profit)}">${fmt.dollar(r.profit)}</td>
-            </tr>
-        `).join('');
+            </tr>`;
+        }).join('');
     }
     if (bd.by_league) {
-        $("sb-breakdown-league").innerHTML = bd.by_league.map(r => `
-            <tr>
-              <td>${escapeHtml(r.league)}</td>
+        $("sb-breakdown-league").innerHTML = bd.by_league.map(r => {
+            const ts = r.is_thin ? thinStyle : "";
+            return `<tr${ts}>
+              <td>${escapeHtml(r.league)}${r.is_thin ? ' <span style="font-size:0.85em; opacity:0.7;">(thin)</span>' : ''}</td>
               <td style="text-align:right;">${r.slips}</td>
               <td style="text-align:right;">${pct(r.win_rate_pct)}</td>
-              <td style="text-align:right;" class="${sign(r.roi_pct)}">${pct(r.roi_pct)}</td>
+              ${roiCell(r)}
               <td style="text-align:right;" class="${sign(r.profit)}">${fmt.dollar(r.profit)}</td>
-            </tr>
-        `).join('');
+            </tr>`;
+        }).join('');
     }
     if (bd.by_hits) {
         const sortedHits = [...bd.by_hits].sort((a, b) => b.hits - a.hits);

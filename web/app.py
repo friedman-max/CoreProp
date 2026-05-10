@@ -1730,6 +1730,14 @@ class SandboxRequest(BaseModel):
     bet_size:       float     = 1.0
     use_kelly:      bool      = False
     included_props: list[str] = []
+    # v2 fields. Defaults reproduce v1 behavior except slip_strategy,
+    # which defaults to "live_replay" so the headline numbers reflect what
+    # the production system would actually have done.
+    slip_strategy:  str       = "live_replay"
+    per_game_cap:   int       = 3
+    start_date:     Optional[str] = None      # YYYY-MM-DD
+    end_date:       Optional[str] = None
+    bootstrap:      bool      = True
 
 @app.get("/api/sandbox/stat-types")
 def list_sandbox_stat_types(user: dict = Depends(get_current_user)):
@@ -1775,37 +1783,39 @@ def list_sandbox_stat_types(user: dict = Depends(get_current_user)):
     return {lg: sorted(props) for lg, props in sorted(grouped.items())}
 
 
-@app.post("/api/sandbox/run")
-def run_sandbox_simulation(req: SandboxRequest, user: dict = Depends(get_current_user)):
-    from engine.strategy_tester import StrategyTester, StrategyConfig
-    tester = StrategyTester()
-    config = StrategyConfig(
+def _config_from_req(req: SandboxRequest):
+    from engine.strategy_tester import StrategyConfig
+    return StrategyConfig(
         leagues=req.leagues,
         min_prob=req.min_prob,
         slip_size=req.slip_size,
         slip_type=req.slip_type,
         bet_size=req.bet_size,
         use_kelly=req.use_kelly,
-        included_props=req.included_props
+        included_props=req.included_props,
+        slip_strategy=req.slip_strategy,
+        per_game_cap=req.per_game_cap,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        bootstrap=req.bootstrap,
     )
-    result = tester.run_simulation(config)
+
+
+@app.post("/api/sandbox/run")
+def run_sandbox_simulation(req: SandboxRequest, user: dict = Depends(get_current_user)):
+    from engine.strategy_tester import StrategyTester
+    tester = StrategyTester()
+    result = tester.run_simulation(_config_from_req(req))
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
+
 @app.post("/api/sandbox/optimize")
 def optimize_sandbox_threshold(req: SandboxRequest, user: dict = Depends(get_current_user)):
-    from engine.strategy_tester import StrategyTester, StrategyConfig
+    from engine.strategy_tester import StrategyTester
     tester = StrategyTester()
-    config = StrategyConfig(
-        leagues=req.leagues,
-        slip_size=req.slip_size,
-        slip_type=req.slip_type,
-        bet_size=req.bet_size,
-        use_kelly=req.use_kelly,
-        included_props=req.included_props
-    )
-    result = tester.optimize_threshold(config)
+    result = tester.optimize_threshold(_config_from_req(req))
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
