@@ -1193,6 +1193,11 @@ tr.slip-header-row:hover {
   color: var(--text-muted);
   font-style: italic;
 }
+.bt-leg-result.result-push {
+  background: rgba(96, 165, 250, 0.15);
+  color: #93c5fd;
+  font-style: italic;
+}
 
 .skeleton-leg {
   display: flex;

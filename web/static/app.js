@@ -3519,9 +3519,13 @@ function renderSandboxResults(data) {
         $("sb-slip-count").textContent = `(${sandboxLastSlips.length} slips, newest first)`;
         const rows = [...sandboxLastSlips].reverse().slice(0, 500).map((sl, idx) => {
             const dateStr = sl.timestamp ? new Date(sl.timestamp).toLocaleDateString() : '—';
-            const detail = (sl.legs || []).map(l =>
-                `${escapeHtml(l.player || '?')} (${escapeHtml(l.prop || '?')}) ${l.result === 'hit' ? '✓' : '✗'}`
-            ).join(' · ');
+            const detail = (sl.legs || []).map(l => {
+                let glyph;
+                if (l.result === 'hit') glyph = '✓';
+                else if (l.result === 'push' || l.result === 'dnp') glyph = '=';
+                else glyph = '✗';
+                return `${escapeHtml(l.player || '?')} (${escapeHtml(l.prop || '?')}) ${glyph}`;
+            }).join(' · ');
             return `
               <tr>
                 <td>${dateStr}</td>
