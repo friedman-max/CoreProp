@@ -28,6 +28,7 @@ from typing import Optional
 from engine.devig import (
     american_to_implied,
     devig_power,
+    devig_shin,
     devig_multiplicative,
     devig_worst_case,
     devig_single_sided_scaled,
@@ -63,18 +64,22 @@ _DEFAULT_WEIGHT = 0.80
 from engine.sharpness_calibration import (
     load_sharpness_weights as _load_sharp_weights,
     load_sharpness_biases as _load_sharp_biases,
+    load_sharpness_biases_fine as _load_sharp_biases_fine,
 )
 
-_empirical_sharpness: dict[str, float] = _load_sharp_weights()
-_empirical_biases:    dict[str, dict[str, float]] = _load_sharp_biases()
+_empirical_sharpness:  dict[str, float] = _load_sharp_weights()
+_empirical_biases:     dict[str, dict[str, float]] = _load_sharp_biases()
+_empirical_biases_fine: dict[str, dict[str, dict[str, float]]] = _load_sharp_biases_fine()
 
 
 def reload_sharpness() -> int:
     """Re-read sharpness_weights.json from disk. Returns the number of books
-    with empirical weights now active. Also reloads bias corrections."""
-    global _empirical_sharpness, _empirical_biases
-    _empirical_sharpness = _load_sharp_weights()
-    _empirical_biases    = _load_sharp_biases()
+    with empirical weights now active. Also reloads coarse + fine bias
+    corrections."""
+    global _empirical_sharpness, _empirical_biases, _empirical_biases_fine
+    _empirical_sharpness   = _load_sharp_weights()
+    _empirical_biases      = _load_sharp_biases()
+    _empirical_biases_fine = _load_sharp_biases_fine()
     return len(_empirical_sharpness)
 
 
@@ -84,17 +89,29 @@ _PROB_FLOOR = 1e-4
 _PROB_CEIL  = 1.0 - _PROB_FLOOR
 
 
-def _get_book_bias(book_name: str, league: str | None) -> float:
-    """Return the signed bias correction for a (book, league) pair, or 0.0
-    when no empirical estimate is available for the bucket. Positive value
-    means the book overestimates (devigged > closing); we subtract this
-    from the book's prob before the VWAP."""
+def _get_book_bias(book_name: str, league: str | None, prop: str | None = None) -> float:
+    """Return the signed bias correction for a (book, league, prop) bucket,
+    falling back to (book, league) when the fine bucket isn't populated, and
+    to 0.0 when neither is. Positive value means the book overestimates
+    (devigged > closing); we subtract this from the book's prob before the
+    VWAP."""
     if not league:
         return 0.0
-    by_league = _empirical_biases.get(book_name.lower())
-    if not by_league:
+    book_l = book_name.lower()
+
+    # Prefer the (book, league, prop) bucket — narrowest and most specific.
+    if prop:
+        by_league = _empirical_biases_fine.get(book_l)
+        if by_league:
+            by_prop = by_league.get(league.upper())
+            if by_prop and prop in by_prop:
+                return float(by_prop[prop])
+
+    # Fall back to (book, league).
+    by_league_coarse = _empirical_biases.get(book_l)
+    if not by_league_coarse:
         return 0.0
-    return float(by_league.get(league.upper(), 0.0))
+    return float(by_league_coarse.get(league.upper(), 0.0))
 
 # Minimum market width (overround %) to avoid division-by-zero.
 # A market with lower overround than this is already extremely efficient.
@@ -148,12 +165,15 @@ def _devig_book(book: BookOdds, side: str) -> Optional[float]:
     Devig a single book's odds for the requested side using the best
     available method.
 
-    - Both-sided → Power Method (primary)
+    - Both-sided → Shin (1993) Method (primary). Estimates the per-market
+      insider-trading parameter z directly from the implied prices, so
+      each market gets a bias correction tuned to its own overround
+      rather than the global favorite-longshot prior assumed by Power.
     - Single-sided → Scaled single-sided devig for the available side,
       complement (1 - p) for the missing side.
     """
     if book.both_sided and book.over_odds is not None and book.under_odds is not None:
-        p_over, p_under = devig_power(book.over_odds, book.under_odds)
+        p_over, p_under = devig_shin(book.over_odds, book.under_odds)
         return p_over if side == "over" else p_under
 
     # Single-sided: devig the side we have, derive the other via complement.
@@ -237,6 +257,7 @@ def compute_true_probability(
     books: list[BookOdds],
     side: str,
     league: str | None = None,
+    prop: str | None = None,
 ) -> tuple[Optional[float], Optional[float], dict]:
     """
     Compute the consensus true probability for a given side (over/under)
@@ -250,10 +271,11 @@ def compute_true_probability(
     - worst_case_prob: most conservative probability (used for EV decisions)
     - metadata: dict with n_books, devig_method, market_widths, etc.
 
-    `league` is used to look up the per-(book, league) signed bias
-    correction so a book that's systematically high or low on, say, NBA
-    overs gets debiased before contributing to the VWAP. None disables
-    the correction (treated as "unknown bucket → trust the book").
+    `league` and `prop` drive the per-(book, league, prop) bias correction
+    so a book that's systematically high or low on, say, NBA Points overs
+    gets debiased before contributing to the VWAP. The fine bucket is
+    consulted first; missing-fine falls through to (book, league); missing
+    both leaves the book's prob untouched.
     """
     # ── Safeguard: reject purely complement-derived probabilities ─────────
     # If NO book has direct odds for the requested side (i.e. every book's
@@ -276,9 +298,10 @@ def compute_true_probability(
         if power_prob is None or odds is None:
             continue
 
-        # Per-(book, league) bias correction: subtract the empirical mean
-        # signed error so a sharp-but-shaded book doesn't drag consensus.
-        bias = _get_book_bias(book.book_name, league)
+        # Per-(book, league, prop) bias correction (with fallback to
+        # (book, league)): subtract the empirical mean signed error so a
+        # sharp-but-shaded book doesn't drag the consensus.
+        bias = _get_book_bias(book.book_name, league, prop)
         if bias != 0.0:
             power_prob = max(_PROB_FLOOR, min(_PROB_CEIL, power_prob - bias))
             if worst_prob is not None:

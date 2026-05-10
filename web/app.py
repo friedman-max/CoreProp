@@ -707,7 +707,7 @@ def _run_pipeline_body():
                 if not match_books:
                     return None, None, None, None
                 consensus_prob, worst_case_prob, meta = compute_true_probability(
-                    match_books, side, league=m.pp.league,
+                    match_books, side, league=m.pp.league, prop=m.pp.stat_type,
                 )
 
                 if consensus_prob is None:
@@ -1276,6 +1276,24 @@ def startup():
                 logger.info("Hourly refit: correlation — no data yet")
         except Exception as exc:
             logger.error("Hourly refit: correlation error: %s", exc)
+
+        # Brier monitor runs *after* the calibration + sharpness refits so
+        # the snapshot reflects the post-refit state. WARNs if the
+        # calibrated probability is a worse predictor than the raw
+        # consensus over the rolling window — that's the operational
+        # signal that the calibrator regressed and needs attention.
+        try:
+            from engine.calibration_monitor import update_brier_monitor
+            snap = update_brier_monitor()
+            if snap.get("status") == "regression":
+                logger.warning(
+                    "Hourly refit: Brier monitor flagged a regression — "
+                    "raw=%s calibrated=%s n=%s",
+                    snap.get("brier_raw"), snap.get("brier_calibrated"),
+                    snap.get("n_obs"),
+                )
+        except Exception as exc:
+            logger.error("Hourly refit: brier monitor error: %s", exc)
 
     scheduler.add_job(
         _run_periodic_models,
@@ -2889,6 +2907,33 @@ def get_calibration_map_api():
     except Exception as e:
         logger.error("API: calibration fetch error: %s", e)
         return {"anchor": 0.60, "fitted_at": None, "rows": []}
+
+
+@app.get("/api/calibration/brier_monitor")
+def get_calibration_brier_monitor_api():
+    """Rolling Brier-score monitor history.
+
+    Each entry compares the calibrated probability vs the raw consensus
+    probability over the last 7 days of resolved observations. A
+    `status="regression"` entry means the calibrator made things worse
+    on that snapshot — investigate before acting on +EV signals.
+
+    Returns:
+        {
+          "history": [snapshot, ...],          # most recent last
+          "latest":  snapshot | None,
+        }
+    """
+    try:
+        from engine.calibration_monitor import load_brier_history
+        history = load_brier_history()
+        return {
+            "history": history,
+            "latest":  history[-1] if history else None,
+        }
+    except Exception as e:
+        logger.error("API: brier monitor fetch error: %s", e)
+        return {"history": [], "latest": None}
 
 
 @app.get("/api/calibration/heatmap")

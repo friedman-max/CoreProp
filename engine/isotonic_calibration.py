@@ -89,9 +89,24 @@ SHRINKAGE_KAPPA = 50.0
 # them early is safe and lets the chart densify naturally as data grows.
 MIN_BUCKET_N_EFF = 2.0
 
-# Relative weight of a CLV-based observation vs an outcome-based one. Closing
-# lines are sharp but not unbiased fair-value estimates; we discount them.
+# Default relative weight of a CLV-based observation vs an outcome-based
+# one. This is the cold-start fallback used until the dynamic estimator
+# (see _fit_clv_weight() below) has enough data to produce its own value.
+# Closing lines are sharp but not unbiased fair-value estimates; we
+# discount them.
 CLV_OBSERVATION_WEIGHT = 0.4
+
+# The fitted CLV weight is clamped into this range. Below CLV_WEIGHT_MIN
+# we treat the closing signal as noise; above CLV_WEIGHT_MAX it would
+# dominate the (already lower-variance) outcome signal and the calibrator
+# would chase the closing line instead of empirical hit rate.
+CLV_WEIGHT_MIN = 0.05
+CLV_WEIGHT_MAX = 1.50
+
+# Minimum number of (raw, closing, outcome) triples needed before we
+# trust the dynamic CLV-weight estimator. Below this we keep the
+# CLV_OBSERVATION_WEIGHT default.
+CLV_FIT_MIN_OBS = 200
 
 # Anchor probability used by the diagnostic display.
 DISPLAY_ANCHOR = 0.60
@@ -322,6 +337,20 @@ def _empty_state() -> dict:
         "global": {},   # {x_bin: [sum_w, sum_yw, sum_xw]}
         "leagues": {},  # {league: {x_bin: [...]}}
         "props": {},    # {"league|prop": {x_bin: [...]}}
+        # Sufficient stats for the dynamic CLV-weight fit. We track the
+        # weighted mean squared error of (raw - outcome) and (closing -
+        # outcome). The ratio is the inverse-variance estimate of the
+        # optimal CLV weight; recency-decayed identically to the curve
+        # accumulators above.
+        "clv_fit": {
+            "sum_w_raw":     0.0,   # Σ w
+            "sum_w_clv":     0.0,
+            "sum_w_err_raw": 0.0,   # Σ w·(raw - y)²
+            "sum_w_err_clv": 0.0,
+            "n_raw":         0,
+            "n_clv":         0,
+            "weight":        CLV_OBSERVATION_WEIGHT,
+        },
     }
 
 
@@ -377,6 +406,16 @@ def _load_state() -> dict:
     state["global"] = raw.get("global") or {}
     state["leagues"] = raw.get("leagues") or {}
     state["props"] = raw.get("props") or {}
+    # Carry forward CLV-fit stats if present; otherwise the empty-state
+    # defaults stand and the next refit will populate them from new rows.
+    raw_clv = raw.get("clv_fit")
+    if isinstance(raw_clv, dict):
+        for k, default in state["clv_fit"].items():
+            v = raw_clv.get(k, default)
+            try:
+                state["clv_fit"][k] = type(default)(v)
+            except (TypeError, ValueError):
+                state["clv_fit"][k] = default
     _normalize_state_bins(state)
     return state
 
@@ -426,26 +465,104 @@ def _ingest_resolved_row(state: dict, league: str, prop: str, side: str,
     learned the outcome is what matters for "how old is this evidence."
     `confidence_weight` is a multiplicative factor (default 1.0) derived
     from the market width — tight markets carry more weight per observation.
+
+    Side effects on `state["clv_fit"]`: when both an outcome and a
+    closing_prob are present we fold (raw - y)² and (closing - y)² into
+    the running MSE estimators used by `_compute_clv_weight()`.
     """
     rec_w = _recency_weight(resolved_at, now) * float(confidence_weight or 1.0)
     if rec_w <= 0:
         return
 
     r = (result or "").lower()
+    outcome_y: float | None = None
     if r in ("hit", "won", "win"):
-        _ingest_into_state(state, league, prop, side, true_prob, 1.0, rec_w, is_outcome=True)
+        outcome_y = 1.0
     elif r in ("miss", "lost", "loss"):
-        _ingest_into_state(state, league, prop, side, true_prob, 0.0, rec_w, is_outcome=True)
+        outcome_y = 0.0
     # push/dnp contribute no outcome signal but do contribute CLV below.
 
+    if outcome_y is not None:
+        _ingest_into_state(state, league, prop, side, true_prob, outcome_y, rec_w, is_outcome=True)
+
+    cp: float | None = None
     if closing_prob is not None:
         try:
-            cp = float(closing_prob)
+            cp_f = float(closing_prob)
         except (ValueError, TypeError):
-            cp = None
-        if cp is not None and 0.0 < cp < 1.0:
-            _ingest_into_state(state, league, prop, side, true_prob, cp,
-                               rec_w * CLV_OBSERVATION_WEIGHT, is_outcome=False)
+            cp_f = None
+        if cp_f is not None and 0.0 < cp_f < 1.0:
+            cp = cp_f
+
+    if cp is not None:
+        clv_w = _current_clv_weight(state)
+        _ingest_into_state(state, league, prop, side, true_prob, cp,
+                           rec_w * clv_w, is_outcome=False)
+
+    # Update the CLV-weight sufficient statistics. Only triples that have
+    # *both* an outcome and a closing_prob contribute, so the two MSE
+    # estimators are computed on the same row population.
+    if outcome_y is not None and cp is not None:
+        clv_stats = state.setdefault("clv_fit", {
+            "sum_w_raw": 0.0, "sum_w_clv": 0.0,
+            "sum_w_err_raw": 0.0, "sum_w_err_clv": 0.0,
+            "n_raw": 0, "n_clv": 0,
+            "weight": CLV_OBSERVATION_WEIGHT,
+        })
+        clv_stats["sum_w_raw"]     += rec_w
+        clv_stats["sum_w_clv"]     += rec_w
+        clv_stats["sum_w_err_raw"] += rec_w * (true_prob - outcome_y) ** 2
+        clv_stats["sum_w_err_clv"] += rec_w * (cp - outcome_y) ** 2
+        clv_stats["n_raw"]         += 1
+        clv_stats["n_clv"]         += 1
+
+
+def _current_clv_weight(state: dict) -> float:
+    """Read the most recently fitted CLV weight off `state['clv_fit']`,
+    falling back to the static default. We read here (rather than only
+    refitting at the end of update) so the closing observations within
+    a single tick use the latest available estimate."""
+    clv = state.get("clv_fit") or {}
+    try:
+        w = float(clv.get("weight", CLV_OBSERVATION_WEIGHT))
+    except (TypeError, ValueError):
+        w = CLV_OBSERVATION_WEIGHT
+    return max(CLV_WEIGHT_MIN, min(CLV_WEIGHT_MAX, w))
+
+
+def _compute_clv_weight(state: dict) -> float:
+    """Inverse-variance estimate of the optimal CLV observation weight.
+
+    Intuition: the calibrator is averaging two noisy estimators of the
+    true outcome — `raw_true_prob` and `closing_prob`. The optimal
+    weight on the closing-prob signal (relative to outcome) is
+
+        w_clv  =  Var(raw - y) / Var(closing - y)
+
+    where Var here is the per-observation MSE around the binary
+    outcome. If the closing line is a much better predictor than raw
+    (low MSE), the ratio rises and CLV gets more weight; if closing
+    barely improves on raw, the ratio collapses to ~1.
+
+    Falls back to the running default until CLV_FIT_MIN_OBS triples
+    have accumulated. Always clamped to [CLV_WEIGHT_MIN, CLV_WEIGHT_MAX]
+    so a noisy bucket can't blow up the calibrator."""
+    clv = state.get("clv_fit") or {}
+    n = int(clv.get("n_raw", 0) or 0)
+    if n < CLV_FIT_MIN_OBS:
+        return CLV_OBSERVATION_WEIGHT
+    sw_raw = float(clv.get("sum_w_raw", 0.0) or 0.0)
+    sw_clv = float(clv.get("sum_w_clv", 0.0) or 0.0)
+    se_raw = float(clv.get("sum_w_err_raw", 0.0) or 0.0)
+    se_clv = float(clv.get("sum_w_err_clv", 0.0) or 0.0)
+    if sw_raw <= 0 or sw_clv <= 0 or se_clv <= 0:
+        return CLV_OBSERVATION_WEIGHT
+    mse_raw = se_raw / sw_raw
+    mse_clv = se_clv / sw_clv
+    if mse_clv <= 0:
+        return CLV_WEIGHT_MAX
+    raw_ratio = mse_raw / mse_clv
+    return max(CLV_WEIGHT_MIN, min(CLV_WEIGHT_MAX, raw_ratio))
 
 
 def _pull_resolved_since(db, table: str, hwm: str | None,
@@ -489,6 +606,7 @@ def _stats_to_curves(state: dict, fitted_at: datetime) -> dict:
     """Run PAV against the current accumulators and assemble the curves
     payload that downstream consumers (clv_checker, ev_calculator, the
     Observatory chart) load via `load_isotonic_calibration()`."""
+    fitted_clv_w = _current_clv_weight(state)
     out: dict = {
         "version":   2,   # consumer-facing curves schema unchanged
         "fitted_at": fitted_at.isoformat(),
@@ -498,7 +616,9 @@ def _stats_to_curves(state: dict, fitted_at: datetime) -> dict:
         "config": {
             "recency_half_life_days":  RECENCY_HALF_LIFE_DAYS,
             "shrinkage_kappa":         SHRINKAGE_KAPPA,
-            "clv_observation_weight":  CLV_OBSERVATION_WEIGHT,
+            "clv_observation_weight":          CLV_OBSERVATION_WEIGHT,
+            "clv_observation_weight_dynamic":  round(fitted_clv_w, 5),
+            "clv_fit_n_obs":                   int((state.get("clv_fit") or {}).get("n_raw", 0) or 0),
         },
     }
     for lg, by_bin in state["leagues"].items():
@@ -543,6 +663,17 @@ def update_isotonic_calibration() -> dict | None:
                 _decay_bin_set(state["global"], decay)
                 _decay_stats(state["leagues"], decay)
                 _decay_stats(state["props"], decay)
+                # Decay the CLV-fit MSE accumulators in lockstep so the
+                # weight estimate reflects the same recency horizon as the
+                # curves it feeds.
+                clv_stats = state.get("clv_fit")
+                if isinstance(clv_stats, dict):
+                    for k in ("sum_w_raw", "sum_w_clv",
+                              "sum_w_err_raw", "sum_w_err_clv"):
+                        try:
+                            clv_stats[k] = float(clv_stats.get(k, 0.0)) * decay
+                        except (TypeError, ValueError):
+                            clv_stats[k] = 0.0
 
     # ── 2. Cursor pulls ─────────────────────────────────────────────────
     # We select both `true_prob` (calibrated, kept for backward compat) and
@@ -629,6 +760,13 @@ def update_isotonic_calibration() -> dict | None:
     state["hwm_legs"] = new_hwm_legs
     state["fitted_at"] = now.isoformat()
 
+    # Refit the dynamic CLV observation weight against the freshly-folded
+    # MSE accumulators. Subsequent ticks will use this on the apply path
+    # via _current_clv_weight().
+    new_clv_w = _compute_clv_weight(state)
+    if isinstance(state.get("clv_fit"), dict):
+        state["clv_fit"]["weight"] = round(new_clv_w, 5)
+
     # If we never managed to ingest a single observation and we've never
     # built a state before, there's nothing meaningful to fit yet — let the
     # next tick try again rather than overwriting the curves with empties.
@@ -654,19 +792,15 @@ def update_isotonic_calibration() -> dict | None:
     except Exception as exc:
         logger.warning("IsotonicCalibration: Supabase mirror failed: %s", exc)
 
-    # NOTE: the parallel Beta-Binomial empirical table that used to be
-    # rebuilt here was retired when ev_calculator/clv_checker switched to
-    # the isotonic curves on the live path. The empirical_calibration
-    # module is left in place for diagnostic / experimental use but is no
-    # longer maintained by the refit job.
-
     _save_state(state)
 
     logger.info(
         "IsotonicCalibration: incremental refit — +%d new rows, %d leagues, "
-        "%d (league,prop) buckets, global n_eff=%.1f",
+        "%d (league,prop) buckets, global n_eff=%.1f, clv_w=%.3f (n=%d)",
         n_ingested, len(out["leagues"]), len(out["props"]),
         out["global"]["n_eff"] if out["global"] else 0.0,
+        out["config"].get("clv_observation_weight_dynamic", CLV_OBSERVATION_WEIGHT),
+        out["config"].get("clv_fit_n_obs", 0),
     )
     return out
 
@@ -1019,25 +1153,26 @@ def _shrink(parent_q: float, level: dict | None, raw_prob: float) -> float:
 def calibrate(curves: dict, league: str | None, prop: str | None,
               side: str | None, raw_prob: float) -> float:
     """
-    Apply isotonic calibration with Bayesian shrinkage.
+    Apply hierarchical isotonic calibration with Bayesian shrinkage.
 
-    Hierarchy on the apply path is global → (league, prop, side). The league
-    level is fitted and surfaced for diagnostics (Observatory chart) but is
-    intentionally NOT a parent of the prop level: we choose props, not
-    leagues, so a bad prop type must not get lifted by the league's overall
-    performance, and a good prop must not get dragged down by a poor league.
+    Apply-path hierarchy: global → (league) → (league, prop, side).
+    Each child level shrinks toward its parent's calibrated value with
+    α = n_eff / (n_eff + κ). A thin (NBA, Pts+Rebs+Asts, over) bucket
+    therefore borrows from "all NBA overs" first and from the global
+    curve second, instead of skipping the league signal entirely.
 
-    The bucket key includes `side` because miscalibration tends to be
-    side-asymmetric — books often shade one side for variance protection,
-    so over and under hit at meaningfully different rates and pooling them
-    averages out the signal. When `side` is missing or not "over"/"under"
-    we fall through to global directly (the legacy 2-key bucket is no
-    longer consulted).
+    The (league, prop, side) bucket is keyed by side because
+    miscalibration tends to be side-asymmetric — books often shade one
+    side for variance protection. The (league) parent is NOT
+    side-keyed: aggregating over/under at the league level is a
+    smoothing aid, not a directional signal, and side-keying the parent
+    would halve its sample size for no benefit at this tier.
 
-    Symmetric output: when empirical hit rate exceeds the raw devig number
-    at high n_eff, the result is allowed to exceed raw_prob. The Bayesian
-    shrinkage (κ=SHRINKAGE_KAPPA) is the only guardrail; variance control
-    belongs in stake sizing (quarter-Kelly), not the point estimate.
+    Symmetric output: when empirical hit rate exceeds raw at high
+    n_eff, the result is allowed to exceed raw_prob. The Bayesian
+    shrinkage (κ=SHRINKAGE_KAPPA) is the only guardrail; variance
+    control belongs in stake sizing (quarter-Kelly), not the point
+    estimate.
     """
     if not curves:
         return raw_prob
@@ -1047,11 +1182,16 @@ def calibrate(curves: dict, league: str | None, prop: str | None,
         return raw_prob
     q_global = _interp(global_level["curve"], raw_prob)
 
-    # (league, prop, side) shrinks directly toward global, bypassing the
-    # league posterior so prop performance is the dominant signal at apply
-    # time and side asymmetry isn't washed out.
+    # Tier 1: league posterior shrinks toward global. Provides a
+    # league-wide bias correction that the prop bucket can lean on
+    # before falling through to the global curve.
+    league_level = curves.get("leagues", {}).get(league) if league else None
+    q_league = _shrink(q_global, league_level, raw_prob)
+
+    # Tier 2: (league, prop, side) bucket shrinks toward the league
+    # posterior. Side-asymmetric calibration lives here.
     prop_level = None
     side_norm = (side or "").lower()
     if league and prop and side_norm in ("over", "under"):
         prop_level = curves.get("props", {}).get(f"{league}|{prop}|{side_norm}")
-    return _shrink(q_global, prop_level, raw_prob)
+    return _shrink(q_league, prop_level, raw_prob)
