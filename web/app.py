@@ -993,11 +993,12 @@ def _run_pipeline_body():
         threading.Thread(target=_auto_log_bg, daemon=True).start()
 
         # ── Market Observatory: log lines for global calibration ──
-        # Threshold at 0.30 (not 0.50) so the calibration sees both winners and
-        # losers. Restricting to >0.50 made every observation an "expected hit",
-        # which can only push calibration down. Including the 0.30–0.50 band
-        # gives bidirectional signal — leagues whose underdogs over-perform
-        # adjust up, those whose favorites under-perform adjust down.
+        # No min/max threshold — every successfully-priced combined line is
+        # logged. Restricting by true_prob biases the calibration sample (a
+        # >0.50 floor logs only "expected hits"; even a 0.30 floor drops the
+        # left-tail which the curve needs to shape its low end). Logging the
+        # full distribution lets the calibration see hits and misses across
+        # the entire probability range.
         def _log_observatory_bg(bets=serialized_bets, books_probs_map=bet_books_probs):
             try:
                 from engine.database import get_db as _get_db
@@ -1010,8 +1011,6 @@ def _run_pipeline_body():
                 _books_supported = True
                 for b in bets:
                     tp = float(b.get("true_prob") or 0)
-                    if tp < 0.30:
-                        continue
                     player = b.get("player_name", "")
                     league = b.get("league", "")
                     prop   = b.get("prop_type", "")
