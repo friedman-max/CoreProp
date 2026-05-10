@@ -43,9 +43,25 @@ class PrizePickLine:
 class MatchedProp:
     pp: PrizePickLine
     name_score: float    # fuzzy similarity 0-100
+    # Exact-line match per book (book.line == pp.line_score). Stays the
+    # canonical handle for downstream code that doesn't care about
+    # half-step equivalence.
     fd: Optional[FanDuelProp] = None
     dk: Optional[FanDuelProp] = None
     pin: Optional[FanDuelProp] = None
+    # When pp.line_score is a whole number, "over PP-N" is mathematically
+    # the same wager as "over book-(N+0.5)" under push-on-tie semantics
+    # (player needs N+1+ to win in both); same for "under PP-N" vs "under
+    # book-(N-0.5)". These per-side fields point to whichever book candidate
+    # (same player, alt line) covers that side. For fractional PP lines they
+    # are populated only when an exact-line match exists, so callers can
+    # always read the per-side fields without branching on line parity.
+    fd_over_equiv:    Optional[FanDuelProp] = None
+    fd_under_equiv:   Optional[FanDuelProp] = None
+    dk_over_equiv:    Optional[FanDuelProp] = None
+    dk_under_equiv:   Optional[FanDuelProp] = None
+    pin_over_equiv:   Optional[FanDuelProp] = None
+    pin_under_equiv:  Optional[FanDuelProp] = None
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +157,8 @@ def match_props(
 
         norm_pp_name = normalize_name(pp.player_name)
 
+        pp_is_whole = float(pp.line_score).is_integer()
+
         def _best_match(candidates):
             """
             Compare PP name against each book candidate using a composite
@@ -156,9 +174,18 @@ def match_props(
             threshold, we treat it as uncertain and reject. This prevents
             common short-name collisions ("Miles McBride" vs "Mikal
             Bridges") while still letting middle-name insertions through.
+
+            Returns the per-(player, prop) match as a tuple
+            (exact, over_equiv, under_equiv, score). Books often post
+            multiple alt lines for the same player; once the player is
+            identified by name we look across that player's lines for
+            exact-line and PP±0.5 half-step equivalents, so a PP whole
+            number can be priced off the book's nearest valid alt line
+            instead of being thrown out.
             """
             best = None
             best_score = 0.0
+            best_norm_name: str | None = None
             for c in candidates:
                 norm_cand = normalize_name(c.player_name)
                 sort_score = fuzz.token_sort_ratio(norm_pp_name, norm_cand)
@@ -177,30 +204,74 @@ def match_props(
                 if score > best_score:
                     best_score = score
                     best = c
+                    best_norm_name = norm_cand
                 elif score == best_score and score >= FUZZY_THRESHOLD and best is not None:
-                    if c.line == pp.line_score and best.line != pp.line_score:
+                    # Prefer exact-line first, then half-step equivalents on
+                    # whole-number PP lines, over an arbitrary same-name pick.
+                    cand_match = (c.line == pp.line_score)
+                    cur_match = (best.line == pp.line_score)
+                    if cand_match and not cur_match:
                         best = c
-            if best_score < FUZZY_THRESHOLD:
-                return None, 0.0
-            return best, best_score
+                        best_norm_name = norm_cand
+                    elif pp_is_whole and not cur_match:
+                        cand_half = c.line in (pp.line_score + 0.5, pp.line_score - 0.5)
+                        cur_half = best.line in (pp.line_score + 0.5, pp.line_score - 0.5)
+                        if cand_half and not cur_half:
+                            best = c
+                            best_norm_name = norm_cand
+            if best is None or best_score < FUZZY_THRESHOLD:
+                return None, None, None, 0.0
 
-        best_fd, best_fd_score = _best_match(fd_candidates)
-        best_dk, best_dk_score = _best_match(dk_candidates)
-        best_pin, best_pin_score = _best_match(pin_candidates)
+            # Walk the candidate list once more, this time keeping every
+            # row that belongs to the matched player (same normalized name)
+            # so we can locate the exact-line and half-step alts.
+            same_player = [c for c in candidates if normalize_name(c.player_name) == best_norm_name]
 
-        # Return if we have a high-confidence match in AT LEAST ONE of the books
-        scores = []
-        if best_fd is not None: scores.append(best_fd_score)
-        if best_dk is not None: scores.append(best_dk_score)
-        if best_pin is not None: scores.append(best_pin_score)
+            exact = next((c for c in same_player if c.line == pp.line_score), None)
+            over_eq = exact
+            under_eq = exact
+            if exact is None and pp_is_whole:
+                # Half-step equivalence: over PP-N == over book-(N+0.5)
+                # under push-on-tie. Require the book to actually post the
+                # relevant side at that line — a half-step entry that only
+                # has under_odds isn't a valid over equivalent.
+                plus_half  = next((c for c in same_player if c.line == pp.line_score + 0.5 and c.over_odds  is not None), None)
+                minus_half = next((c for c in same_player if c.line == pp.line_score - 0.5 and c.under_odds is not None), None)
+                over_eq  = plus_half
+                under_eq = minus_half
 
-        if scores and max(scores) >= FUZZY_THRESHOLD:
-            results.append(MatchedProp(
-                pp=pp,
-                fd=best_fd,
-                dk=best_dk,
-                pin=best_pin,
-                name_score=max(scores),
-            ))
+            return exact, over_eq, under_eq, best_score
+
+        fd_exact,  fd_over,  fd_under,  fd_score  = _best_match(fd_candidates)
+        dk_exact,  dk_over,  dk_under,  dk_score  = _best_match(dk_candidates)
+        pin_exact, pin_over, pin_under, pin_score = _best_match(pin_candidates)
+
+        # Keep a match when at least one book has either an exact-line
+        # entry or a usable half-step equivalent for some side.
+        any_book = (
+            fd_exact  or fd_over  or fd_under  or
+            dk_exact  or dk_over  or dk_under  or
+            pin_exact or pin_over or pin_under
+        )
+        if not any_book:
+            continue
+
+        scores = [s for s in (fd_score, dk_score, pin_score) if s >= FUZZY_THRESHOLD]
+        if not scores:
+            continue
+
+        results.append(MatchedProp(
+            pp=pp,
+            fd=fd_exact,
+            dk=dk_exact,
+            pin=pin_exact,
+            fd_over_equiv=fd_over,
+            fd_under_equiv=fd_under,
+            dk_over_equiv=dk_over,
+            dk_under_equiv=dk_under,
+            pin_over_equiv=pin_over,
+            pin_under_equiv=pin_under,
+            name_score=max(scores),
+        ))
 
     return results

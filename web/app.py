@@ -620,42 +620,47 @@ def _run_pipeline_body():
 
         from engine.devig import prob_to_american
         from engine.ev_calculator import BetResult
-        from engine.consensus import compute_true_probability, books_from_match
-        
+        from engine.consensus import compute_true_probability, books_from_match_for_side
+
         with _lock:
             min_ev = _state["min_ev_pct"]
         bets: list[BetResult] = []
         bet_book_odds: dict[str, dict] = {}  # bet_id -> {fd_odds, dk_odds, pin_odds}
         serialized_matches = []
         for m in matches:
-            # At least one book must be present. We check line equality for the books that exist.
-            # Nullify any books that don't match the PrizePicks line score exactly,
-            # but don't discard the whole match if at least one book matches.
-            if m.fd and m.pp.line_score != m.fd.line:
-                m.fd = None
-            if m.dk and m.pp.line_score != m.dk.line:
-                m.dk = None
-            if m.pin and m.pp.line_score != m.pin.line:
-                m.pin = None
-
-            if not m.fd and not m.dk and not m.pin:
+            # The matcher already populates per-side equivalents. A match
+            # is kept when any book has a usable line for at least one
+            # side — exact match or, for whole-number PP lines, the
+            # half-step alt that's mathematically equivalent under
+            # push-on-tie semantics (over PP-3 == over book-3.5).
+            any_over = m.fd_over_equiv or m.dk_over_equiv or m.pin_over_equiv
+            any_under = m.fd_under_equiv or m.dk_under_equiv or m.pin_under_equiv
+            if not any_over and not any_under:
                 continue
-
-            base = {
-                "player_name": m.pp.player_name,
-                "league": m.pp.league,
-                "stat_type": m.pp.stat_type,
-                "pp_line": m.pp.line_score,
-                "fd_line": m.fd.line if m.fd else None,
-                "dk_line": m.dk.line if m.dk else None,
-                "pin_line": m.pin.line if m.pin else None,
-                "start_time": m.pp.start_time,
-            }
 
             pp_side = getattr(m.pp, "side", "both")
 
-            # Build book odds list for the consensus engine
-            match_books = books_from_match(m.fd, m.dk, m.pin)
+            def _book_for_side(side: str, book_attr_prefix: str):
+                return getattr(m, f"{book_attr_prefix}_{side}_equiv")
+
+            def _line_for_side(side: str, book_attr_prefix: str):
+                bk = _book_for_side(side, book_attr_prefix)
+                return bk.line if bk is not None else None
+
+            def _base_for_side(side: str) -> dict:
+                # The displayed line is always PP's; per-book line fields
+                # show the actual book line consulted for that side, which
+                # makes half-step usage visible in the diagnostic UI.
+                return {
+                    "player_name": m.pp.player_name,
+                    "league":      m.pp.league,
+                    "stat_type":   m.pp.stat_type,
+                    "pp_line":     m.pp.line_score,
+                    "fd_line":     _line_for_side(side, "fd"),
+                    "dk_line":     _line_for_side(side, "dk"),
+                    "pin_line":    _line_for_side(side, "pin"),
+                    "start_time":  m.pp.start_time,
+                }
 
             def _per_book_probs(side: str) -> dict:
                 """Snapshot each book's devigged probability for `side` so the
@@ -664,11 +669,13 @@ def _run_pipeline_body():
                 Returns e.g. {"fanduel": 0.62, "draftkings": 0.61}."""
                 from engine.devig import devig_power as _dp, devig_single_sided_scaled as _dss
                 out: dict[str, float] = {}
-                for name, bk in (("fanduel", m.fd), ("draftkings", m.dk), ("pinnacle", m.pin)):
+                for name, prefix in (("fanduel", "fd"), ("draftkings", "dk"), ("pinnacle", "pin")):
+                    bk = _book_for_side(side, prefix)
                     if bk is None:
                         continue
                     prob = None
-                    if bk.both_sided and bk.over_odds is not None and bk.under_odds is not None:
+                    is_exact = bk.line == m.pp.line_score
+                    if is_exact and bk.both_sided and bk.over_odds is not None and bk.under_odds is not None:
                         t_o, t_u = _dp(bk.over_odds, bk.under_odds)
                         prob = t_o if side == "over" else t_u
                     elif side == "over" and bk.over_odds is not None:
@@ -679,8 +686,21 @@ def _run_pipeline_body():
                         out[name] = round(float(prob), 4)
                 return out
 
+            def _book_display_odds(side: str, prefix: str, margin: float):
+                bk = _book_for_side(side, prefix)
+                if bk is None:
+                    return None
+                # On a half-step equivalent we only have one side's price;
+                # _display_odds already devigs/re-vigs from the available
+                # side, so this still produces a sensible display number.
+                return _display_odds(bk, side, margin)
+
             def get_combined_true_odds(side):
-                """Compute consensus true probability via the VWAP engine."""
+                """Compute consensus true probability via the VWAP engine,
+                using each book's per-side equivalent line."""
+                match_books = books_from_match_for_side(m, side)
+                if not match_books:
+                    return None, None, None
                 consensus_prob, worst_case_prob, meta = compute_true_probability(match_books, side)
 
                 if consensus_prob is None:
@@ -689,9 +709,9 @@ def _run_pipeline_body():
                 # Find the best odds for display (includes derived complement odds)
                 odds_list = [
                     o for o in [
-                        _display_odds(m.fd, side, fd_margin),
-                        _display_odds(m.dk, side, dk_margin),
-                        _display_odds(m.pin, side, pin_margin),
+                        _book_display_odds(side, "fd",  fd_margin),
+                        _book_display_odds(side, "dk",  dk_margin),
+                        _book_display_odds(side, "pin", pin_margin),
                     ] if o is not None
                 ]
                 best_odds = max(odds_list) if odds_list else None
@@ -700,30 +720,36 @@ def _run_pipeline_body():
                 final_true_prob = worst_case_prob
                 return best_odds, final_true_prob, prob_to_american(final_true_prob) if final_true_prob else None
 
-            # Pick the first available book for BetResult fields
-            def _first_book():
-                for bk in [m.pin, m.fd, m.dk]:
-                    if bk:
+            def _first_book_for_side(side: str):
+                """Pick the first book that prices the given side. Used
+                only to fill BetResult.over_odds/under_odds/both_sided
+                with sensible representative values."""
+                for prefix in ("pin", "fd", "dk"):
+                    bk = _book_for_side(side, prefix)
+                    if bk is not None:
                         return bk
                 return None
 
-            first_bk = _first_book()
-
             # Process Over side
-            if pp_side in ("both", "over"):
+            if pp_side in ("both", "over") and any_over:
                 best, prob, true = get_combined_true_odds("over")
                 if best is not None:
+                    base_over = _base_for_side("over")
+                    fd_o  = _book_display_odds("over", "fd",  fd_margin)
+                    dk_o  = _book_display_odds("over", "dk",  dk_margin)
+                    pin_o = _book_display_odds("over", "pin", pin_margin)
                     serialized_matches.append({
-                        **base,
+                        **base_over,
                         "side": "over",
                         "best_odds": best,
-                        "fd_odds": _display_odds(m.fd, "over", fd_margin),
-                        "dk_odds": _display_odds(m.dk, "over", dk_margin),
-                        "pin_odds": _display_odds(m.pin, "over", pin_margin),
-                        "true_odds": true
+                        "fd_odds":  fd_o,
+                        "dk_odds":  dk_o,
+                        "pin_odds": pin_o,
+                        "true_odds": true,
                     })
 
                     # Also create +EV bet if applicable
+                    first_bk = _first_book_for_side("over")
                     if prob is not None and first_bk:
                         bet_id = f"{m.pp.player_id}_{m.pp.stat_type}_over"
                         res = BetResult(
@@ -732,7 +758,7 @@ def _run_pipeline_body():
                             league=m.pp.league,
                             prop_type=m.pp.stat_type,
                             pp_line=m.pp.line_score,
-                            fd_line=base["fd_line"] or base["dk_line"] or base["pin_line"],
+                            fd_line=base_over["fd_line"] or base_over["dk_line"] or base_over["pin_line"],
                             side="over",
                             true_prob=prob,
                             over_odds=first_bk.over_odds,
@@ -743,28 +769,33 @@ def _run_pipeline_body():
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
                             bet_book_odds[bet_id] = {
-                                "fd_odds":    _display_odds(m.fd, "over", fd_margin),
-                                "dk_odds":    _display_odds(m.dk, "over", dk_margin),
-                                "pin_odds":   _display_odds(m.pin, "over", pin_margin),
-                                "start_time": base.get("start_time", ""),
+                                "fd_odds":    fd_o,
+                                "dk_odds":    dk_o,
+                                "pin_odds":   pin_o,
+                                "start_time": base_over.get("start_time", ""),
                                 "books_probs": _per_book_probs("over"),
                             }
 
             # Process Under side
-            if pp_side in ("both", "under"):
+            if pp_side in ("both", "under") and any_under:
                 best, prob, true = get_combined_true_odds("under")
                 if best is not None:
+                    base_under = _base_for_side("under")
+                    fd_u  = _book_display_odds("under", "fd",  fd_margin)
+                    dk_u  = _book_display_odds("under", "dk",  dk_margin)
+                    pin_u = _book_display_odds("under", "pin", pin_margin)
                     serialized_matches.append({
-                        **base,
+                        **base_under,
                         "side": "under",
                         "best_odds": best,
-                        "fd_odds": _display_odds(m.fd, "under", fd_margin),
-                        "dk_odds": _display_odds(m.dk, "under", dk_margin),
-                        "pin_odds": _display_odds(m.pin, "under", pin_margin),
-                        "true_odds": true
+                        "fd_odds":  fd_u,
+                        "dk_odds":  dk_u,
+                        "pin_odds": pin_u,
+                        "true_odds": true,
                     })
 
                     # Also create +EV bet if applicable
+                    first_bk = _first_book_for_side("under")
                     if prob is not None and first_bk:
                         bet_id = f"{m.pp.player_id}_{m.pp.stat_type}_under"
                         res = BetResult(
@@ -773,7 +804,7 @@ def _run_pipeline_body():
                             league=m.pp.league,
                             prop_type=m.pp.stat_type,
                             pp_line=m.pp.line_score,
-                            fd_line=base["fd_line"] or base["dk_line"] or base["pin_line"],
+                            fd_line=base_under["fd_line"] or base_under["dk_line"] or base_under["pin_line"],
                             side="under",
                             true_prob=prob,
                             over_odds=first_bk.over_odds,
@@ -784,10 +815,10 @@ def _run_pipeline_body():
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
                             bet_book_odds[bet_id] = {
-                                "fd_odds":    _display_odds(m.fd, "under", fd_margin),
-                                "dk_odds":    _display_odds(m.dk, "under", dk_margin),
-                                "pin_odds":   _display_odds(m.pin, "under", pin_margin),
-                                "start_time": base.get("start_time", ""),
+                                "fd_odds":    fd_u,
+                                "dk_odds":    dk_u,
+                                "pin_odds":   pin_u,
+                                "start_time": base_under.get("start_time", ""),
                                 "books_probs": _per_book_probs("under"),
                             }
 

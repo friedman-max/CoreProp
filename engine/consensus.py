@@ -339,3 +339,60 @@ def books_from_match(fd, dk, pin) -> list[BookOdds]:
             both_sided=pin.both_sided,
         ))
     return books
+
+
+def books_from_match_for_side(m, side: str) -> list[BookOdds]:
+    """Build the BookOdds list using each book's per-side equivalent at
+    PP's line. When PP is a whole number, this is the half-step alt that's
+    mathematically equivalent for `side`; otherwise it falls back to the
+    exact-line book.
+
+    The opposite side is intentionally masked to None so the consensus
+    devig path treats this as a single-sided market. A book at line+0.5
+    has a valid over price for PP's whole line, but its under price at
+    that same alt line corresponds to a different push semantic and must
+    not be folded into the consensus."""
+    side = (side or "").lower()
+    if side not in ("over", "under"):
+        return []
+
+    if side == "over":
+        fd_eq, dk_eq, pin_eq = m.fd_over_equiv, m.dk_over_equiv, m.pin_over_equiv
+    else:
+        fd_eq, dk_eq, pin_eq = m.fd_under_equiv, m.dk_under_equiv, m.pin_under_equiv
+
+    books: list[BookOdds] = []
+    pp_line = m.pp.line_score
+
+    def _add(book_name: str, prop) -> None:
+        if prop is None:
+            return
+        # Exact-line equivalent: full both-sided BookOdds, unchanged.
+        if prop.line == pp_line:
+            books.append(BookOdds(
+                book_name=book_name,
+                over_odds=prop.over_odds,
+                under_odds=prop.under_odds,
+                both_sided=prop.both_sided,
+            ))
+            return
+        # Half-step equivalent: only the relevant side is valid.
+        if side == "over":
+            books.append(BookOdds(
+                book_name=book_name,
+                over_odds=prop.over_odds,
+                under_odds=None,
+                both_sided=False,
+            ))
+        else:
+            books.append(BookOdds(
+                book_name=book_name,
+                over_odds=None,
+                under_odds=prop.under_odds,
+                both_sided=False,
+            ))
+
+    _add("fanduel",    fd_eq)
+    _add("draftkings", dk_eq)
+    _add("pinnacle",   pin_eq)
+    return books

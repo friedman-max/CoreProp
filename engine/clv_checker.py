@@ -19,7 +19,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from engine.database import get_db
-from engine.consensus import books_from_match, compute_true_probability
+from engine.consensus import books_from_match_for_side, compute_true_probability
 from engine.empirical_calibration import (
     load_empirical_calibration, apply_empirical as _apply_calibration,
 )
@@ -305,20 +305,15 @@ class CLVTracker:
         """
         Build a lookup: (player_lower, prop_lower, side, line) -> worst_case_prob.
 
-        Mirrors the bet-placement pipeline in `_run_pipeline_body` exactly:
+        Mirrors the bet-placement pipeline in `_run_pipeline_body` exactly,
+        including the per-side equivalent-line selection: for whole-number
+        PP lines we accept book lines at PP±0.5 because they're
+        mathematically equivalent under push-on-tie semantics. Placement
+        and CLV must apply the same selection or the very first
+        post-placement closing-line write produces a phantom delta.
 
-            books = books_from_match(m.fd, m.dk, m.pin)            # ALL books
-            consensus, worst_case, _ = compute_true_probability(books, side)
-
-        Critically, no per-book line-match filter is applied here even when
-        a book is quoting a different number than PrizePicks — placement
-        also uses the full book set, so CLV must use the same set or the
-        very first post-placement closing-line write produces a phantom
-        delta the size of "(consensus over n books) − (consensus over the
-        subset that happens to match PP's line)".
-
-        Subsequent isotonic calibration is applied identically on both
-        sides (BetResult.__init__ at placement, update_closing_lines_from_probs
+        Subsequent calibration is applied identically on both sides
+        (BetResult.__init__ at placement, update_closing_lines_from_probs
         on the closing side), so when nothing has moved between placement
         and the first CLV pass, clv_pct ≈ 0.
         """
@@ -332,11 +327,10 @@ class CLVTracker:
             line = float(m.pp.line_score)
             sides = ["over", "under"] if getattr(m.pp, "side", "both") == "both" else [m.pp.side]
 
-            books = books_from_match(m.fd, m.dk, m.pin)
-            if not books:
-                continue
-
             for side in sides:
+                books = books_from_match_for_side(m, side)
+                if not books:
+                    continue
                 _consensus, worst_case, _meta = compute_true_probability(books, side)
                 if worst_case is not None:
                     current_probs[(player, prop, side, line)] = worst_case
