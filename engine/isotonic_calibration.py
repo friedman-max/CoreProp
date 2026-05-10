@@ -582,6 +582,17 @@ def update_isotonic_calibration() -> dict | None:
     except Exception as exc:
         logger.warning("IsotonicCalibration: Supabase mirror failed: %s", exc)
 
+    # Build the simpler Beta-Binomial empirical lookup off the same
+    # accumulators. Lives in its own file/Supabase key so swapping
+    # consumers between the two calibrators is a one-line change.
+    try:
+        from engine.empirical_calibration import (
+            build_empirical_table, save_empirical_calibration,
+        )
+        save_empirical_calibration(build_empirical_table(state))
+    except Exception as exc:
+        logger.warning("EmpiricalCalibration: refit failed: %s", exc)
+
     _save_state(state)
 
     logger.info(

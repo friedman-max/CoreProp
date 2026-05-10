@@ -19,11 +19,13 @@ from engine.constants import (
 )
 from engine.devig import devig_power, devig_single_sided, prob_to_american
 from engine.matcher import MatchedProp
-from engine.isotonic_calibration import load_isotonic_calibration, calibrate as _apply_isotonic
+from engine.empirical_calibration import (
+    load_empirical_calibration, apply_empirical as _apply_calibration,
+)
 from engine.correlation import build_correlation_matrix, legs_metadata_from_bets
 
-# Module-level calibration curves (refreshed on import or by calling reload_calibration)
-_isotonic_curves: dict = load_isotonic_calibration()
+# Module-level calibration table (refreshed on import or by calling reload_calibration)
+_calibration_table: dict = load_empirical_calibration()
 
 
 # ---------------------------------------------------------------------------
@@ -31,9 +33,9 @@ _isotonic_curves: dict = load_isotonic_calibration()
 # ---------------------------------------------------------------------------
 
 def reload_calibration():
-    """Reload the isotonic curves from disk (called after each recalibration)."""
-    global _isotonic_curves
-    _isotonic_curves = load_isotonic_calibration()
+    """Reload the empirical calibration table from disk (called after each recalibration)."""
+    global _calibration_table
+    _calibration_table = load_empirical_calibration()
 
 
 class BetResult:
@@ -75,11 +77,12 @@ class BetResult:
         self.pp_player_id = pp_player_id
         self.start_time = start_time
 
-        # Per-side isotonic calibration (global → (league, prop, side)) with
-        # Bayesian shrinkage. The 0.999 ceiling is a numerical guard to keep
-        # log-loss / EV math finite, not a "never inflate" cap — the curve
-        # itself is allowed to push above raw_prob when the data warrants.
-        calibrated_prob = min(_apply_isotonic(_isotonic_curves, league, prop_type, side, true_prob), 0.999)
+        # Beta-Binomial smoothed empirical hit rate within the
+        # (league, prop, side, raw-prob band) bucket, shrunk toward
+        # raw_prob as the prior. 0.999 ceiling is a numerical guard for
+        # downstream log-loss / EV math; the calibrated number is
+        # allowed to push above raw_prob when the data warrants.
+        calibrated_prob = min(_apply_calibration(_calibration_table, league, prop_type, side, true_prob), 0.999)
         self.true_prob = calibrated_prob
         self.true_odds = prob_to_american(calibrated_prob)
 
