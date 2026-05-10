@@ -96,6 +96,45 @@ CLV_OBSERVATION_WEIGHT = 0.4
 # Anchor probability used by the diagnostic display.
 DISPLAY_ANCHOR = 0.60
 
+# ── Market-width confidence weighting ──────────────────────────────────────
+# Tight markets (low overround) carry more information per observation than
+# wide ones, so we scale each observation's weight by a factor derived from
+# its market width. Centred on 1.0 at WIDTH_PIVOT so the prior tuning
+# (SHRINKAGE_KAPPA, MIN_BUCKET_N_EFF) doesn't shift.
+#
+#   cw = clamp( WIDTH_PIVOT / max(width, _MIN_WIDTH_FLOOR),
+#               WIDTH_CONFIDENCE_MIN, WIDTH_CONFIDENCE_MAX )
+#
+# Examples (WIDTH_PIVOT=5):
+#   width=2  → cw=2.5 (clamped to 2.0)
+#   width=5  → cw=1.0
+#   width=15 → cw≈0.33 (clamped to 0.5)
+#   None     → cw=1.0 (legacy / unknown)
+WIDTH_PIVOT = 5.0
+WIDTH_CONFIDENCE_MIN = 0.5
+WIDTH_CONFIDENCE_MAX = 2.0
+_MIN_WIDTH_FLOOR = 0.5  # avoid runaway weights on near-zero widths
+
+
+def _confidence_weight(market_width) -> float:
+    """Map a market_width (overround %) into a multiplicative weight on the
+    observation. Returns 1.0 for None/invalid inputs so legacy rows stay
+    neutral instead of dropping out."""
+    if market_width is None:
+        return 1.0
+    try:
+        w = float(market_width)
+    except (ValueError, TypeError):
+        return 1.0
+    if w <= 0:
+        return 1.0
+    raw = WIDTH_PIVOT / max(w, _MIN_WIDTH_FLOOR)
+    if raw < WIDTH_CONFIDENCE_MIN:
+        return WIDTH_CONFIDENCE_MIN
+    if raw > WIDTH_CONFIDENCE_MAX:
+        return WIDTH_CONFIDENCE_MAX
+    return raw
+
 
 # ---------------------------------------------------------------------------
 # Pool Adjacent Violators (weighted)
@@ -379,13 +418,16 @@ def _ingest_resolved_row(state: dict, league: str, prop: str, side: str,
                          true_prob: float, result: str,
                          closing_prob: float | None,
                          resolved_at: datetime | None,
-                         now: datetime) -> None:
+                         now: datetime,
+                         confidence_weight: float = 1.0) -> None:
     """Fold a single resolved row's signals into the accumulators.
 
     `resolved_at` (not game_start) drives the recency weight: the moment we
     learned the outcome is what matters for "how old is this evidence."
+    `confidence_weight` is a multiplicative factor (default 1.0) derived
+    from the market width — tight markets carry more weight per observation.
     """
-    rec_w = _recency_weight(resolved_at, now)
+    rec_w = _recency_weight(resolved_at, now) * float(confidence_weight or 1.0)
     if rec_w <= 0:
         return
 
@@ -503,32 +545,63 @@ def update_isotonic_calibration() -> dict | None:
                 _decay_stats(state["props"], decay)
 
     # ── 2. Cursor pulls ─────────────────────────────────────────────────
-    obs_cols  = "league, prop, side, true_prob, result, closing_prob, resolved_at"
-    legs_cols = "league, prop, side, true_prob, result, closing_prob, resolved_at"
+    # We select both `true_prob` (calibrated, kept for backward compat) and
+    # `raw_true_prob` (the pre-calibration consensus, added in
+    # migration_006). The refit prefers raw_true_prob — training on the
+    # calibrated value created a feedback loop where the calibrator was
+    # learning the mapping from its own previous output to outcomes
+    # instead of from the raw consensus to outcomes. `market_width` is
+    # used as a confidence weight on each observation: tight markets
+    # contribute more, wide markets less.
+    obs_cols  = "league, prop, side, true_prob, raw_true_prob, market_width, result, closing_prob, resolved_at"
+    legs_cols = "league, prop, side, true_prob, raw_true_prob, result, closing_prob, resolved_at"
     obs_rows  = _pull_resolved_since(db, "market_observatory", state.get("hwm_observatory"), obs_cols)
+    if not obs_rows:
+        # Pre-migration_006 shim — fall back to the original column set.
+        obs_rows = _pull_resolved_since(
+            db, "market_observatory", state.get("hwm_observatory"),
+            "league, prop, side, true_prob, result, closing_prob, resolved_at",
+        )
     leg_rows  = _pull_resolved_since(db, "legs", state.get("hwm_legs"), legs_cols)
+    if not leg_rows:
+        leg_rows = _pull_resolved_since(
+            db, "legs", state.get("hwm_legs"),
+            "league, prop, side, true_prob, result, closing_prob, resolved_at",
+        )
 
     # ── 3. Fold into accumulators ───────────────────────────────────────
     new_hwm_obs  = state.get("hwm_observatory")
     new_hwm_legs = state.get("hwm_legs")
     n_ingested = 0
 
+    def _row_raw_prob(r) -> float | None:
+        """Prefer raw_true_prob; fall back to true_prob for legacy rows."""
+        for key in ("raw_true_prob", "true_prob"):
+            v = r.get(key)
+            if v is None:
+                continue
+            try:
+                f = float(v)
+            except (ValueError, TypeError):
+                continue
+            if 0.0 < f < 1.0:
+                return f
+        return None
+
     for r in obs_rows:
         league = r.get("league")
         if not league:
             continue
-        try:
-            tp = float(r.get("true_prob") or 0.0)
-        except (ValueError, TypeError):
-            continue
-        if not (0.0 < tp < 1.0):
+        tp = _row_raw_prob(r)
+        if tp is None:
             continue
         ra = r.get("resolved_at")
         ra_dt = _parse_dt(ra)
+        cw = _confidence_weight(r.get("market_width"))
         _ingest_resolved_row(state, league, r.get("prop") or "",
                              (r.get("side") or "").lower(), tp,
                              r.get("result") or "", r.get("closing_prob"),
-                             ra_dt, now)
+                             ra_dt, now, confidence_weight=cw)
         n_ingested += 1
         if ra and (new_hwm_obs is None or ra > new_hwm_obs):
             new_hwm_obs = ra
@@ -537,18 +610,17 @@ def update_isotonic_calibration() -> dict | None:
         league = r.get("league")
         if not league:
             continue
-        try:
-            tp = float(r.get("true_prob") or 0.0)
-        except (ValueError, TypeError):
-            continue
-        if not (0.0 < tp < 1.0):
+        tp = _row_raw_prob(r)
+        if tp is None:
             continue
         ra = r.get("resolved_at")
         ra_dt = _parse_dt(ra)
+        # `legs` rows don't carry market_width yet — neutral confidence (1.0)
+        # until the bet logger starts populating it on the legs path too.
         _ingest_resolved_row(state, league, r.get("prop") or "",
                              (r.get("side") or "").lower(), tp,
                              r.get("result") or "", r.get("closing_prob"),
-                             ra_dt, now)
+                             ra_dt, now, confidence_weight=1.0)
         n_ingested += 1
         if ra and (new_hwm_legs is None or ra > new_hwm_legs):
             new_hwm_legs = ra
@@ -582,16 +654,11 @@ def update_isotonic_calibration() -> dict | None:
     except Exception as exc:
         logger.warning("IsotonicCalibration: Supabase mirror failed: %s", exc)
 
-    # Build the simpler Beta-Binomial empirical lookup off the same
-    # accumulators. Lives in its own file/Supabase key so swapping
-    # consumers between the two calibrators is a one-line change.
-    try:
-        from engine.empirical_calibration import (
-            build_empirical_table, save_empirical_calibration,
-        )
-        save_empirical_calibration(build_empirical_table(state))
-    except Exception as exc:
-        logger.warning("EmpiricalCalibration: refit failed: %s", exc)
+    # NOTE: the parallel Beta-Binomial empirical table that used to be
+    # rebuilt here was retired when ev_calculator/clv_checker switched to
+    # the isotonic curves on the live path. The empirical_calibration
+    # module is left in place for diagnostic / experimental use but is no
+    # longer maintained by the refit job.
 
     _save_state(state)
 
@@ -708,15 +775,23 @@ def _heatmap_from_db() -> list[dict]:
     def _ingest_rows(table: str) -> None:
         page_size = 1000
         offset = 0
+        # Try the migration_006 column first; fall back to the legacy column
+        # set if raw_true_prob doesn't exist on the deployed schema.
+        select_cols_v2 = "league, prop, side, true_prob, raw_true_prob, result, resolved_at"
+        select_cols_v1 = "league, prop, side, true_prob, result, resolved_at"
+        cols = select_cols_v2
         while True:
             try:
                 q = (db.table(table)
-                       .select("league, prop, side, true_prob, result, resolved_at")
+                       .select(cols)
                        .gte("resolved_at", cutoff_iso)
                        .order("resolved_at", desc=False)
                        .range(offset, offset + page_size - 1))
                 res = q.execute()
             except Exception as exc:
+                if cols == select_cols_v2:
+                    cols = select_cols_v1
+                    continue
                 logger.warning(
                     "Heatmap fallback: %s pull failed (resolved_at missing?): %s",
                     table, exc,
@@ -729,9 +804,19 @@ def _heatmap_from_db() -> list[dict]:
                 side = (r.get("side") or "").lower()
                 if not league or not prop or side not in ("over", "under"):
                     continue
-                try:
-                    tp = float(r.get("true_prob") or 0.0)
-                except (ValueError, TypeError):
+                # Prefer raw_true_prob; fall back to true_prob for legacy rows.
+                tp = None
+                for key in ("raw_true_prob", "true_prob"):
+                    v = r.get(key)
+                    if v is None:
+                        continue
+                    try:
+                        tp = float(v)
+                    except (ValueError, TypeError):
+                        tp = None
+                    if tp is not None:
+                        break
+                if tp is None:
                     continue
                 if not (0.0 < tp < 1.0):
                     continue

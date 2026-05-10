@@ -697,14 +697,21 @@ def _run_pipeline_body():
 
             def get_combined_true_odds(side):
                 """Compute consensus true probability via the VWAP engine,
-                using each book's per-side equivalent line."""
+                using each book's per-side equivalent line.
+
+                Returns (best_odds, final_true_prob, true_american_odds, market_width).
+                `market_width` is the sharpness-weighted overround across the
+                contributing books (None for single-source). The calibrator
+                uses it as a confidence weight on each observation."""
                 match_books = books_from_match_for_side(m, side)
                 if not match_books:
-                    return None, None, None
-                consensus_prob, worst_case_prob, meta = compute_true_probability(match_books, side)
+                    return None, None, None, None
+                consensus_prob, worst_case_prob, meta = compute_true_probability(
+                    match_books, side, league=m.pp.league,
+                )
 
                 if consensus_prob is None:
-                    return None, None, None
+                    return None, None, None, None
 
                 # Find the best odds for display (includes derived complement odds)
                 odds_list = [
@@ -718,7 +725,13 @@ def _run_pipeline_body():
 
                 # Use worst-case probability for EV decisions (most conservative)
                 final_true_prob = worst_case_prob
-                return best_odds, final_true_prob, prob_to_american(final_true_prob) if final_true_prob else None
+                market_width = meta.get("market_width") if isinstance(meta, dict) else None
+                return (
+                    best_odds,
+                    final_true_prob,
+                    prob_to_american(final_true_prob) if final_true_prob else None,
+                    market_width,
+                )
 
             def _first_book_for_side(side: str):
                 """Pick the first book that prices the given side. Used
@@ -732,7 +745,7 @@ def _run_pipeline_body():
 
             # Process Over side
             if pp_side in ("both", "over") and any_over:
-                best, prob, true = get_combined_true_odds("over")
+                best, prob, true, mw = get_combined_true_odds("over")
                 if best is not None:
                     base_over = _base_for_side("over")
                     fd_o  = _book_display_odds("over", "fd",  fd_margin)
@@ -764,7 +777,8 @@ def _run_pipeline_body():
                             over_odds=first_bk.over_odds,
                             under_odds=first_bk.under_odds,
                             both_sided=first_bk.both_sided,
-                            pp_player_id=m.pp.player_id
+                            pp_player_id=m.pp.player_id,
+                            market_width=mw,
                         )
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
@@ -778,7 +792,7 @@ def _run_pipeline_body():
 
             # Process Under side
             if pp_side in ("both", "under") and any_under:
-                best, prob, true = get_combined_true_odds("under")
+                best, prob, true, mw = get_combined_true_odds("under")
                 if best is not None:
                     base_under = _base_for_side("under")
                     fd_u  = _book_display_odds("under", "fd",  fd_margin)
@@ -810,7 +824,8 @@ def _run_pipeline_body():
                             over_odds=first_bk.over_odds,
                             under_odds=first_bk.under_odds,
                             both_sided=first_bk.both_sided,
-                            pp_player_id=m.pp.player_id
+                            pp_player_id=m.pp.player_id,
+                            market_width=mw,
                         )
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
@@ -1011,6 +1026,15 @@ def _run_pipeline_body():
                 _books_supported = True
                 for b in bets:
                     tp = float(b.get("true_prob") or 0)
+                    # raw_true_prob is the pre-calibration consensus probability.
+                    # The refit reads this column (with COALESCE fallback to
+                    # true_prob for legacy rows from before migration_006), so
+                    # the calibrator trains on raw consensus → empirical hit
+                    # rate rather than on its own previous output.
+                    raw_tp_val = b.get("raw_true_prob")
+                    raw_tp = float(raw_tp_val) if raw_tp_val is not None else tp
+                    mw_val = b.get("market_width")
+                    mw = float(mw_val) if mw_val is not None else None
                     player = b.get("player_name", "")
                     league = b.get("league", "")
                     prop   = b.get("prop_type", "")
@@ -1019,23 +1043,34 @@ def _run_pipeline_body():
                     start  = b.get("start_time", "")
                     market_key = f"{player}|{league}|{prop}|{line}|{side}|{start}"
                     row = {
-                        "market_key":  market_key,
-                        "player":      player,
-                        "league":      league,
-                        "prop":        prop,
-                        "line":        float(line) if line != "" else 0,
-                        "side":        side,
-                        "true_prob":   round(tp, 4),
-                        "game_start":  start if start else None,
-                        "result":      "pending",
+                        "market_key":     market_key,
+                        "player":         player,
+                        "league":         league,
+                        "prop":           prop,
+                        "line":           float(line) if line != "" else 0,
+                        "side":           side,
+                        "true_prob":      round(tp, 4),
+                        "raw_true_prob":  round(raw_tp, 4),
+                        "game_start":     start if start else None,
+                        "result":         "pending",
                     }
+                    if mw is not None:
+                        row["market_width"] = round(mw, 4)
                     bp = books_probs_map.get(b.get("bet_id")) if books_probs_map else None
                     if bp:
                         row["books"] = bp
                     rows_to_upsert.append(row)
                 if rows_to_upsert:
+                    # Try the full row first. If a column is missing on the
+                    # deployed schema (pre-migration_003 lacks `books`,
+                    # pre-migration_006 lacks `raw_true_prob` /
+                    # `market_width`), strip it and retry — keeps logging
+                    # working before the operator runs the new migration.
+                    _OPTIONAL_COLS = ("books", "raw_true_prob", "market_width")
+                    def _strip(rows, col):
+                        for r in rows:
+                            r.pop(col, None)
                     try:
-                        # Batch upsert, skip duplicates via market_key unique constraint
                         obs_db.table("market_observatory").upsert(
                             rows_to_upsert,
                             on_conflict="market_key",
@@ -1043,12 +1078,13 @@ def _run_pipeline_body():
                         ).execute()
                         logger.info("Observatory: logged %d observations", len(rows_to_upsert))
                     except Exception as upsert_exc:
-                        # Pre-migration_003: the `books` column doesn't exist.
-                        # Strip it and retry once. This keeps the pipeline
-                        # working for users who haven't applied the migration.
-                        if any("books" in r for r in rows_to_upsert):
-                            for r in rows_to_upsert:
-                                r.pop("books", None)
+                        last_exc = upsert_exc
+                        succeeded = False
+                        # Strip optional columns one at a time, retrying after each.
+                        for col in _OPTIONAL_COLS:
+                            if not any(col in r for r in rows_to_upsert):
+                                continue
+                            _strip(rows_to_upsert, col)
                             try:
                                 obs_db.table("market_observatory").upsert(
                                     rows_to_upsert,
@@ -1056,13 +1092,16 @@ def _run_pipeline_body():
                                     ignore_duplicates=True
                                 ).execute()
                                 logger.info(
-                                    "Observatory: logged %d observations (without per-book data — apply migration_003.sql to enable sharpness fitting)",
-                                    len(rows_to_upsert),
+                                    "Observatory: logged %d observations (stripped '%s' — apply pending migration to enable)",
+                                    len(rows_to_upsert), col,
                                 )
-                            except Exception as exc2:
-                                logger.error("Observatory logging retry failed: %s", exc2)
-                        else:
-                            logger.error("Observatory logging error: %s", upsert_exc)
+                                succeeded = True
+                                break
+                            except Exception as retry_exc:
+                                last_exc = retry_exc
+                                continue
+                        if not succeeded:
+                            logger.error("Observatory logging error: %s", last_exc)
             except Exception as e:
                 logger.error("Observatory logging error: %s", e)
 

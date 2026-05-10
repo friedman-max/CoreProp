@@ -358,6 +358,13 @@ class BacktestLogger:
         rows = []
         for i, bet in enumerate(best_legs, start=1):
             true_p = round(float(bet.get("true_prob") or 0), 4)
+            # raw_true_prob is the pre-calibration consensus probability —
+            # required by the calibration refit so it trains on raw → outcome
+            # rather than on calibrated → outcome (the feedback-loop bug
+            # documented in migration_006). Falls back to true_prob for
+            # safety in case a caller forgets to populate it.
+            raw_p_val = bet.get("raw_true_prob")
+            raw_p = round(float(raw_p_val), 4) if raw_p_val is not None else true_p
             rows.append({
                 "slip_id":          slip_id,
                 "user_id":          self.user_id,
@@ -372,6 +379,7 @@ class BacktestLogger:
                 "line":             bet.get("pp_line", ""),
                 "side":             bet.get("side", ""),
                 "true_prob":        true_p,
+                "raw_true_prob":    raw_p,
                 "ind_ev_pct":       round(_ev(bet), 4),
                 "game_start":       bet.get("start_time", ""),
                 "closing_prob":     true_p,
@@ -400,23 +408,34 @@ class BacktestLogger:
             db_legs = []
             for r in rows:
                 db_legs.append({
-                    "slip_id":      slip_id,
-                    "user_id":      self.user_id,
-                    "leg_num":      r["leg_num"],
-                    "player":       r["player"],
-                    "league":       r["league"],
-                    "prop":         r["prop"],
-                    "line":         r["line"],
-                    "side":         r["side"],
-                    "true_prob":    r["true_prob"],
-                    "ind_ev_pct":   r["ind_ev_pct"],
-                    "game_start":   r["game_start"] if r["game_start"] else None,
-                    "closing_prob": r["closing_prob"],
-                    "clv_pct":      r["clv_pct"],
-                    "result":       r["result"],
-                    "stat_actual":  None if r["stat_actual"] == "" else r["stat_actual"]
+                    "slip_id":       slip_id,
+                    "user_id":       self.user_id,
+                    "leg_num":       r["leg_num"],
+                    "player":        r["player"],
+                    "league":        r["league"],
+                    "prop":          r["prop"],
+                    "line":          r["line"],
+                    "side":          r["side"],
+                    "true_prob":     r["true_prob"],
+                    "raw_true_prob": r["raw_true_prob"],
+                    "ind_ev_pct":    r["ind_ev_pct"],
+                    "game_start":    r["game_start"] if r["game_start"] else None,
+                    "closing_prob":  r["closing_prob"],
+                    "clv_pct":       r["clv_pct"],
+                    "result":        r["result"],
+                    "stat_actual":   None if r["stat_actual"] == "" else r["stat_actual"]
                 })
-            db.table("legs").insert(db_legs).execute()
+            try:
+                db.table("legs").insert(db_legs).execute()
+            except Exception as legs_exc:
+                # Pre-migration_006: `raw_true_prob` column doesn't exist
+                # on legs. Strip it and retry once.
+                if any("raw_true_prob" in dl for dl in db_legs):
+                    for dl in db_legs:
+                        dl.pop("raw_true_prob", None)
+                    db.table("legs").insert(db_legs).execute()
+                else:
+                    raise legs_exc
             logger.info("Backtest: logged Auto-Slip %s (6-leg EV=%.2f%%) for user %s", slip_id, best_ev * 100, self.user_id)
         except Exception as db_exc:
             logger.error("Backtest: Supabase write failed for slip %s: %s", slip_id, db_exc)

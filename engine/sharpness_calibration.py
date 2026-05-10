@@ -1,5 +1,5 @@
 """
-Empirical sharpness-weight calibration for the consensus engine.
+Empirical sharpness-weight + bias calibration for the consensus engine.
 
 The consensus engine's per-book weights (`SHARPNESS_WEIGHTS` in
 `engine/consensus.py`) are hardcoded — FanDuel:1.20, Pinnacle:0.95,
@@ -8,18 +8,38 @@ book's influence reflects its actual price-discovery quality on this
 platform's market mix, not a global prior.
 
 Signal: closing line value. If a book's devigged probability at log time is
-consistently close to the eventual closing probability, that book is sharp
-and should carry more weight in consensus. We measure this directly via the
-mean squared error of (book_devigged_prob − closing_prob) per book.
+consistently close to the eventual closing probability, that book is sharp.
 
-Mapping MSE → weight:
-    err_b   = sqrt(MSE_b)                      # book's typical CLV error
-    score_b = 1 / max(err_b, EPSILON)          # inverse: sharper is bigger
-    weight_b = score_b / mean(scores) * BASE   # rescale around 1.0
+Two outputs per refit:
+
+  1. **Weight** (variance signal) — inverse of RMSE between the book's
+     devigged prob and the eventual closing prob. Sharper books get more
+     influence in the VWAP consensus.
+
+         err_b   = sqrt(MSE_b)
+         score_b = 1 / max(err_b, EPSILON)
+         weight_b = score_b / mean(scores) * BASE
+
+  2. **Bias** (signed-error signal) — mean of (book_p − closing_p) per
+     (book, league). A book that is consistently 1.5pp high on NBA overs
+     has bias +0.015 in that bucket; consensus subtracts the bias before
+     taking the VWAP so a sharp-but-biased book doesn't drag the
+     consensus in a known direction.
+
+         bias_{b,L} = mean over rows in (book b, league L) of
+                      (book_devigged_prob - closing_prob)
+         corrected_p = clamp(book_devigged_prob - bias_{b,L}, eps, 1-eps)
+
+     We require MIN_BIAS_OBS observations per (book, league) bucket
+     before applying the correction; otherwise we leave the book's prob
+     untouched. Per-(book, league, prop, side) granularity is desirable
+     long-term but explodes the bucket count, so the first cut is
+     (book, league) only.
 
 Books with fewer than `MIN_BOOK_OBS` observations fall back to the hardcoded
 weight so we don't refit on noise. The output JSON lives next to the
-isotonic curves and is loaded by `consensus._get_sharpness_weight()`.
+isotonic curves and is loaded by `consensus._get_sharpness_weight()` and
+`consensus._get_book_bias()`.
 
 Forward-compatible: this module reads the `books` JSONB column added by
 `migration_003.sql`. If the column doesn't exist or no rows have data
@@ -45,6 +65,15 @@ SHARPNESS_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "sharpnes
 # weight and fall back to the hardcoded prior. ~150 gives RMSE std error of
 # roughly 0.005 on a typical book.
 MIN_BOOK_OBS = 150
+
+# Per-(book, league) bucket bias requires its own minimum because each
+# bucket sees a fraction of the book's overall observations. Lower than
+# MIN_BOOK_OBS because the signed mean has lower variance than the RMSE.
+MIN_BIAS_OBS = 75
+
+# Hard cap on |bias| we'll ever apply, to defend against a runaway estimate
+# from a noisy bucket. ±5pp is well beyond what real books exhibit.
+MAX_BIAS = 0.05
 
 # Recency half-life. Same intuition as the calibration recency: recent CLV
 # residuals reflect current market behavior.
@@ -108,7 +137,7 @@ def update_sharpness_weights() -> dict | None:
     try:
         res = (
             db.table("market_observatory")
-            .select("books, closing_prob, game_start")
+            .select("books, closing_prob, game_start, league")
             .not_.is_("closing_prob", "null")
             .or_(recency_filter)
             .execute()
@@ -122,10 +151,19 @@ def update_sharpness_weights() -> dict | None:
         logger.info("Sharpness: no rows with per-book + closing_prob data yet.")
         return None
 
-    # Per-book accumulators: weighted MSE.
+    # Per-book accumulators for VARIANCE (weight fit): weighted MSE.
     sum_w_err: dict[str, float] = defaultdict(float)   # Σ (w · (book_p − closing_p)²)
     sum_w:     dict[str, float] = defaultdict(float)   # Σ w
     n_obs:     dict[str, int]   = defaultdict(int)
+
+    # Per-(book, league) accumulators for BIAS (signed-error fit).
+    sum_w_signed: dict[tuple[str, str], float] = defaultdict(float)  # Σ w·(book_p − closing_p)
+    sum_w_bias:   dict[tuple[str, str], float] = defaultdict(float)  # Σ w
+    n_obs_bias:   dict[tuple[str, str], int]   = defaultdict(int)
+
+    # Need league per row for the bias fit; pull it alongside everything else.
+    # The select() above already returns whatever Supabase has; row.get("league")
+    # is None for legacy rows missing it, in which case we skip bias accumulation.
 
     for r in rows:
         try:
@@ -142,6 +180,8 @@ def update_sharpness_weights() -> dict | None:
         if w <= 0:
             continue
 
+        league = (r.get("league") or "").strip().upper() or None
+
         for book_name, book_p in books.items():
             try:
                 bp = float(book_p)
@@ -150,9 +190,16 @@ def update_sharpness_weights() -> dict | None:
             if not (0.0 < bp < 1.0):
                 continue
             err_sq = (bp - cp) ** 2
+            signed = (bp - cp)
             sum_w_err[book_name] += w * err_sq
             sum_w[book_name]     += w
             n_obs[book_name]     += 1
+
+            if league:
+                key = (book_name, league)
+                sum_w_signed[key] += w * signed
+                sum_w_bias[key]   += w
+                n_obs_bias[key]   += 1
 
     eligible = {b: n_obs[b] for b in n_obs if n_obs[b] >= MIN_BOOK_OBS}
     if not eligible:
@@ -178,14 +225,30 @@ def update_sharpness_weights() -> dict | None:
     mean_score = sum(score.values()) / len(score)
     weights = {b: round((s / mean_score) * TARGET_MEAN_WEIGHT, 4) for b, s in score.items()}
 
+    # ── Biases: per-(book, league) signed mean error, clamped to MAX_BIAS.
+    biases: dict[str, dict[str, float]] = {}
+    for (book_name, league), n in n_obs_bias.items():
+        if n < MIN_BIAS_OBS:
+            continue
+        denom = sum_w_bias[(book_name, league)]
+        if denom <= 0:
+            continue
+        raw_bias = sum_w_signed[(book_name, league)] / denom
+        # Clamp to defend against runaway estimates.
+        clamped = max(-MAX_BIAS, min(MAX_BIAS, raw_bias))
+        biases.setdefault(book_name, {})[league] = round(clamped, 5)
+
     out = {
-        "version":   1,
+        "version":   2,
         "fitted_at": now.isoformat(),
         "config": {
             "min_book_obs":             MIN_BOOK_OBS,
+            "min_bias_obs":             MIN_BIAS_OBS,
+            "max_bias":                 MAX_BIAS,
             "sharpness_half_life_days": SHARPNESS_HALF_LIFE_DAYS,
         },
         "weights":   weights,
+        "biases":    biases,
         "diagnostics": {
             b: {"n_obs": int(n_obs[b]), "rmse": round(rmse[b], 5), "weight": weights[b]}
             for b in weights
@@ -207,10 +270,12 @@ def update_sharpness_weights() -> dict | None:
     except Exception as exc:
         logger.warning("Sharpness: Supabase mirror failed: %s", exc)
 
+    n_bias_buckets = sum(len(v) for v in biases.values())
     logger.info(
-        "Sharpness: refit weights for %d books — %s",
+        "Sharpness: refit weights for %d books — %s; bias buckets: %d",
         len(weights),
         ", ".join(f"{b}={w:.2f}" for b, w in sorted(weights.items())),
+        n_bias_buckets,
     )
     return out
 
@@ -252,3 +317,44 @@ def load_sharpness_weights() -> dict[str, float]:
         return {str(k).lower(): float(v) for k, v in weights.items()}
     except Exception:
         return {}
+
+
+def load_sharpness_biases() -> dict[str, dict[str, float]]:
+    """Load per-(book, league) signed-bias corrections from the sharpness
+    file. Returns `{book_lower: {LEAGUE_UPPER: bias_float, ...}, ...}`. Empty
+    dict when no fit exists or the v2 schema isn't yet on disk — the
+    consensus engine then leaves book probabilities untouched.
+    """
+    raw = None
+    if os.path.exists(SHARPNESS_FILE):
+        try:
+            with open(SHARPNESS_FILE, "r") as f:
+                raw = json.load(f)
+        except Exception:
+            raw = None
+
+    if raw is None:
+        try:
+            from engine.persistence import load_state_from_supabase
+            mirrored, _ = load_state_from_supabase("sharpness_weights")
+            if isinstance(mirrored, dict):
+                raw = mirrored
+        except Exception:
+            pass
+
+    if not isinstance(raw, dict):
+        return {}
+    biases = raw.get("biases") or {}
+    if not isinstance(biases, dict):
+        return {}
+    out: dict[str, dict[str, float]] = {}
+    for book, by_league in biases.items():
+        if not isinstance(by_league, dict):
+            continue
+        try:
+            out[str(book).lower()] = {
+                str(lg).upper(): float(v) for lg, v in by_league.items()
+            }
+        except Exception:
+            continue
+    return out

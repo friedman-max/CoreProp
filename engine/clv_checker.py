@@ -20,8 +20,8 @@ from typing import Any
 
 from engine.database import get_db
 from engine.consensus import books_from_match_for_side, compute_true_probability
-from engine.empirical_calibration import (
-    load_empirical_calibration, apply_empirical as _apply_calibration,
+from engine.isotonic_calibration import (
+    load_isotonic_calibration, calibrate as _apply_calibration,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,19 +42,19 @@ class CLVTracker:
     def __init__(self):
         # CLV compares closing_prob against the true_prob stored at bet-log
         # time. That stored value is ALREADY calibrated by BetResult.__init__
-        # (raw worst_case_prob -> empirical Beta-Binomial), so the closing
-        # side must apply the identical calibration or CLV shows a phantom
-        # jump the size of the calibration gap the moment the bet is logged.
-        # The table is reloaded at the start of each update pass so we never
+        # (raw worst_case_prob -> isotonic curve), so the closing side must
+        # apply the identical calibration or CLV shows a phantom jump the
+        # size of the calibration gap the moment the bet is logged. The
+        # curves are reloaded at the start of each update pass so we never
         # apply a stale calibration while ev_calculator is using a fresh one.
-        self._calibration_table = load_empirical_calibration()
+        self._calibration_table = load_isotonic_calibration()
 
     def _refresh_calibration(self) -> None:
-        """Reload the on-disk empirical calibration table. Cheap (single
-        JSON read); called once per pipeline tick so closing-side
-        calibration tracks whatever ev_calculator is currently using."""
+        """Reload the on-disk isotonic curves. Cheap (single JSON read);
+        called once per pipeline tick so closing-side calibration tracks
+        whatever ev_calculator is currently using."""
         try:
-            self._calibration_table = load_empirical_calibration()
+            self._calibration_table = load_isotonic_calibration()
         except Exception as exc:
             logger.warning("CLVTracker: calibration reload failed: %s", exc)
 
@@ -331,7 +331,9 @@ class CLVTracker:
                 books = books_from_match_for_side(m, side)
                 if not books:
                     continue
-                _consensus, worst_case, _meta = compute_true_probability(books, side)
+                _consensus, worst_case, _meta = compute_true_probability(
+                    books, side, league=getattr(m.pp, "league", None),
+                )
                 if worst_case is not None:
                     current_probs[(player, prop, side, line)] = worst_case
 

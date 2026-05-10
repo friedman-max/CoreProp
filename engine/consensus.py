@@ -57,20 +57,44 @@ SHARPNESS_WEIGHTS = {
 # Default weight for any unknown sportsbook
 _DEFAULT_WEIGHT = 0.80
 
-# Empirical weights take precedence when they exist. Refreshed by
+# Empirical weights & biases take precedence when they exist. Refreshed by
 # `update_sharpness_weights()` in the hourly model-refit job; reload via
-# `reload_sharpness()` so live consensus picks up new weights without restart.
-from engine.sharpness_calibration import load_sharpness_weights as _load_sharp_weights
+# `reload_sharpness()` so live consensus picks up new values without restart.
+from engine.sharpness_calibration import (
+    load_sharpness_weights as _load_sharp_weights,
+    load_sharpness_biases as _load_sharp_biases,
+)
 
 _empirical_sharpness: dict[str, float] = _load_sharp_weights()
+_empirical_biases:    dict[str, dict[str, float]] = _load_sharp_biases()
 
 
 def reload_sharpness() -> int:
     """Re-read sharpness_weights.json from disk. Returns the number of books
-    with empirical weights now active."""
-    global _empirical_sharpness
+    with empirical weights now active. Also reloads bias corrections."""
+    global _empirical_sharpness, _empirical_biases
     _empirical_sharpness = _load_sharp_weights()
+    _empirical_biases    = _load_sharp_biases()
     return len(_empirical_sharpness)
+
+
+# Numerical floor on a corrected probability so we don't end up at exactly
+# 0 or 1 after a bias subtraction (devig math downstream takes log()s).
+_PROB_FLOOR = 1e-4
+_PROB_CEIL  = 1.0 - _PROB_FLOOR
+
+
+def _get_book_bias(book_name: str, league: str | None) -> float:
+    """Return the signed bias correction for a (book, league) pair, or 0.0
+    when no empirical estimate is available for the bucket. Positive value
+    means the book overestimates (devigged > closing); we subtract this
+    from the book's prob before the VWAP."""
+    if not league:
+        return 0.0
+    by_league = _empirical_biases.get(book_name.lower())
+    if not by_league:
+        return 0.0
+    return float(by_league.get(league.upper(), 0.0))
 
 # Minimum market width (overround %) to avoid division-by-zero.
 # A market with lower overround than this is already extremely efficient.
@@ -212,6 +236,7 @@ def _get_side_odds(book: BookOdds, side: str) -> Optional[int | float]:
 def compute_true_probability(
     books: list[BookOdds],
     side: str,
+    league: str | None = None,
 ) -> tuple[Optional[float], Optional[float], dict]:
     """
     Compute the consensus true probability for a given side (over/under)
@@ -224,6 +249,11 @@ def compute_true_probability(
     - consensus_prob: VWAP sharpness-weighted probability (informational)
     - worst_case_prob: most conservative probability (used for EV decisions)
     - metadata: dict with n_books, devig_method, market_widths, etc.
+
+    `league` is used to look up the per-(book, league) signed bias
+    correction so a book that's systematically high or low on, say, NBA
+    overs gets debiased before contributing to the VWAP. None disables
+    the correction (treated as "unknown bucket → trust the book").
     """
     # ── Safeguard: reject purely complement-derived probabilities ─────────
     # If NO book has direct odds for the requested side (i.e. every book's
@@ -246,6 +276,14 @@ def compute_true_probability(
         if power_prob is None or odds is None:
             continue
 
+        # Per-(book, league) bias correction: subtract the empirical mean
+        # signed error so a sharp-but-shaded book doesn't drag consensus.
+        bias = _get_book_bias(book.book_name, league)
+        if bias != 0.0:
+            power_prob = max(_PROB_FLOOR, min(_PROB_CEIL, power_prob - bias))
+            if worst_prob is not None:
+                worst_prob = max(_PROB_FLOOR, min(_PROB_CEIL, worst_prob - bias))
+
         weight = _get_sharpness_weight(book.book_name)
         width = _get_market_width(book)
 
@@ -260,7 +298,7 @@ def compute_true_probability(
     # Single-source fallback
     # ------------------------------------------------------------------
     if n_books == 1:
-        power_prob, worst_prob, _weight, _width, odds = entries[0]
+        power_prob, worst_prob, _weight, width, odds = entries[0]
         prob = worst_prob or power_prob
 
         # Apply the scaled single-source uncertainty discount
@@ -269,7 +307,11 @@ def compute_true_probability(
         return (
             discounted,
             discounted,
-            {"n_books": 1, "devig_method": "single_source_scaled"},
+            {
+                "n_books":      1,
+                "devig_method": "single_source_scaled",
+                "market_width": float(width),
+            },
         )
 
     # ------------------------------------------------------------------
@@ -280,6 +322,8 @@ def compute_true_probability(
 
     weighted_sum = 0.0
     weight_denom = 0.0
+    width_weighted_sum = 0.0
+    sharpness_weight_sum = 0.0
     worst_case_prob: Optional[float] = None
 
     for power_prob, worst_prob, weight, width, _odds in entries:
@@ -289,10 +333,19 @@ def compute_true_probability(
         weighted_sum += power_prob * effective_weight
         weight_denom += effective_weight
 
+        # Sharpness-weighted mean width — what we expose to the calibrator.
+        # We use plain `weight` (not effective_weight) so the width itself
+        # isn't double-weighted by 1/width when we average it.
+        width_weighted_sum += width * weight
+        sharpness_weight_sum += weight
+
         if worst_prob is not None and (worst_case_prob is None or worst_prob < worst_case_prob):
             worst_case_prob = worst_prob
 
     consensus_prob = weighted_sum / weight_denom if weight_denom > 0 else None
+    consensus_width = (
+        width_weighted_sum / sharpness_weight_sum if sharpness_weight_sum > 0 else None
+    )
 
     # The final worst-case should not exceed the consensus
     # (if consensus is lower due to weighting, use that)
@@ -300,9 +353,13 @@ def compute_true_probability(
         worst_case_prob = consensus_prob
 
     # Metadata kept minimal — callers (pipeline, clv_checker) only read the
-    # two probabilities. Building a per_book list per match allocated tens of
-    # thousands of short-lived dicts on every scrape cycle.
-    metadata = {"n_books": n_books, "devig_method": "power_vwap"}
+    # two probabilities + market_width. Building a per_book list per match
+    # allocated tens of thousands of short-lived dicts on every scrape cycle.
+    metadata = {
+        "n_books":      n_books,
+        "devig_method": "power_vwap",
+        "market_width": consensus_width,
+    }
 
     return consensus_prob, worst_case_prob, metadata
 

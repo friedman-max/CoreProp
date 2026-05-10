@@ -19,13 +19,16 @@ from engine.constants import (
 )
 from engine.devig import devig_power, devig_single_sided, prob_to_american
 from engine.matcher import MatchedProp
-from engine.empirical_calibration import (
-    load_empirical_calibration, apply_empirical as _apply_calibration,
+from engine.isotonic_calibration import (
+    load_isotonic_calibration, calibrate as _apply_calibration,
 )
 from engine.correlation import build_correlation_matrix, legs_metadata_from_bets
 
-# Module-level calibration table (refreshed on import or by calling reload_calibration)
-_calibration_table: dict = load_empirical_calibration()
+# Module-level calibration curves (refreshed on import or via reload_calibration).
+# We switched from the Beta-Binomial empirical table to the hierarchical
+# isotonic curves so a sparse (league, prop, side) bucket borrows strength
+# from neighbouring raw-prob bins instead of falling off a hard band edge.
+_calibration_curves: dict = load_isotonic_calibration()
 
 
 # ---------------------------------------------------------------------------
@@ -33,9 +36,9 @@ _calibration_table: dict = load_empirical_calibration()
 # ---------------------------------------------------------------------------
 
 def reload_calibration():
-    """Reload the empirical calibration table from disk (called after each recalibration)."""
-    global _calibration_table
-    _calibration_table = load_empirical_calibration()
+    """Reload the isotonic calibration curves from disk (called after each refit)."""
+    global _calibration_curves
+    _calibration_curves = load_isotonic_calibration()
 
 
 class BetResult:
@@ -44,7 +47,7 @@ class BetResult:
         "pp_line", "fd_line", "side",
         "raw_true_prob", "true_prob", "true_odds", "edge", "individual_ev_pct",
         "over_odds", "under_odds", "both_sided",
-        "pp_player_id", "start_time",
+        "pp_player_id", "start_time", "market_width",
     )
 
     def __init__(
@@ -62,6 +65,7 @@ class BetResult:
         both_sided: bool,
         pp_player_id: str,
         start_time: str = "",
+        market_width: Optional[float] = None,
     ):
         self.bet_id = bet_id
         self.player_name = player_name
@@ -76,13 +80,19 @@ class BetResult:
         self.both_sided = both_sided
         self.pp_player_id = pp_player_id
         self.start_time = start_time
+        self.market_width = market_width
 
-        # Beta-Binomial smoothed empirical hit rate within the
-        # (league, prop, side, raw-prob band) bucket, shrunk toward
-        # raw_prob as the prior. 0.999 ceiling is a numerical guard for
-        # downstream log-loss / EV math; the calibrated number is
-        # allowed to push above raw_prob when the data warrants.
-        calibrated_prob = min(_apply_calibration(_calibration_table, league, prop_type, side, true_prob), 0.999)
+        # Hierarchical isotonic calibration with Bayesian shrinkage:
+        # global PAV curve combined with the (league, prop, side) curve via
+        # κ-shrinkage. Strictly more flexible than the Beta-Binomial bands
+        # because PAV borrows monotone signal across neighbouring raw-prob
+        # bins instead of cliffing at hard band edges. 0.999 ceiling is a
+        # numerical guard for downstream log-loss / EV math; the calibrated
+        # number is allowed to push above raw_prob when the data warrants.
+        calibrated_prob = min(
+            _apply_calibration(_calibration_curves, league, prop_type, side, true_prob),
+            0.999,
+        )
         self.true_prob = calibrated_prob
         self.true_odds = prob_to_american(calibrated_prob)
 
@@ -99,6 +109,8 @@ class BetResult:
             "fd_line":           self.fd_line,
             "side":              self.side,
             "true_prob":         round(self.true_prob, 4),
+            "raw_true_prob":     round(self.raw_true_prob, 4),
+            "market_width":      round(self.market_width, 4) if self.market_width is not None else None,
             "true_odds":         self.true_odds,
             "edge":              round(self.edge, 4),
             "individual_ev_pct": round(self.individual_ev_pct, 4),
