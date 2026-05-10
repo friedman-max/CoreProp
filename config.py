@@ -17,6 +17,7 @@ MIN_INDIVIDUAL_EV_PCT = float(os.getenv("MIN_INDIVIDUAL_EV_PCT", "0.01"))  # 1%
 SCRAPE_ALL_LEAGUES = os.getenv("SCRAPE_ALL_LEAGUES", "false").lower() == "true"
 ACTIVE_LEAGUES = {
     "NBA":   os.getenv("LEAGUE_NBA", "true").lower()   == "true",
+    "WNBA":  os.getenv("LEAGUE_WNBA", "true").lower()  == "true",
     "MLB":   os.getenv("LEAGUE_MLB", "true").lower()   == "true",
     "NHL":   os.getenv("LEAGUE_NHL", "true").lower()   == "true",
     "NCAAB": os.getenv("LEAGUE_NCAAB", "true").lower() == "true",
@@ -26,6 +27,7 @@ ACTIVE_LEAGUES = {
 # FanDuel URLs per league
 FANDUEL_URLS = {
     "NBA":   "https://sportsbook.fanduel.com/navigation/nba",
+    "WNBA":  "https://sportsbook.fanduel.com/navigation/wnba",
     "MLB":   "https://sportsbook.fanduel.com/navigation/mlb",
     "NHL":   "https://sportsbook.fanduel.com/navigation/nhl",
     "NCAAB": "https://sportsbook.fanduel.com/navigation/ncaab",
@@ -34,6 +36,7 @@ FANDUEL_URLS = {
 # PrizePicks API league IDs
 PRIZEPICKS_LEAGUE_IDS = {
     "NBA":   7,
+    "WNBA":  3,
     "MLB":   2,
     "NHL":   8,
     "NCAAB": 20,   # PrizePicks calls this "CBB" (ID=20); 189 is a defunct alias that returns 0

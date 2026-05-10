@@ -347,6 +347,7 @@ async function waitForBoard(timeoutMs = 25000) {
 
 const LEAGUE_TAB_LABELS = {
   NBA:    ["NBA"],
+  WNBA:   ["WNBA"],
   MLB:    ["MLB"],
   NHL:    ["NHL"],
   NCAAB:  ["NCAAB", "CBB"],

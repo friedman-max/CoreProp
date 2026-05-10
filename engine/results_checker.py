@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # ESPN scoreboard (for game IDs by date)
 ESPN_SCOREBOARD = {
     "NBA":   "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
+    "WNBA":  "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard",
     "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard",
     "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard",
     "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
@@ -28,6 +29,7 @@ ESPN_SCOREBOARD = {
 # ESPN event summary (for box scores)
 ESPN_SUMMARY = {
     "NBA":   "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary",
+    "WNBA":  "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/summary",
     "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/summary",
     "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary",
     "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary",
@@ -37,6 +39,7 @@ ESPN_SUMMARY = {
 # Conservative estimate of how long after game_start a result can be fetched
 GAME_DURATION_MINUTES = {
     "NBA":   180,   # 3 h
+    "WNBA":  150,   # 2.5 h (40-min game)
     "NCAAB": 150,   # 2.5 h
     "MLB":   225,   # 3.75 h
     "NHL":   180,   # 3 h
@@ -674,6 +677,7 @@ class ESPNResultsChecker:
         
         league_path = {
             "NBA": "basketball/nba",
+            "WNBA": "basketball/wnba",
             "NCAAB": "basketball/mens-college-basketball",
             "MLB": "baseball/mlb",
             "NHL": "hockey/nhl"

@@ -67,7 +67,7 @@ def _normalize_prop_type(raw: str, league: str = "") -> Optional[str]:
         if raw_norm.endswith(" - saves") or "goalie saves" in raw_norm or "goalkeeper saves" in raw_norm or "saves" in raw_norm: return "Goalie Saves"
         if "goals" in raw_norm or "to score" in raw_norm or "goal-scorer" in raw_norm or "goalscorer" in raw_norm: return "Goals"
 
-    elif lkey in ("NBA", "NCAAB"):
+    elif lkey in ("NBA", "WNBA", "NCAAB"):
         if "made 3 point field goals" in raw_norm or "made threes" in raw_norm or " threes" in raw_norm: return "3-PT Made"
         if "points + rebounds + assists" in raw_norm or "pts + reb + ast" in raw_norm or "pts+reb+ast" in raw_norm: return "Pts+Rebs+Asts"
         if "points + rebounds" in raw_norm or "pts + reb" in raw_norm: return "Pts+Rebs"
@@ -554,6 +554,17 @@ LEAGUE_TABS = {
         "player-points", "player-rebounds", "player-assists",
         "player-threes", "player-props", "player-combos",
         "player-defense",
+    ],
+    "WNBA": [
+        "player-points", "player-rebounds", "player-assists",
+        "player-threes", "player-props", "player-combos",
+        "player-defense", "alternative-handicaps",
+        "player-performance-doubles",
+        "player-steals", "player-blocks", "player-turnovers",
+        "player-scoring-combos", "player-rebounds-assists",
+        "player-points-rebounds", "player-points-assists",
+        "player-steals-blocks", "player-double-double",
+        "player-triple-double", "player-fantasy-score",
     ],
     "NHL": [
         "shots", "goalies", "goals", "points-assists",

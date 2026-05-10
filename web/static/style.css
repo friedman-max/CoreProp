@@ -590,6 +590,11 @@ tbody tr.selected {
   color: #60a5fa;
 }
 
+.league-WNBA {
+  background: rgba(251, 146, 60, 0.15);
+  color: #fb923c;
+}
+
 .league-MLB {
   background: rgba(239, 68, 68, 0.15);
   color: #f87171;

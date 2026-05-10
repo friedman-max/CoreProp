@@ -3180,7 +3180,7 @@ async function loadSandboxStatTypes() {
             return;
         }
         const groups = await res.json();
-        const leagueOrder = ["NBA", "NCAAB", "MLB", "NHL", "SOCCER"];
+        const leagueOrder = ["NBA", "WNBA", "NCAAB", "MLB", "NHL", "SOCCER"];
         const sortedLeagues = Object.keys(groups).sort((a, b) => {
             const ia = leagueOrder.indexOf(a);
             const ib = leagueOrder.indexOf(b);

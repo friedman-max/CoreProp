@@ -1464,7 +1464,12 @@ def _get_user_config(user: Optional[dict]) -> dict:
                 row = res.data[0]
                 base["min_ev_pct"] = float(row.get("min_ev_pct", -10.0))
                 if row.get("active_leagues"):
-                    base["active_leagues"] = row["active_leagues"]
+                    # Merge so newly-added leagues (e.g. WNBA) inherit the
+                    # config default for users who saved settings before the
+                    # league existed.
+                    merged = dict(base["active_leagues"])
+                    merged.update(row["active_leagues"])
+                    base["active_leagues"] = merged
                 base["refresh_interval_min"] = int(row.get("refresh_interval_min", 5))
                 base["auto_backtest"] = bool(row.get("auto_backtest", False))
                 # auto_slip_* may be missing on rows from before migration_004.

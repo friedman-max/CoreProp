@@ -45,6 +45,21 @@ LEAGUE_CONFIG = {
             "Triple-Double":    "13759",
         }
     },
+    "WNBA": {
+        "id": "94682",
+        "subcategories": {
+            # Basketball subcategory IDs are shared across NBA/WNBA/NCAAB.
+            "Points":           "16477",
+            "Assists":          "16478",
+            "Rebounds":         "16479",
+            "Three Pointers":   "16480",
+            "Pts+Asts":         "16481",
+            "Pts+Rebs":         "16482",
+            "Pts+Rebs+Asts":    "16483",
+            "Double-Double":    "13762",
+            "Triple-Double":    "13759",
+        }
+    },
     "MLB": {
         "id": "84240",
         "subcategories": {
@@ -114,6 +129,17 @@ LEAGUE_CONFIG = {
 # ---------------------------------------------------------------------------
 SUBCAT_TO_PROP_TYPE = {
     "NBA": {
+        "Points":           "Points",
+        "Assists":          "Assists",
+        "Rebounds":         "Rebounds",
+        "Three Pointers":   "3-PT Made",
+        "Pts+Asts":         "Pts+Asts",
+        "Pts+Rebs":         "Pts+Rebs",
+        "Pts+Rebs+Asts":    "Pts+Rebs+Asts",
+        "Double-Double":    "Double-Double",
+        "Triple-Double":    "Triple-Double",
+    },
+    "WNBA": {
         "Points":           "Points",
         "Assists":          "Assists",
         "Rebounds":         "Rebounds",
