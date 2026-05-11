@@ -51,9 +51,17 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-# Default per-(league, game_date) cap used by live_replay and top_ev_capped.
-# Mirrors engine/backtest._MAX_LEGS_PER_GAME.
-DEFAULT_PER_GAME_CAP = 3
+# PrizePicks rule: every slip must contain picks from at least two
+# distinct teams. Players from opposing teams in the same game count as
+# two. Enforced in `_enforce_two_teams()` below; supersedes the v2
+# per-game cap that used to live here.
+TWO_TEAMS_REQUIRED = 2
+
+# Distinctness fallback: when a leg has no team value (legacy data
+# pre-migration_007), use this prefix on player as the team identifier
+# so the rule still has a sane meaning rather than silently passing
+# every slip.
+_FALLBACK_TEAM_PREFIX = "player:"
 
 # Bootstrap sample count. 500 is enough for stable 95% CIs on n>=50 slips
 # while keeping the simulation under ~1s for typical filter sets.
@@ -86,7 +94,6 @@ class StrategyConfig:
 
     # New (sandbox v2) fields:
     slip_strategy: str = "live_replay"          # see module docstring
-    per_game_cap: int = DEFAULT_PER_GAME_CAP    # used by capped/live_replay
     start_date: Optional[str] = None            # YYYY-MM-DD inclusive
     end_date:   Optional[str] = None            # YYYY-MM-DD inclusive
     bootstrap:  bool = True                     # toggle CI computation
@@ -113,16 +120,27 @@ class StrategyTester:
         is the pre-calibration consensus probability we re-calibrate
         with the current curves, and `side` is needed for the per-(L,
         prop, side) bucket lookup."""
-        cols = (
+        # Three column tiers, tried in order on the first page. The fallback
+        # is graceful per-migration: if migration_007 (team) isn't applied
+        # we still get raw_true_prob/market_width from migration_006; if
+        # neither is applied we drop to the v1 set. Switching tiers only
+        # happens at offset 0 — once a tier succeeds, subsequent pages
+        # use the same column list.
+        cols_v3 = (
+            "result, prop, true_prob, raw_true_prob, side, "
+            "game_start, league, player, market_width, team"
+        )
+        cols_v2 = (
             "result, prop, true_prob, raw_true_prob, side, "
             "game_start, league, player, market_width"
         )
-        cols_legacy = "result, prop, true_prob, side, game_start, league, player"
+        cols_v1 = "result, prop, true_prob, side, game_start, league, player"
+        tier_order = [cols_v3, cols_v2, cols_v1]
 
         PAGE = 1000
         offset = 0
         all_rows: list[dict] = []
-        active_cols = cols
+        active_cols = tier_order[0]
         while True:
             try:
                 q = self.db.table("market_observatory").select(active_cols).neq("result", "pending")
@@ -130,16 +148,19 @@ class StrategyTester:
                     q = q.in_("league", leagues)
                 res = q.range(offset, offset + PAGE - 1).execute()
             except Exception as exc:
-                # If we tried with the v2 column set and it failed, retry once
-                # with the legacy set so the sandbox still works on a deploy
-                # that hasn't applied migration_006 yet.
-                if active_cols == cols and offset == 0:
-                    logger.info(
-                        "Sandbox: falling back to legacy observatory columns "
-                        "(migration_006 may not be applied): %s", exc,
-                    )
-                    active_cols = cols_legacy
-                    continue
+                # On the first page only, step down to the next column tier
+                # rather than aborting. Lets the sandbox keep working on
+                # deploys that haven't applied the latest migration.
+                if offset == 0 and active_cols in tier_order:
+                    idx = tier_order.index(active_cols)
+                    if idx + 1 < len(tier_order):
+                        next_cols = tier_order[idx + 1]
+                        logger.info(
+                            "Sandbox: falling back to lower observatory column tier "
+                            "(missing migration?): %s", exc,
+                        )
+                        active_cols = next_cols
+                        continue
                 logger.warning("Sandbox: observatory page fetch failed at offset %d: %s", offset, exc)
                 break
             rows = res.data or []
@@ -206,139 +227,182 @@ class StrategyTester:
         return p * OPTIMAL_IMPLIED_DECIMAL - 1.0
 
     @staticmethod
-    def _slate_game_key(row: pd.Series) -> tuple:
-        """Per-game bucket within a slate: (league, game_start). Two rows
-        from the same MLB game share the same game_start so this works
-        even though we don't have an explicit game_id column."""
-        return (
-            (row.get("league") or "").upper(),
-            row.get("game_start") or "",
-        )
+    def _team_key(row) -> str:
+        """PrizePicks distinct-team identifier. Prefer the team
+        abbreviation captured in the observatory (added by
+        migration_007); fall back to the player name so slips on legacy
+        data still get sane (if structurally weaker) distinctness
+        checks. Two players from opposing teams in the same game count
+        as two distinct teams under PP rules — this is naturally
+        satisfied because each player has a distinct `team`."""
+        if hasattr(row, "get"):
+            t = (row.get("team") or "")
+        else:
+            t = ""
+        t = t.strip().upper() if isinstance(t, str) else ""
+        if t:
+            return t
+        # Fallback: use the player as the team identity.
+        player = (row.get("player") if hasattr(row, "get") else "") or ""
+        return _FALLBACK_TEAM_PREFIX + str(player).strip().lower()
 
-    def _select_slips_top_prob(self, slate: pd.DataFrame, slip_size: int) -> List[pd.DataFrame]:
-        """Legacy v1 strategy: sort by calibrated_prob desc and slice
-        non-overlapping chunks. Kept for continuity with the v1 sandbox
-        so users can A/B against the new strategies."""
-        sorted_legs = slate.sort_values("calibrated_prob", ascending=False)
-        slips = []
-        for i in range(0, len(sorted_legs) - slip_size + 1, slip_size):
-            slips.append(sorted_legs.iloc[i: i + slip_size])
-        return slips
+    @classmethod
+    def _enforce_two_teams(cls, picks: list, sorted_legs: pd.DataFrame,
+                           used_indices: set,
+                           dedup_pair: set | None = None,
+                           dedup_leg: set | None = None) -> list:
+        """If the in-progress `picks` list represents a single-team
+        slip, swap the lowest-ranked pick out for the highest-ranked
+        unused leg from a different team. Returns the (possibly
+        modified) picks list, or [] if no PP-legal slip can be formed.
 
-    def _select_slips_top_ev(self, slate: pd.DataFrame, slip_size: int) -> List[pd.DataFrame]:
-        """Sort by individual EV% desc, slice non-overlapping chunks. No
-        per-game cap. Higher EV than top_prob on average (because EV
-        weights probability by payout odds), but no correlation control."""
-        slate = slate.copy()
-        slate["_ev"] = slate["calibrated_prob"].apply(self._ev_pct)
-        sorted_legs = slate.sort_values("_ev", ascending=False)
-        slips = []
-        for i in range(0, len(sorted_legs) - slip_size + 1, slip_size):
-            slips.append(sorted_legs.iloc[i: i + slip_size])
-        return slips
+        `dedup_pair`/`dedup_leg` are optional sets; when supplied, the
+        replacement candidate must not already appear in either (used
+        by live_replay to maintain its cross-slip dedup invariants
+        during the swap)."""
+        if not picks:
+            return picks
+        team_set = {cls._team_key(sorted_legs.loc[i]) for i in picks}
+        if len(team_set) >= TWO_TEAMS_REQUIRED:
+            return picks
+        single_team = next(iter(team_set))
 
-    def _select_slips_top_ev_capped(
-        self, slate: pd.DataFrame, slip_size: int, per_game_cap: int,
-    ) -> List[pd.DataFrame]:
-        """Sort by EV% desc and pick legs greedily with at most
-        per_game_cap from any single (league, game_start). Within-slate
-        only — no cross-slip dedup."""
-        slate = slate.copy()
-        slate["_ev"] = slate["calibrated_prob"].apply(self._ev_pct)
-        sorted_legs = slate.sort_values("_ev", ascending=False)
-
-        slips: List[pd.DataFrame] = []
-        used_indices: set = set()
-        while True:
-            picks: list[int] = []
-            per_game: dict[tuple, int] = {}
-            for idx, row in sorted_legs.iterrows():
-                if idx in used_indices:
-                    continue
-                gk = self._slate_game_key(row)
-                if per_game.get(gk, 0) >= per_game_cap:
-                    continue
-                picks.append(idx)
-                per_game[gk] = per_game.get(gk, 0) + 1
-                if len(picks) == slip_size:
-                    break
-            if len(picks) < slip_size:
-                break
-            slips.append(sorted_legs.loc[picks])
-            used_indices.update(picks)
-        return slips
-
-    def _select_slips_live_replay(
-        self, slate: pd.DataFrame, slip_size: int, per_game_cap: int,
-    ) -> List[pd.DataFrame]:
-        """Mirrors engine/backtest.BacktestLogger._try_log_slip_locked: EV
-        sort, per-game cap, plus player-game dedup so the same player
-        in the same game can't appear in two slips of the same slate."""
-        slate = slate.copy()
-        slate["_ev"] = slate["calibrated_prob"].apply(self._ev_pct)
-        sorted_legs = slate.sort_values("_ev", ascending=False)
-
-        slips: List[pd.DataFrame] = []
-        used_pair: set = set()  # cross-slip player-game dedup
-        used_leg:  set = set()
-        used_indices: set = set()
-
-        while True:
-            picks: list[int] = []
-            per_game: dict[tuple, int] = {}
-            seen_pair: set = set()
-            seen_leg:  set = set()
-            for idx, row in sorted_legs.iterrows():
-                if idx in used_indices:
-                    continue
+        # Search for the highest-ranked replacement from a different
+        # team. sorted_legs is already sorted by the strategy's score
+        # function, so the first qualifying candidate is the optimal one.
+        replacement_idx = None
+        for idx in sorted_legs.index:
+            if idx in used_indices or idx in picks:
+                continue
+            row = sorted_legs.loc[idx]
+            if cls._team_key(row) == single_team:
+                continue
+            if dedup_pair is not None or dedup_leg is not None:
                 player = row.get("player", "") or ""
                 start  = row.get("game_start", "") or ""
-                p_key  = make_bet_key(player, start)
-                l_key  = make_leg_key(
+                p_key = make_bet_key(player, start)
+                l_key = make_leg_key(
                     player,
                     row.get("prop", "") or "",
                     row.get("line", "") if "line" in row.index else "",
                     row.get("side", "") or "",
                     start,
                 )
-                gk = self._slate_game_key(row)
-
-                if p_key in used_pair: continue
-                if l_key in used_leg:  continue
-                if p_key in seen_pair: continue
-                if l_key in seen_leg:  continue
-                if per_game.get(gk, 0) >= per_game_cap:
+                if dedup_pair is not None and p_key in dedup_pair:
                     continue
+                if dedup_leg is not None and l_key in dedup_leg:
+                    continue
+            replacement_idx = idx
+            break
 
+        if replacement_idx is None:
+            return []
+
+        # Drop the lowest-ranked existing pick (last index after the
+        # ranked-descending pass) and append the replacement.
+        picks = picks[:-1] + [replacement_idx]
+        return picks
+
+    def _select_ranked(self, slate: pd.DataFrame, slip_size: int,
+                       *, score_col: str, dedup: bool) -> List[pd.DataFrame]:
+        """Greedy slip builder used by all sandbox strategies.
+
+        `score_col` selects the ranking signal ('calibrated_prob' or
+        '_ev'). `dedup` toggles cross-slip player-game / leg dedup
+        (live_replay turns it on; top_prob/top_ev leave it off for
+        backward compat with v2). Two-team enforcement is always on —
+        PrizePicks rejects single-team slips, so the sandbox can't
+        report ROI on slips that wouldn't actually be bettable.
+
+        Slips that can't satisfy the two-team rule are dropped, not
+        downgraded to single-team — this matches the live system's
+        behavior and keeps the simulated slip set apples-to-apples
+        with what would actually have been logged."""
+        sorted_legs = slate.sort_values(score_col, ascending=False)
+
+        slips: List[pd.DataFrame] = []
+        used_indices: set = set()
+        used_pair: set = set()
+        used_leg:  set = set()
+
+        while True:
+            picks: list = []
+            seen_pair: set = set()
+            seen_leg:  set = set()
+            for idx in sorted_legs.index:
+                if idx in used_indices:
+                    continue
+                row = sorted_legs.loc[idx]
+                if dedup:
+                    player = row.get("player", "") or ""
+                    start  = row.get("game_start", "") or ""
+                    p_key  = make_bet_key(player, start)
+                    l_key  = make_leg_key(
+                        player,
+                        row.get("prop", "") or "",
+                        row.get("line", "") if "line" in row.index else "",
+                        row.get("side", "") or "",
+                        start,
+                    )
+                    if p_key in used_pair: continue
+                    if l_key in used_leg:  continue
+                    if p_key in seen_pair: continue
+                    if l_key in seen_leg:  continue
+                    seen_pair.add(p_key); seen_leg.add(l_key)
                 picks.append(idx)
-                seen_pair.add(p_key); seen_leg.add(l_key)
-                per_game[gk] = per_game.get(gk, 0) + 1
                 if len(picks) == slip_size:
                     break
 
             if len(picks) < slip_size:
                 break
+
+            picks = self._enforce_two_teams(
+                picks, sorted_legs, used_indices,
+                dedup_pair=used_pair if dedup else None,
+                dedup_leg=used_leg if dedup else None,
+            )
+            if not picks:
+                # Couldn't satisfy two-team rule with the remaining pool.
+                # No more PP-legal slips can be formed in this slate.
+                break
+
             slips.append(sorted_legs.loc[picks])
             used_indices.update(picks)
-            used_pair.update(seen_pair)
-            used_leg.update(seen_leg)
+            if dedup:
+                # Recompute dedup keys against the actual final picks
+                # since _enforce_two_teams may have swapped a leg out.
+                for idx in picks:
+                    row = sorted_legs.loc[idx]
+                    player = row.get("player", "") or ""
+                    start  = row.get("game_start", "") or ""
+                    used_pair.add(make_bet_key(player, start))
+                    used_leg.add(make_leg_key(
+                        player,
+                        row.get("prop", "") or "",
+                        row.get("line", "") if "line" in row.index else "",
+                        row.get("side", "") or "",
+                        start,
+                    ))
         return slips
 
     def _build_slips(
-        self, slate: pd.DataFrame, slip_size: int, strategy: str, per_game_cap: int,
+        self, slate: pd.DataFrame, slip_size: int, strategy: str,
     ) -> List[pd.DataFrame]:
-        """Dispatch to the chosen slip-construction strategy."""
+        """Dispatch to the chosen slip-construction strategy. Per-game
+        cap is intentionally absent — superseded by the PrizePicks
+        two-team requirement enforced inside `_select_ranked`."""
+        slate = slate.copy()
+        # Pre-compute EV column once; cheaper than per-strategy.
+        slate["_ev"] = slate["calibrated_prob"].apply(self._ev_pct)
+
         if strategy == "top_prob":
-            return self._select_slips_top_prob(slate, slip_size)
+            return self._select_ranked(slate, slip_size, score_col="calibrated_prob", dedup=False)
         if strategy == "top_ev":
-            return self._select_slips_top_ev(slate, slip_size)
-        if strategy == "top_ev_capped":
-            return self._select_slips_top_ev_capped(slate, slip_size, per_game_cap)
+            return self._select_ranked(slate, slip_size, score_col="_ev", dedup=False)
         if strategy == "live_replay":
-            return self._select_slips_live_replay(slate, slip_size, per_game_cap)
-        # Unknown strategy → fall back to the legacy default and warn.
-        logger.warning("Sandbox: unknown slip_strategy %r — using top_prob", strategy)
-        return self._select_slips_top_prob(slate, slip_size)
+            return self._select_ranked(slate, slip_size, score_col="_ev", dedup=True)
+        logger.warning("Sandbox: unknown slip_strategy %r — using live_replay", strategy)
+        return self._select_ranked(slate, slip_size, score_col="_ev", dedup=True)
 
 
     # ── Push-aware payout ───────────────────────────────────────────────
@@ -415,11 +479,17 @@ class StrategyTester:
     @staticmethod
     def _bootstrap_metrics(
         slips: list[dict], n_resamples: int = BOOTSTRAP_RESAMPLES,
+        bankroll: float = 100.0,
     ) -> dict:
         """Resample `slips` with replacement N times, computing total ROI,
         win rate, and max drawdown on each resample. Returns the 2.5 /
-        50 / 97.5 percentiles for each metric so the UI can render
-        `<point> [lo, hi]`."""
+        97.5 percentiles for each metric so the UI can render
+        `<point> [lo, hi]`.
+
+        Drawdown is bankroll-based: peak starts at `bankroll`, drawdown
+        is (peak - running_bank) / peak × 100. Same definition as the
+        non-bootstrapped summary metric so the CI on max_drawdown_pct
+        is in the same units the user sees on the card."""
         n = len(slips)
         if n == 0:
             return {}
@@ -442,26 +512,23 @@ class StrategyTester:
             roi = (tot_prof / tot_bet * 100.0) if tot_bet > 0 else 0.0
             wr  = (tot_wins / n * 100.0) if n > 0 else 0.0
 
-            # Drawdown on the resampled order. We use the order legs were
-            # drawn in, which approximates random ordering — sufficient
-            # for confidence on tail-loss magnitude.
-            running = 0.0
-            peak    = 0.0
-            max_dd  = 0.0
+            # Bankroll-based drawdown: same definition as the summary
+            # metric. Resampled order approximates random ordering,
+            # sufficient for tail-loss confidence.
+            running = bankroll
+            peak    = bankroll
+            max_dd_pct = 0.0
             for i in idxs:
                 running += profit_arr[i]
                 if running > peak:
                     peak = running
-                # Drawdown is measured as profit drop from peak; clamp
-                # so a never-positive run reports zero drawdown rather
-                # than a negative (which is meaningless).
-                dd = max(0.0, peak - running)
-                if dd > max_dd:
-                    max_dd = dd
+                dd = ((peak - running) / peak * 100.0) if peak > 0 else 0.0
+                if dd > max_dd_pct:
+                    max_dd_pct = dd
 
             rois.append(roi)
             wrs.append(wr)
-            ddowns.append(max_dd)
+            ddowns.append(max_dd_pct)
 
         def _pct(arr, q):
             if not arr:
@@ -475,7 +542,7 @@ class StrategyTester:
                                  "hi": round(_pct(rois, 0.975), 2)},
             "win_rate_pct":     {"lo": round(_pct(wrs, 0.025), 2),
                                  "hi": round(_pct(wrs, 0.975), 2)},
-            "max_drawdown_abs": {"lo": round(_pct(ddowns, 0.025), 2),
+            "max_drawdown_pct": {"lo": round(_pct(ddowns, 0.025), 2),
                                  "hi": round(_pct(ddowns, 0.975), 2)},
             "n_resamples":      n_resamples,
         }
@@ -561,7 +628,7 @@ class StrategyTester:
                 slates_with_qualifying += 1
 
                 slips_for_slate = self._build_slips(
-                    slate_df, config.slip_size, config.slip_strategy, config.per_game_cap,
+                    slate_df, config.slip_size, config.slip_strategy,
                 )
                 if not slips_for_slate:
                     slates_without_full_slip += 1
@@ -689,7 +756,7 @@ class StrategyTester:
 
             # Bootstrap CIs on the aggregate metrics.
             ci = (
-                self._bootstrap_metrics(bet_slips)
+                self._bootstrap_metrics(bet_slips, bankroll=config.bankroll)
                 if config.bootstrap and bet_slips else {}
             )
 
@@ -705,6 +772,7 @@ class StrategyTester:
                     "roi_pct":          round(roi * 100, 2),
                     "win_rate_pct":     round(win_rate * 100, 2),
                     "max_drawdown_pct": round(max_drawdown_pct, 2),
+                    "bankroll":         round(config.bankroll, 2),
                     "rolling_window":   window,
                     "ci":               ci,
                 },
@@ -878,7 +946,7 @@ class StrategyTester:
     def _simulate_at_threshold(
         self, base_df: pd.DataFrame, threshold: float,
         slip_size: int, slip_type: str, bankroll: float, bet_size: float,
-        use_kelly: bool, strategy: str, per_game_cap: int,
+        use_kelly: bool, strategy: str,
     ) -> Optional[Dict]:
         df = base_df[base_df["calibrated_prob"] >= threshold]
         if df.empty or len(df) < slip_size:
@@ -896,7 +964,7 @@ class StrategyTester:
             slate_df = slates.get_group(sid)
             if len(slate_df) < slip_size:
                 continue
-            for selected_legs in self._build_slips(slate_df, slip_size, strategy, per_game_cap):
+            for selected_legs in self._build_slips(slate_df, slip_size, strategy):
                 if use_kelly:
                     probs = selected_legs["calibrated_prob"].tolist()
                     k_frac = self._calculate_kelly_fraction(probs, slip_size, slip_type)
@@ -981,7 +1049,7 @@ class StrategyTester:
                     slip_size=config.slip_size, slip_type=config.slip_type,
                     bankroll=config.bankroll, bet_size=config.bet_size,
                     use_kelly=config.use_kelly,
-                    strategy=config.slip_strategy, per_game_cap=config.per_game_cap,
+                    strategy=config.slip_strategy,
                 )
                 if summary is None:
                     df_at_t = base_df[base_df["calibrated_prob"] >= t_val]

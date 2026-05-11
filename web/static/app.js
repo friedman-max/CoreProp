@@ -3072,8 +3072,6 @@ setInterval(fetchStatus, 10_000);
 
 // ── Sandbox Logic ────────────────────────────────────────────────────────
 let sandboxChart = null;
-let sandboxDrawdownChart = null;
-let sandboxRollingChart = null;
 let sandboxLastSlips = [];
 let sandboxInitialized = false;
 
@@ -3221,10 +3219,9 @@ async function runSandbox() {
     const useKelly = $("sb-use-kelly") ? $("sb-use-kelly").checked : false;
 
     // v2 controls — fall back to safe defaults if the element isn't on the page
-    // (older index.html cached by browser).
+    // (older index.html cached by browser). Per-game-cap is gone (replaced
+    // by the PrizePicks two-team rule enforced server-side).
     const slipStrategy = $("sb-select-strategy") ? $("sb-select-strategy").value : "live_replay";
-    const perGameCapEl = $("sb-per-game-cap");
-    const perGameCap = perGameCapEl ? Math.max(1, Math.min(6, parseInt(perGameCapEl.value) || 3)) : 3;
     const bootstrap = $("sb-bootstrap") ? $("sb-bootstrap").checked : true;
     // Date range is now a chart-level toggle (#sb-range-selector). Server
     // always simulates over MAX history; the client filters in memory on
@@ -3247,7 +3244,6 @@ async function runSandbox() {
                 use_kelly: useKelly,
                 included_props: includedProps,
                 slip_strategy: slipStrategy,
-                per_game_cap: perGameCap,
                 bootstrap,
             })
         });
@@ -3297,8 +3293,6 @@ async function optimizeSandboxThreshold() {
 
     try {
         const slipStrategy = $("sb-select-strategy") ? $("sb-select-strategy").value : "live_replay";
-        const perGameCapEl = $("sb-per-game-cap");
-        const perGameCap = perGameCapEl ? Math.max(1, Math.min(6, parseInt(perGameCapEl.value) || 3)) : 3;
 
         // Derive a date range for the optimizer from the currently-selected
         // chart toggle so "Auto-Optimize" optimizes the same window the user
@@ -3322,7 +3316,6 @@ async function optimizeSandboxThreshold() {
                 use_kelly: useKelly,
                 included_props: includedProps,
                 slip_strategy: slipStrategy,
-                per_game_cap: perGameCap,
                 start_date: startDate,
                 end_date: endDate,
             })
@@ -3407,26 +3400,99 @@ function _bindSbRangeSelector() {
     _sbRangeBound = true;
 }
 
+// Bootstrap config — match the server's defaults (engine/strategy_tester
+// BOOTSTRAP_RESAMPLES = 500). The seed is duplicated so server and
+// client produce identical CIs on the same data.
+const _SB_BOOTSTRAP_N = 500;
+const _SB_BOOTSTRAP_SEED = 0xC0DE;
+const _SB_BANKROLL_DEFAULT = 100;
+
+// Linear-congruential RNG so client bootstrap is deterministic (same
+// seed → same draws), matching the server's `random.Random(0xC0DE)`
+// behavior on each tick. Not cryptographic; we just need reproducibility.
+function _seededRng(seed) {
+    let s = seed >>> 0;
+    return function next() {
+        s = Math.imul(s, 1664525) + 1013904223 >>> 0;
+        return s / 4294967296;
+    };
+}
+
+// Bootstrap CIs over the bet-slip subset. Mirrors
+// engine/strategy_tester._bootstrap_metrics so client-side recompute
+// (after a date-range toggle) produces CIs in the same units the
+// server-rendered MAX view does.
+function _sbBootstrap(slips, bankroll) {
+    const n = slips.length;
+    if (n === 0) return {};
+    const rng = _seededRng(_SB_BOOTSTRAP_SEED);
+    const betArr   = slips.map(s => s.bet_size || 0);
+    const profArr  = slips.map(s => s.profit || 0);
+    const winFlag  = slips.map(s => ((s.payout || 0) > (s.bet_size || 0)) ? 1 : 0);
+
+    const rois = new Array(_SB_BOOTSTRAP_N);
+    const wrs  = new Array(_SB_BOOTSTRAP_N);
+    const dds  = new Array(_SB_BOOTSTRAP_N);
+    const idxs = new Array(n);
+
+    for (let r = 0; r < _SB_BOOTSTRAP_N; r++) {
+        for (let i = 0; i < n; i++) idxs[i] = Math.floor(rng() * n);
+        let totBet = 0, totProf = 0, totWins = 0;
+        let running = bankroll, peak = bankroll, maxDd = 0;
+        for (let i = 0; i < n; i++) {
+            const k = idxs[i];
+            totBet  += betArr[k];
+            totProf += profArr[k];
+            totWins += winFlag[k];
+            running += profArr[k];
+            if (running > peak) peak = running;
+            const dd = peak > 0 ? ((peak - running) / peak) * 100 : 0;
+            if (dd > maxDd) maxDd = dd;
+        }
+        rois[r] = totBet > 0 ? (totProf / totBet) * 100 : 0;
+        wrs[r]  = (totWins / n) * 100;
+        dds[r]  = maxDd;
+    }
+
+    const _pct = (arr, q) => {
+        const sortedArr = [...arr].sort((a, b) => a - b);
+        const k = Math.round(q * (sortedArr.length - 1));
+        return sortedArr[k];
+    };
+
+    return {
+        roi_pct:          { lo: Math.round(_pct(rois, 0.025) * 100) / 100,
+                            hi: Math.round(_pct(rois, 0.975) * 100) / 100 },
+        win_rate_pct:     { lo: Math.round(_pct(wrs, 0.025) * 100) / 100,
+                            hi: Math.round(_pct(wrs, 0.975) * 100) / 100 },
+        max_drawdown_pct: { lo: Math.round(_pct(dds, 0.025) * 100) / 100,
+                            hi: Math.round(_pct(dds, 0.975) * 100) / 100 },
+        n_resamples:      _SB_BOOTSTRAP_N,
+    };
+}
+
 // Filter cached server data by a chart-level date range. Recomputes
-// every aggregate (summary, equity_curve, drawdown_curve, rolling,
-// monthly, breakdowns) from the in-window slips so the cards and the
-// chart can never disagree. Funnel stays as-is (it describes the
-// pre-slip-formation pipeline). Bootstrap CIs are removed from the
-// summary because resampling a sub-window in the browser would be
-// inconsistent with the server's CI methodology.
+// summary, equity curve, and bootstrap CIs from the in-window slips so
+// the cards and chart can never disagree. Funnel stays as-is (it
+// describes the pre-slip-formation pipeline). The breakdown / monthly
+// /  drawdown / rolling panels were removed from the UI, so we don't
+// recompute them here.
 function _filterSandboxData(data, rangeKey) {
     if (!data) return data;
+    const bankroll = (data.summary && data.summary.bankroll) || _SB_BANKROLL_DEFAULT;
     const ms = _SB_RANGES[rangeKey];
+
+    let slips;
     if (ms == null) {
-        // MAX — return the original payload, with a label tag so the
-        // renderer knows CIs are valid here.
-        return Object.assign({}, data, { _sbRange: "MAX" });
+        // MAX — keep server's full slip set.
+        slips = data.slips || [];
+    } else {
+        const cutoff = Date.now() - ms;
+        slips = (data.slips || []).filter(s => {
+            const t = new Date(s.timestamp).getTime();
+            return Number.isFinite(t) && t >= cutoff;
+        });
     }
-    const cutoff = Date.now() - ms;
-    const slips = (data.slips || []).filter(s => {
-        const t = new Date(s.timestamp).getTime();
-        return Number.isFinite(t) && t >= cutoff;
-    });
 
     // Summary recomputed from the filtered slips.
     const betSlips = slips.filter(s => (s.bet_size || 0) > 0);
@@ -3436,80 +3502,29 @@ function _filterSandboxData(data, rangeKey) {
     const roiPct = totalBet > 0 ? (totalProfit / totalBet) * 100 : 0;
     const winRatePct = betSlips.length ? (wins / betSlips.length) * 100 : 0;
 
-    // Equity + drawdown rebuilt in chronological order.
+    // Equity curve + max drawdown rebuilt in chronological order.
+    // Drawdown is bankroll-based: peak starts at the configured bankroll
+    // (default $100), so an early loss is correctly reported as a small
+    // % off peak rather than masked by the $0 baseline that v2 used.
     const sorted = [...slips].sort((a, b) =>
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const equity = [];
-    const drawdown = [];
     let runningCum = 0;
-    let peak = 0;
-    let runningBank = 0;
+    let runningBank = bankroll;
+    let peak = bankroll;
     let maxDdPct = 0;
     for (const s of sorted) {
         runningCum += s.profit || 0;
         equity.push({ x: s.timestamp, y: Math.round(runningCum * 100) / 100 });
         runningBank += s.profit || 0;
         if (runningBank > peak) peak = runningBank;
-        // Use peak-relative drawdown like the server does. Bankroll baseline
-        // 0 means we report drawdowns as $ off peak — close enough for the
-        // visual; the dollar value matters more than the % at chart-zoom level.
         const ddPct = peak > 0 ? ((peak - runningBank) / peak) * 100 : 0;
         if (ddPct > maxDdPct) maxDdPct = ddPct;
-        drawdown.push({ x: s.timestamp, y: Math.round(ddPct * 1000) / 1000 });
     }
 
-    // Rolling window — same sizing rule as the server.
-    const window = Math.max(20, Math.min(100, Math.floor(sorted.length / 10) || 20));
-    const rolling = [];
-    for (let i = 0; i < sorted.length; i++) {
-        const lo = Math.max(0, i - window + 1);
-        const wnd = sorted.slice(lo, i + 1);
-        const wbet = wnd.reduce((sum, s) => sum + (s.bet_size || 0), 0);
-        const wprof = wnd.reduce((sum, s) => sum + (s.profit || 0), 0);
-        const wndBet = wnd.filter(s => (s.bet_size || 0) > 0);
-        const wWins = wndBet.filter(s => (s.payout || 0) > (s.bet_size || 0)).length;
-        rolling.push({
-            x: wnd[wnd.length - 1].timestamp,
-            roi: wbet > 0 ? Math.round((wprof / wbet) * 10000) / 100 : 0,
-            win_rate: wndBet.length ? Math.round((wWins / wndBet.length) * 10000) / 100 : 0,
-        });
-    }
-
-    // Monthly bucket recomputed over the in-window slips. Keys are
-    // YYYY-MM in the user's local timezone — same as the server uses
-    // pandas UTC strftime for, close enough for display purposes.
-    const monthlyMap = {};
-    for (const s of slips) {
-        const d = new Date(s.timestamp);
-        if (!Number.isFinite(d.getTime())) continue;
-        const key = d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
-        const b = monthlyMap[key] = monthlyMap[key] || {
-            month: key, slips: 0, bet: 0, profit: 0, bet_slips: 0, wins: 0,
-        };
-        b.slips++;
-        b.bet += s.bet_size || 0;
-        b.profit += s.profit || 0;
-        if ((s.bet_size || 0) > 0) {
-            b.bet_slips++;
-            if ((s.payout || 0) > (s.bet_size || 0)) b.wins++;
-        }
-    }
-    const monthly = Object.keys(monthlyMap).sort().map(k => {
-        const b = monthlyMap[k];
-        const roi = b.bet > 0 ? (b.profit / b.bet) * 100 : 0;
-        const wr  = b.bet_slips > 0 ? (b.wins / b.bet_slips) * 100 : 0;
-        return {
-            month: b.month, slips: b.slips,
-            bet: Math.round(b.bet * 100) / 100,
-            profit: Math.round(b.profit * 100) / 100,
-            roi_pct: Math.round(roi * 100) / 100,
-            win_rate_pct: Math.round(wr * 100) / 100,
-        };
-    });
-
-    // Breakdowns recomputed (no CI on filtered slices — CI is server-side
-    // and only valid for the full data the server actually saw).
-    const breakdowns = _recomputeSandboxBreakdowns(slips);
+    // Bootstrap CIs over the in-window slips. Same algorithm + seed as
+    // the server, so the MAX-range CIs match what the server returned.
+    const ci = betSlips.length ? _sbBootstrap(betSlips, bankroll) : {};
 
     return {
         summary: {
@@ -3520,114 +3535,19 @@ function _filterSandboxData(data, rangeKey) {
             roi_pct: Math.round(roiPct * 100) / 100,
             win_rate_pct: Math.round(winRatePct * 100) / 100,
             max_drawdown_pct: Math.round(maxDdPct * 100) / 100,
-            rolling_window: window,
-            ci: {},  // intentionally empty on a filtered slice
+            bankroll: bankroll,
+            ci: ci,
         },
         equity_curve: equity,
-        drawdown_curve: drawdown,
-        rolling: rolling,
-        monthly: monthly,
-        breakdowns: breakdowns,
         funnel: data.funnel,   // pre-slip funnel, unchanged
         slips: slips,
         _sbRange: rangeKey,
     };
 }
 
-// Mirror of strategy_tester._build_breakdowns, simplified for client use.
-function _recomputeSandboxBreakdowns(slips) {
-    const MIN_BUCKET = 20;
-    const byLeague = {};
-    const byHits   = {};
-    const byStat   = {};
-
-    for (const s of slips) {
-        const wasBet = (s.bet_size || 0) > 0;
-        const isWin  = wasBet && (s.payout || 0) > (s.bet_size || 0);
-
-        const lg = s.league || "Unknown";
-        let b = byLeague[lg] = byLeague[lg] || { slips: 0, bet_slips: 0, bet: 0, profit: 0, wins: 0 };
-        b.slips++; b.bet += s.bet_size || 0; b.profit += s.profit || 0;
-        if (wasBet) { b.bet_slips++; if (isWin) b.wins++; }
-
-        const h = parseInt(s.hits) || 0;
-        b = byHits[h] = byHits[h] || { slips: 0, bet_slips: 0, bet: 0, profit: 0, wins: 0 };
-        b.slips++; b.bet += s.bet_size || 0; b.profit += s.profit || 0;
-        if (wasBet) { b.bet_slips++; if (isWin) b.wins++; }
-
-        const perLegBet = s.n_legs ? (s.bet_size || 0) / s.n_legs : 0;
-        const perLegProf = s.n_legs ? (s.profit || 0) / s.n_legs : 0;
-        for (const leg of (s.legs || [])) {
-            const prop = (leg.prop || "Unknown").trim() || "Unknown";
-            const sb = byStat[prop] = byStat[prop] || { legs: 0, bet: 0, profit: 0, hits: 0 };
-            sb.legs++; sb.bet += perLegBet; sb.profit += perLegProf;
-            if (leg.result === "hit") sb.hits++;
-        }
-    }
-
-    const finalizeSlipGroup = (d, key) => Object.entries(d).map(([k, v]) => {
-        const roi = v.bet > 0 ? (v.profit / v.bet) * 100 : 0;
-        const wr  = v.bet_slips > 0 ? (v.wins / v.bet_slips) * 100 : 0;
-        const row = {
-            slips: v.slips,
-            bet: Math.round(v.bet * 100) / 100,
-            profit: Math.round(v.profit * 100) / 100,
-            roi_pct: Math.round(roi * 100) / 100,
-            win_rate_pct: Math.round(wr * 100) / 100,
-            is_thin: v.slips < MIN_BUCKET,
-        };
-        row[key] = key === "hits" ? parseInt(k) : k;
-        return row;
-    }).sort((a, b) => b.profit - a.profit);
-
-    const finalizeStat = () => Object.entries(byStat).map(([prop, v]) => {
-        const roi = v.bet > 0 ? (v.profit / v.bet) * 100 : 0;
-        const wr  = v.legs > 0 ? (v.hits / v.legs) * 100 : 0;
-        return {
-            stat_type: prop,
-            slips: v.legs,
-            bet: Math.round(v.bet * 100) / 100,
-            profit: Math.round(v.profit * 100) / 100,
-            roi_pct: Math.round(roi * 100) / 100,
-            win_rate_pct: Math.round(wr * 100) / 100,
-            is_thin: v.legs < MIN_BUCKET,
-        };
-    }).sort((a, b) => b.profit - a.profit);
-
-    return {
-        by_league: finalizeSlipGroup(byLeague, "league"),
-        by_hits:   finalizeSlipGroup(byHits, "hits"),
-        by_stat:   finalizeStat(),
-    };
-}
-
 function _ciSpan(ci) {
     if (!ci) return "";
     return ` <span style="font-size:0.55em; opacity:0.7; vertical-align:middle;">[${ci.lo}, ${ci.hi}]</span>`;
-}
-
-function _renderSandboxMonthly(monthly) {
-    const panel = $("sb-monthly");
-    const tbody = $("sb-monthly-tbody");
-    if (!panel || !tbody) return;
-    if (!monthly || !monthly.length) {
-        panel.style.display = "none";
-        tbody.innerHTML = "";
-        return;
-    }
-    panel.style.display = "block";
-    const sign = v => (v >= 0 ? "positive" : "negative");
-    const fmtPct = v => (v == null ? "—" : v.toFixed(2) + "%");
-    tbody.innerHTML = monthly.map(m => `
-        <tr>
-          <td>${escapeHtml(m.month)}</td>
-          <td style="text-align:right;">${m.slips}</td>
-          <td style="text-align:right;">${fmt.dollar(m.bet)}</td>
-          <td style="text-align:right;" class="${sign(m.profit)}">${fmt.dollar(m.profit)}</td>
-          <td style="text-align:right;" class="${sign(m.roi_pct)}">${fmtPct(m.roi_pct)}</td>
-          <td style="text-align:right;">${fmtPct(m.win_rate_pct)}</td>
-        </tr>
-    `).join('');
 }
 
 // Stages we expose, in display order. Anything missing on the response is
@@ -3700,8 +3620,8 @@ function renderSandboxResults(data) {
     $("sb-metric-winrate").innerHTML = s.win_rate_pct + "%" + _ciSpan(ci.win_rate_pct);
     $("sb-metric-drawdown").textContent = s.max_drawdown_pct + "%";
 
-    // Render monthly + funnel diagnostics.
-    _renderSandboxMonthly(data.monthly || []);
+    // Funnel only — drawdown chart, rolling chart, monthly + breakdown
+    // panels were removed from the UI.
     _renderSandboxFunnel(data.funnel || {});
 
     sandboxLastSlips = data.slips || [];
@@ -3736,147 +3656,6 @@ function renderSandboxResults(data) {
             plugins: { legend: { display: false } }
         }
     });
-
-    // ── Drawdown chart ──────────────────────────────────────────────
-    if (data.drawdown_curve && data.drawdown_curve.length) {
-        $("sb-extra-charts").style.display = "flex";
-        const ddCtx = $("chart-sandbox-drawdown").getContext("2d");
-        if (sandboxDrawdownChart) sandboxDrawdownChart.destroy();
-        sandboxDrawdownChart = new Chart(ddCtx, {
-            type: 'line',
-            data: {
-                labels: data.drawdown_curve.map(p => new Date(p.x).toLocaleDateString()),
-                datasets: [{
-                    label: 'Drawdown %',
-                    data: data.drawdown_curve.map(p => -p.y), // negative so the chart dips down
-                    borderColor: '#ef4444',
-                    borderWidth: 1.5,
-                    fill: true,
-                    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                    tension: 0.1,
-                    pointRadius: 0
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    y: { grid: { color: '#2a2f42' }, ticks: { color: '#7a80a0', callback: v => v + '%' } },
-                    x: baseScales.x
-                },
-                plugins: { legend: { display: false } }
-            }
-        });
-    }
-
-    // ── Rolling ROI / win-rate chart ────────────────────────────────
-    if (data.rolling && data.rolling.length) {
-        $("sb-rolling-subtitle").textContent = `Window: last ${s.rolling_window} slips`;
-        const rCtx = $("chart-sandbox-rolling").getContext("2d");
-        if (sandboxRollingChart) sandboxRollingChart.destroy();
-        sandboxRollingChart = new Chart(rCtx, {
-            type: 'line',
-            data: {
-                labels: data.rolling.map(p => new Date(p.x).toLocaleDateString()),
-                datasets: [
-                    {
-                        label: 'Rolling ROI %',
-                        data: data.rolling.map(p => p.roi),
-                        borderColor: '#3b82f6',
-                        borderWidth: 1.5,
-                        fill: false,
-                        tension: 0.1,
-                        pointRadius: 0,
-                        yAxisID: 'y'
-                    },
-                    {
-                        label: 'Rolling Win %',
-                        data: data.rolling.map(p => p.win_rate),
-                        borderColor: '#a855f7',
-                        borderWidth: 1.5,
-                        fill: false,
-                        tension: 0.1,
-                        pointRadius: 0,
-                        yAxisID: 'y1'
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                scales: {
-                    y: {
-                        position: 'left',
-                        grid: { color: '#2a2f42' },
-                        ticks: { color: '#3b82f6', callback: v => v + '%' }
-                    },
-                    y1: {
-                        position: 'right',
-                        grid: { display: false },
-                        ticks: { color: '#a855f7', callback: v => v + '%' }
-                    },
-                    x: baseScales.x
-                },
-                plugins: {
-                    legend: { labels: { color: '#7a80a0', boxWidth: 12 } }
-                }
-            }
-        });
-    }
-
-    // ── Breakdown tables ────────────────────────────────────────────
-    const bd = data.breakdowns || {};
-    const sign = v => (v >= 0 ? 'positive' : 'negative');
-    const pct = v => (v == null ? '—' : v.toFixed(2) + '%');
-
-    const totalSlips = s.total_slips || 1;
-
-    if (bd.by_stat || bd.by_league || bd.by_hits) {
-        $("sb-breakdowns").style.display = "flex";
-    }
-
-    // Helpers for breakdown rows: greyed if thin, inline CI on ROI when present.
-    const thinStyle = ' style="opacity:0.5;" title="Sample too small to be statistically meaningful (< 20 slips). Treat the numbers as directional, not predictive."';
-    const roiCell = (r) => {
-        const sciHtml = (r.ci && r.ci.roi_pct) ? _ciSpan(r.ci.roi_pct) : "";
-        return `<td style="text-align:right;" class="${sign(r.roi_pct)}">${pct(r.roi_pct)}${sciHtml}</td>`;
-    };
-
-    if (bd.by_stat) {
-        $("sb-breakdown-stat").innerHTML = bd.by_stat.map(r => {
-            const ts = r.is_thin ? thinStyle : "";
-            return `<tr${ts}>
-              <td>${escapeHtml(r.stat_type)}${r.is_thin ? ' <span style="font-size:0.85em; opacity:0.7;">(thin)</span>' : ''}</td>
-              <td style="text-align:right;">${r.slips}</td>
-              <td style="text-align:right;">${pct(r.win_rate_pct)}</td>
-              ${roiCell(r)}
-              <td style="text-align:right;" class="${sign(r.profit)}">${fmt.dollar(r.profit)}</td>
-            </tr>`;
-        }).join('');
-    }
-    if (bd.by_league) {
-        $("sb-breakdown-league").innerHTML = bd.by_league.map(r => {
-            const ts = r.is_thin ? thinStyle : "";
-            return `<tr${ts}>
-              <td>${escapeHtml(r.league)}${r.is_thin ? ' <span style="font-size:0.85em; opacity:0.7;">(thin)</span>' : ''}</td>
-              <td style="text-align:right;">${r.slips}</td>
-              <td style="text-align:right;">${pct(r.win_rate_pct)}</td>
-              ${roiCell(r)}
-              <td style="text-align:right;" class="${sign(r.profit)}">${fmt.dollar(r.profit)}</td>
-            </tr>`;
-        }).join('');
-    }
-    if (bd.by_hits) {
-        const sortedHits = [...bd.by_hits].sort((a, b) => b.hits - a.hits);
-        $("sb-breakdown-hits").innerHTML = sortedHits.map(r => `
-            <tr>
-              <td>${r.hits}</td>
-              <td style="text-align:right;">${r.slips}</td>
-              <td style="text-align:right;">${(r.slips / totalSlips * 100).toFixed(1)}%</td>
-            </tr>
-        `).join('');
-    }
 
     // ── Slip log ────────────────────────────────────────────────────
     if (sandboxLastSlips.length) {

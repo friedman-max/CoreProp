@@ -710,20 +710,13 @@
             </div>
             <div class="control-group">
               <label>Slip-Construction Strategy
-                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="live_replay mirrors the production BacktestLogger (EV-sorted, per-game cap, player-game dedup). top_ev / top_ev_capped trade off correlation control vs raw EV. top_prob is the legacy v1 behavior for comparison.">ⓘ</span>
+                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Live System Replay mirrors the production BacktestLogger (EV-sorted, player-game dedup). Top EV picks by individual EV%. Top Probability is the legacy v1 behavior. All strategies enforce PrizePicks' rule that every slip must contain picks from at least 2 distinct teams.">ⓘ</span>
               </label>
               <select id="sb-select-strategy">
                 <option value="live_replay" selected>Live System Replay</option>
-                <option value="top_ev_capped">Top EV (per-game cap)</option>
-                <option value="top_ev">Top EV (no cap)</option>
+                <option value="top_ev">Top EV</option>
                 <option value="top_prob">Top Probability (legacy v1)</option>
               </select>
-            </div>
-            <div class="control-group">
-              <label>Per-Game Cap
-                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Maximum legs from the same (league, game date) within a slip. Production system uses 3.">ⓘ</span>
-              </label>
-              <input type="number" id="sb-per-game-cap" min="1" max="6" step="1" value="3" />
             </div>
             <div class="control-group">
               <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text); cursor: pointer;">
@@ -747,7 +740,7 @@
           <div>
             <div class="analytics-panel-header">
               <h3>Cumulative Performance</h3>
-              <span class="analytics-subtitle" id="sb-subtitle">Historical ROI based on your strategy</span>
+              <span class="analytics-subtitle" id="sb-subtitle">Historical P&amp;L · starting bankroll <strong>$100</strong> · 1u flat stake (or quarter-Kelly if enabled)</span>
             </div>
             <div class="pnl-range-selector" id="sb-range-selector" role="tablist" aria-label="Date range" style="display:none;">
               <button type="button" class="pnl-range-btn" data-range="1D">1D</button>
@@ -760,35 +753,6 @@
             <div class="chart-wrap" style="height:300px;"><canvas id="chart-sandbox-equity"></canvas></div>
           </div>
 
-          <div id="sb-extra-charts" style="display:none; gap:16px; flex-wrap:wrap;">
-            <div style="flex:1; min-width:300px;">
-              <div class="analytics-panel-header">
-                <h3>Drawdown</h3>
-                <span class="analytics-subtitle">% off peak bankroll</span>
-              </div>
-              <div class="chart-wrap" style="height:200px;"><canvas id="chart-sandbox-drawdown"></canvas></div>
-            </div>
-            <div style="flex:1; min-width:300px;">
-              <div class="analytics-panel-header">
-                <h3>Rolling ROI &amp; Win Rate</h3>
-                <span class="analytics-subtitle" id="sb-rolling-subtitle">Window: —</span>
-              </div>
-              <div class="chart-wrap" style="height:200px;"><canvas id="chart-sandbox-rolling"></canvas></div>
-            </div>
-          </div>
-
-          <div id="sb-monthly" style="display:none;">
-            <div class="analytics-panel-header">
-              <h3>Monthly Performance</h3>
-              <span class="analytics-subtitle">ROI / win rate per calendar month — watch for performance decay over time.</span>
-            </div>
-            <div class="table-wrapper" style="max-height:240px; overflow:auto;">
-              <table><thead><tr>
-                <th>Month</th><th style="text-align:right;">Slips</th><th style="text-align:right;">Bet</th><th style="text-align:right;">Profit</th><th style="text-align:right;">ROI %</th><th style="text-align:right;">Win %</th>
-              </tr></thead><tbody id="sb-monthly-tbody"></tbody></table>
-            </div>
-          </div>
-
           <div id="sb-funnel" style="display:none;">
             <div class="analytics-panel-header">
               <h3>Filter Funnel</h3>
@@ -798,33 +762,6 @@
               <table><thead><tr>
                 <th>Stage</th><th style="text-align:right;">Count</th>
               </tr></thead><tbody id="sb-funnel-tbody"></tbody></table>
-            </div>
-          </div>
-
-          <div id="sb-breakdowns" style="display:none; gap:16px; flex-wrap:wrap;">
-            <div style="flex:1; min-width:280px;">
-              <div class="analytics-panel-header"><h3>By Stat Type</h3></div>
-              <div class="table-wrapper" style="max-height:260px; overflow:auto;">
-                <table><thead><tr>
-                  <th>Stat Type</th><th style="text-align:right;">Legs</th><th style="text-align:right;">Hit %</th><th style="text-align:right;">ROI %</th><th style="text-align:right;">Profit</th>
-                </tr></thead><tbody id="sb-breakdown-stat"></tbody></table>
-              </div>
-            </div>
-            <div style="flex:1; min-width:240px;">
-              <div class="analytics-panel-header"><h3>By League</h3></div>
-              <div class="table-wrapper" style="max-height:260px; overflow:auto;">
-                <table><thead><tr>
-                  <th>League</th><th style="text-align:right;">Slips</th><th style="text-align:right;">Win %</th><th style="text-align:right;">ROI %</th><th style="text-align:right;">Profit</th>
-                </tr></thead><tbody id="sb-breakdown-league"></tbody></table>
-              </div>
-            </div>
-            <div style="flex:0 0 220px; min-width:200px;">
-              <div class="analytics-panel-header"><h3>By Hits</h3></div>
-              <div class="table-wrapper" style="max-height:260px; overflow:auto;">
-                <table><thead><tr>
-                  <th>Hits</th><th style="text-align:right;">Slips</th><th style="text-align:right;">%</th>
-                </tr></thead><tbody id="sb-breakdown-hits"></tbody></table>
-              </div>
             </div>
           </div>
 

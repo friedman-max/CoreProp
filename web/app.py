@@ -779,6 +779,7 @@ def _run_pipeline_body():
                             both_sided=first_bk.both_sided,
                             pp_player_id=m.pp.player_id,
                             market_width=mw,
+                            team=getattr(m.pp, "team", "") or "",
                         )
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
@@ -826,6 +827,7 @@ def _run_pipeline_body():
                             both_sided=first_bk.both_sided,
                             pp_player_id=m.pp.player_id,
                             market_width=mw,
+                            team=getattr(m.pp, "team", "") or "",
                         )
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
@@ -1056,6 +1058,9 @@ def _run_pipeline_body():
                     }
                     if mw is not None:
                         row["market_width"] = round(mw, 4)
+                    team_val = (b.get("team") or "").strip()
+                    if team_val:
+                        row["team"] = team_val
                     bp = books_probs_map.get(b.get("bet_id")) if books_probs_map else None
                     if bp:
                         row["books"] = bp
@@ -1066,7 +1071,7 @@ def _run_pipeline_body():
                     # pre-migration_006 lacks `raw_true_prob` /
                     # `market_width`), strip it and retry — keeps logging
                     # working before the operator runs the new migration.
-                    _OPTIONAL_COLS = ("books", "raw_true_prob", "market_width")
+                    _OPTIONAL_COLS = ("books", "raw_true_prob", "market_width", "team")
                     def _strip(rows, col):
                         for r in rows:
                             r.pop(col, None)
@@ -1732,9 +1737,10 @@ class SandboxRequest(BaseModel):
     included_props: list[str] = []
     # v2 fields. Defaults reproduce v1 behavior except slip_strategy,
     # which defaults to "live_replay" so the headline numbers reflect what
-    # the production system would actually have done.
+    # the production system would actually have done. Per-game-cap is
+    # gone (replaced by the PrizePicks ≥2-distinct-teams rule, which
+    # the strategy_tester now enforces inside _select_ranked).
     slip_strategy:  str       = "live_replay"
-    per_game_cap:   int       = 3
     start_date:     Optional[str] = None      # YYYY-MM-DD
     end_date:       Optional[str] = None
     bootstrap:      bool      = True
@@ -1794,7 +1800,6 @@ def _config_from_req(req: SandboxRequest):
         use_kelly=req.use_kelly,
         included_props=req.included_props,
         slip_strategy=req.slip_strategy,
-        per_game_cap=req.per_game_cap,
         start_date=req.start_date,
         end_date=req.end_date,
         bootstrap=req.bootstrap,

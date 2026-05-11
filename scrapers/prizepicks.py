@@ -100,15 +100,22 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
             projections = data.get("data", [])
             included = data.get("included", [])
 
-            # Build player_id → name and league_id → league_name lookups
-            player_map: dict[str, str] = {}
+            # Build player_id → (name, team) and league_id → league_name lookups.
+            # `team` is the PP abbreviation ("MIN", "LAL"); needed to enforce
+            # PrizePicks' ≥2-distinct-teams-per-slip rule downstream.
+            player_map:      dict[str, str] = {}
+            player_team_map: dict[str, str] = {}
             for item in included:
                 itype = item.get("type")
                 if itype == "new_player":
                     pid = item.get("id", "")
-                    name = item.get("attributes", {}).get("display_name", "")
+                    attrs = item.get("attributes", {})
+                    name = attrs.get("display_name", "")
                     if pid and name:
                         player_map[pid] = name
+                        team = (attrs.get("team") or "").strip()
+                        if team:
+                            player_team_map[pid] = team
 
             for proj in projections:
                 if proj.get("type") != "projection":
@@ -168,6 +175,7 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
                         player_id=player_id,
                         start_time=start_time or "",
                         side="both",
+                        team=player_team_map.get(player_id, ""),
                     )
                 )
 

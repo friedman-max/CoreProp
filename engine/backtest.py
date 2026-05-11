@@ -39,11 +39,15 @@ MIN_LEG_EV_PCT = -0.01   # -1%
 # 48 h covers every intra-day restart plus the midnight rollover.
 _DEDUP_WINDOW_HOURS = 48
 
-# Max legs from the same (league, game_date) inside a single slip. Prevents
-# auto-build from filling all 6 slots with one game where positive
-# correlation between legs is high (e.g., a hitting team's batters all
-# share game-script tailwinds).
-_MAX_LEGS_PER_GAME = 3
+# PrizePicks rule: every slip must contain picks from at least two
+# distinct teams. Two teams playing each other count as two — the rule
+# is purely about player team membership, not whether the picks are on
+# the same game. Enforced at slip-construction time below; without team
+# data on a leg (NULL `team`), we fall back to player_id for the
+# distinctness check so the rule still has a sane meaning on legacy
+# data, even though it's structurally weaker (any pair of distinct
+# players passes).
+TWO_TEAMS_REQUIRED = 2
 
 # Per-user lock registry. Each user gets one lock; concurrent calls to
 # try_log_slip for the same user serialize so the dedup snapshot a thread
@@ -296,10 +300,26 @@ class BacktestLogger:
         valid = [b for b in bets if _ev(b) >= MIN_LEG_EV_PCT]
         pool = sorted(valid, key=_ev, reverse=True)
 
-        best_legs = []
+        # Two-pass selection so the PrizePicks ≥2-distinct-teams rule is
+        # enforced as a hard validity constraint rather than a per-leg
+        # filter. First pass takes the top legs by EV ignoring teams;
+        # second pass swaps the lowest-EV "redundant" legs out for the
+        # highest-EV legs from a different team if the first pass produced
+        # a single-team slip.
+
+        best_legs: list[dict] = []
         seen_pair: set[tuple] = set()
         seen_leg:  set[tuple] = set()
-        per_game_count: dict[tuple, int] = {}
+        team_of:   dict[int, str] = {}   # idx in best_legs → team key
+
+        def _team_key(b: dict) -> str:
+            """Distinct-team identifier. Prefer PP team abbreviation; fall
+            back to the player_id so legacy bets without team data still
+            give a sensible (though weaker) distinctness signal."""
+            t = (b.get("team") or "").strip().upper()
+            if t:
+                return t
+            return f"player:{(b.get('pp_player_id') or b.get('player_name') or '').strip().lower()}"
 
         for bet in pool:
             player = bet.get("player_name", "") or ""
@@ -312,27 +332,70 @@ class BacktestLogger:
                 bet.get("side", "") or "",
                 start,
             )
-            g_key = make_game_key(bet.get("league", "") or "", start)
-
-            # Cross-slip dedup (DB-sourced)
             if p_key in used_pair_keys: continue
             if l_key in used_leg_keys:  continue
-            # Within-slip dedup
             if p_key in seen_pair: continue
             if l_key in seen_leg:  continue
-            # Within-slip same-game cap
-            if per_game_count.get(g_key, 0) >= _MAX_LEGS_PER_GAME:
-                continue
-
             best_legs.append(bet)
             seen_pair.add(p_key)
             seen_leg.add(l_key)
-            per_game_count[g_key] = per_game_count.get(g_key, 0) + 1
+            team_of[len(best_legs) - 1] = _team_key(bet)
             if len(best_legs) == n_legs:
                 break
 
         if len(best_legs) < n_legs:
             return None
+
+        # Two-team enforcement. If all selected legs share a single team,
+        # try to swap a leg out for the highest-EV remaining leg from a
+        # different team. Iterate from the lowest-EV slot upward so we
+        # surrender the least edge per swap.
+        distinct_teams = set(team_of.values())
+        if len(distinct_teams) < TWO_TEAMS_REQUIRED:
+            chosen_keys: set[tuple] = {
+                make_bet_key(b.get("player_name", "") or "", b.get("start_time", "") or "")
+                for b in best_legs
+            }
+            chosen_legs: set[tuple] = {
+                make_leg_key(
+                    b.get("player_name", "") or "",
+                    b.get("prop_type", "") or "",
+                    b.get("pp_line", "") or "",
+                    b.get("side", "") or "",
+                    b.get("start_time", "") or "",
+                )
+                for b in best_legs
+            }
+            single_team = next(iter(distinct_teams))
+            # Find the best different-team replacement that's not already
+            # selected and not blocked by cross-slip dedup.
+            replacement = None
+            for cand in pool:
+                if _team_key(cand) == single_team:
+                    continue
+                cp = make_bet_key(cand.get("player_name", "") or "", cand.get("start_time", "") or "")
+                cl = make_leg_key(
+                    cand.get("player_name", "") or "",
+                    cand.get("prop_type", "") or "",
+                    cand.get("pp_line", "") or "",
+                    cand.get("side", "") or "",
+                    cand.get("start_time", "") or "",
+                )
+                if cp in used_pair_keys: continue
+                if cl in used_leg_keys:  continue
+                if cp in chosen_keys:    continue
+                if cl in chosen_legs:    continue
+                replacement = cand
+                break
+            if replacement is None:
+                # No different-team candidate available — slip can't be
+                # PP-legal, so abandon it.
+                logger.info("Backtest: skipping slip — no second team available in candidate pool")
+                return None
+            # Drop the lowest-EV existing leg (last index after the
+            # EV-descending pass) and append the replacement.
+            best_legs.pop()
+            best_legs.append(replacement)
 
         true_probs = [float(b.get("true_prob") or 0.0) for b in best_legs]
         avg_prob = sum(true_probs) / n_legs
@@ -386,6 +449,7 @@ class BacktestLogger:
                 "clv_pct":          0.0,
                 "result":           "pending",
                 "stat_actual":      "",
+                "team":             (bet.get("team") or "").strip(),
             })
 
         # Write to Supabase using provided client or user-scoped DB
@@ -423,19 +487,33 @@ class BacktestLogger:
                     "closing_prob":  r["closing_prob"],
                     "clv_pct":       r["clv_pct"],
                     "result":        r["result"],
-                    "stat_actual":   None if r["stat_actual"] == "" else r["stat_actual"]
+                    "stat_actual":   None if r["stat_actual"] == "" else r["stat_actual"],
+                    "team":          r["team"] or None,
                 })
+            # Optional column compatibility: each migration may not yet be
+            # applied on the deployed schema. Strip optionals one at a time
+            # and retry until the insert succeeds (or all retries are
+            # exhausted, in which case the original error is raised).
+            _OPTIONAL_LEG_COLS = ("team", "raw_true_prob")
             try:
                 db.table("legs").insert(db_legs).execute()
             except Exception as legs_exc:
-                # Pre-migration_006: `raw_true_prob` column doesn't exist
-                # on legs. Strip it and retry once.
-                if any("raw_true_prob" in dl for dl in db_legs):
+                last = legs_exc
+                ok = False
+                for col in _OPTIONAL_LEG_COLS:
+                    if not any(col in dl for dl in db_legs):
+                        continue
                     for dl in db_legs:
-                        dl.pop("raw_true_prob", None)
-                    db.table("legs").insert(db_legs).execute()
-                else:
-                    raise legs_exc
+                        dl.pop(col, None)
+                    try:
+                        db.table("legs").insert(db_legs).execute()
+                        ok = True
+                        break
+                    except Exception as retry_exc:
+                        last = retry_exc
+                        continue
+                if not ok:
+                    raise last
             logger.info("Backtest: logged Auto-Slip %s (6-leg EV=%.2f%%) for user %s", slip_id, best_ev * 100, self.user_id)
         except Exception as db_exc:
             logger.error("Backtest: Supabase write failed for slip %s: %s", slip_id, db_exc)

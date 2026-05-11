@@ -47,7 +47,7 @@ class BetResult:
         "pp_line", "fd_line", "side",
         "raw_true_prob", "true_prob", "true_odds", "edge", "individual_ev_pct",
         "over_odds", "under_odds", "both_sided",
-        "pp_player_id", "start_time", "market_width",
+        "pp_player_id", "start_time", "market_width", "team",
     )
 
     def __init__(
@@ -66,6 +66,7 @@ class BetResult:
         pp_player_id: str,
         start_time: str = "",
         market_width: Optional[float] = None,
+        team: str = "",
     ):
         self.bet_id = bet_id
         self.player_name = player_name
@@ -81,6 +82,7 @@ class BetResult:
         self.pp_player_id = pp_player_id
         self.start_time = start_time
         self.market_width = market_width
+        self.team = team or ""
 
         # Hierarchical isotonic calibration with Bayesian shrinkage:
         # global PAV curve combined with the (league, prop, side) curve via
@@ -111,6 +113,7 @@ class BetResult:
             "true_prob":         round(self.true_prob, 4),
             "raw_true_prob":     round(self.raw_true_prob, 4),
             "market_width":      round(self.market_width, 4) if self.market_width is not None else None,
+            "team":              self.team or "",
             "true_odds":         self.true_odds,
             "edge":              round(self.edge, 4),
             "individual_ev_pct": round(self.individual_ev_pct, 4),

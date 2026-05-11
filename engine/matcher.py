@@ -37,6 +37,7 @@ class PrizePickLine:
     player_id: str       # PrizePicks internal ID
     start_time: str = "" # ISO timestamp of game start
     side: str = "both"   # "both", "over", or "under"
+    team: str = ""       # PP team abbreviation (e.g. "MIN", "LAL")
 
 
 @dataclass(slots=True)
