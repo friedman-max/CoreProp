@@ -453,39 +453,10 @@
 
     <!-- ── Analytics view ── -->
     <div class="backtest-view hidden" id="analytics-view">
-      <!-- Top-level summary cards: the six numbers we want to grok at a glance -->
-      <div class="bt-summary" id="cal-summary">
-        <div class="bt-card">
-          <div class="bt-card-label"
-            title="Mean squared error of predicted probabilities vs outcomes. Lower is better. 0.25 = coin-flip baseline.">
-            Brier Score <span style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
-          <div class="bt-card-value" id="cal-brier">—</div>
-        </div>
-        <div class="bt-card">
-          <div class="bt-card-label" title="Lower is better. Rewards well-calibrated confident predictions; punishes confident wrong ones.">
-            Log Loss <span style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
-          <div class="bt-card-value" id="cal-logloss">—</div>
-        </div>
-        <div class="bt-card">
-          <div class="bt-card-label">Resolved Legs</div>
-          <div class="bt-card-value" id="cal-resolved">0</div>
-        </div>
-        <div class="bt-card">
-          <div class="bt-card-label">Raw Hit Rate</div>
-          <div class="bt-card-value" id="cal-hitrate">—</div>
-        </div>
-        <div class="bt-card">
-          <div class="bt-card-label" title="Average true probability of all resolved legs.">Avg Predicted Prob</div>
-          <div class="bt-card-value" id="cal-avgpred">—</div>
-        </div>
-        <div class="bt-card">
-          <div class="bt-card-label" title="Actual minus expected hit rate. Positive = overperforming model.">
-            Hit Rate Delta <span style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
-          <div class="bt-card-value" id="cal-delta">—</div>
-        </div>
-      </div>
 
-      <!-- Row: cumulative P&L chart with date-range selector -->
+      <!-- Cumulative P&L chart + window-scoped stats panel.
+           Selecting a range on the chart filters every stat card below
+           the chart to slips inside that window. MAX shows all-time. -->
       <div class="analytics-row">
         <div class="analytics-panel">
           <div class="analytics-panel-header">
@@ -501,26 +472,58 @@
             <button type="button" class="pnl-range-btn" data-range="MAX">MAX</button>
           </div>
           <div class="chart-wrap"><canvas id="chart-pnl"></canvas></div>
-        </div>
-      </div>
 
-      <!-- Row: CLV section -->
-      <div class="analytics-row">
-        <div class="analytics-panel">
-          <div class="analytics-panel-header">
-            <h3>Closing Line Value (CLV)</h3>
-            <span class="analytics-subtitle">If CLV+ rate &gt; 50% and Avg CLV% &gt; 0, you're beating the market.</span>
+          <!-- Window-scoped stats. The Brier / log-loss / hit-rate /
+               avg-predicted / delta cards reflect resolved legs with
+               slip timestamps inside the selected window. CLV cards
+               reflect CLV-tracked legs in the same window. -->
+          <div style="margin-top:12px; font-size:11px; opacity:0.7; text-transform:uppercase; letter-spacing:0.5px;" id="cal-window-label">
+            Stats for: <span id="cal-window-range">1M</span>
           </div>
-          <div class="bt-summary" id="clv-summary" style="margin:0; padding:0; border:none; gap:8px;">
-            <div class="bt-card" style="flex:1;">
+          <div class="bt-summary" id="cal-summary" style="margin-top:8px;">
+            <div class="bt-card">
+              <div class="bt-card-label"
+                title="Mean squared error of predicted probabilities vs outcomes. Lower is better. 0.25 = coin-flip baseline.">
+                Brier Score <span style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
+              <div class="bt-card-value" id="cal-brier">—</div>
+            </div>
+            <div class="bt-card">
+              <div class="bt-card-label" title="Lower is better. Rewards well-calibrated confident predictions; punishes confident wrong ones.">
+                Log Loss <span style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
+              <div class="bt-card-value" id="cal-logloss">—</div>
+            </div>
+            <div class="bt-card">
+              <div class="bt-card-label">Resolved Legs</div>
+              <div class="bt-card-value" id="cal-resolved">0</div>
+            </div>
+            <div class="bt-card">
+              <div class="bt-card-label">Raw Hit Rate</div>
+              <div class="bt-card-value" id="cal-hitrate">—</div>
+            </div>
+            <div class="bt-card">
+              <div class="bt-card-label" title="Average true probability of all resolved legs.">Avg Predicted Prob</div>
+              <div class="bt-card-value" id="cal-avgpred">—</div>
+            </div>
+            <div class="bt-card">
+              <div class="bt-card-label" title="Actual minus expected hit rate. Positive = overperforming model.">
+                Hit Rate Delta <span style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
+              <div class="bt-card-value" id="cal-delta">—</div>
+            </div>
+          </div>
+
+          <div style="margin-top:16px; font-size:11px; opacity:0.7; text-transform:uppercase; letter-spacing:0.5px;">
+            Closing Line Value <span style="font-size:0.95em; opacity:0.7; text-transform:none;" title="If CLV+ rate > 50% and Avg CLV% > 0, you're beating the market.">ⓘ</span>
+          </div>
+          <div class="bt-summary" id="clv-summary" style="margin-top:8px;">
+            <div class="bt-card">
               <div class="bt-card-label">Tracked</div>
               <div class="bt-card-value" id="clv-count">0</div>
             </div>
-            <div class="bt-card" style="flex:1;">
+            <div class="bt-card">
               <div class="bt-card-label" title="How often your opening line beat the closing line.">CLV+ Rate</div>
               <div class="bt-card-value" id="clv-positive-rate">—</div>
             </div>
-            <div class="bt-card" style="flex:1;">
+            <div class="bt-card">
               <div class="bt-card-label" title="Average percentage edge over the closing line.">Avg CLV%</div>
               <div class="bt-card-value" id="clv-avg-pct">—</div>
             </div>
@@ -758,7 +761,7 @@
 
 
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script defer src="/static/app.js?v=35"></script>
+  <script defer src="/static/app.js?v=36"></script>
 </body>
 
 </html>

@@ -218,9 +218,10 @@ def evaluate_analytics(user_jwt: str) -> dict:
       - All of evaluate_calibration() (Brier, log-loss, hit-rate cards, CLV).
       - Cumulative P&L timeline: one point per resolved slip with the slip's
         timestamp, using PrizePicks payout tables and a 1-unit stake per
-        slip. Positive values = profit. The frontend's date-range selector
-        filters this client-side so the server can serve the same payload
-        for every range.
+        slip. Positive values = profit.
+      - resolved_legs / clv_legs: per-row data with timestamps so the
+        frontend can recompute every metric for the chart's selected
+        date range without another round trip.
     """
     from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS
 
@@ -236,8 +237,24 @@ def evaluate_analytics(user_jwt: str) -> dict:
             logger.warning("Analytics: legs fetch failed: %s", exc)
             all_legs = []
 
+    # Slip → timestamp map. Legs don't have their own timestamp; they
+    # inherit it from the slip via slip_id. Pulled here once so both
+    # the metric arrays and the P&L aggregation share one lookup.
+    slip_ts: dict[str, str] = {}
+    slip_meta: list = []
+    if db:
+        try:
+            slips_res = db.table("slips").select("id, timestamp, slip_type").order("timestamp", desc=False).execute()
+            slip_meta = slips_res.data or []
+            for s in slip_meta:
+                if s.get("id") and s.get("timestamp"):
+                    slip_ts[s["id"]] = s["timestamp"]
+        except Exception as exc:
+            logger.warning("Analytics: slip timestamp fetch failed: %s", exc)
+
     _RESOLVED = {"won", "win", "hit", "1", "lost", "loss", "miss", "0"}
     rows: list[dict] = []
+    resolved_legs_with_ts: list[dict] = []
     for leg in all_legs:
         r = str(leg.get("result") or "").lower()
         if r not in _RESOLVED:
@@ -248,17 +265,30 @@ def evaluate_analytics(user_jwt: str) -> dict:
             continue
         if true_prob <= 0 or true_prob >= 1:
             continue
+        sid = leg.get("slip_id", "")
+        outcome = 1 if r in ("won", "win", "hit", "1") else 0
         rows.append({
             "true_prob": true_prob,
-            "outcome":   1 if r in ("won", "win", "hit", "1") else 0,
+            "outcome":   outcome,
             "player":    leg.get("player", ""),
             "prop":      leg.get("prop", ""),
             "side":      leg.get("side", ""),
             "league":    leg.get("league", ""),
-            "slip_id":   leg.get("slip_id", ""),
+            "slip_id":   sid,
         })
+        # Compact per-leg array for the client-side recompute path. Only
+        # the three fields the frontend actually needs (true_prob,
+        # outcome, timestamp) so the response stays small.
+        ts = slip_ts.get(sid)
+        if ts:
+            resolved_legs_with_ts.append({
+                "true_prob": true_prob,
+                "outcome":   outcome,
+                "timestamp": ts,
+            })
 
     clv_rows: list[dict] = []
+    clv_legs_with_ts: list[dict] = []
     _seen_start = False
     _sorted_legs = sorted(all_legs, key=lambda x: x.get("slip_id", ""))
     for leg in _sorted_legs:
@@ -271,6 +301,13 @@ def evaluate_analytics(user_jwt: str) -> dict:
         cv = leg.get("clv_pct")
         if cp is not None and cv is not None:
             clv_rows.append({"closing_prob": cp, "clv_pct": cv})
+            ts = slip_ts.get(leg.get("slip_id", ""))
+            if ts:
+                clv_legs_with_ts.append({
+                    "closing_prob": cp,
+                    "clv_pct":      cv,
+                    "timestamp":    ts,
+                })
 
     base = evaluate_calibration(user_jwt, _rows=rows, _clv_rows=clv_rows)
 
@@ -278,15 +315,14 @@ def evaluate_analytics(user_jwt: str) -> dict:
     pnl_timeline: list[dict] = []
     resolved_slips = won_slips = 0
 
-    if db:
+    if db and slip_meta:
         try:
-            slips_res = db.table("slips").select("id, timestamp, slip_type").order("timestamp", desc=False).execute()
             legs_by_slip: dict[str, list] = {}
             for l in all_legs:
                 legs_by_slip.setdefault(l["slip_id"], []).append(l)
 
             cum_pnl = 0.0
-            for s in (slips_res.data or []):
+            for s in slip_meta:
                 sid = s["id"]
                 legs = legs_by_slip.get(sid, [])
                 if not legs:
@@ -335,5 +371,11 @@ def evaluate_analytics(user_jwt: str) -> dict:
         "resolved_slips": resolved_slips,
         "won_slips":      won_slips,
         "roi_per_slip":   roi,
+        # Per-leg arrays (with slip-inherited timestamps) so the
+        # frontend can recompute Brier / log-loss / hit-rate / CLV
+        # for whatever date range the chart is showing without
+        # another network round trip.
+        "resolved_legs":  resolved_legs_with_ts,
+        "clv_legs":       clv_legs_with_ts,
     })
     return base

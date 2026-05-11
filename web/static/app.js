@@ -2489,9 +2489,24 @@ function renderAnalyticsSkeleton() {
 
 // Render the non-chart pieces first (cards + tables); chart rendering is
 // expensive (Chart.js destroy+redraw) so we defer it to the next idle slot
-// so the summary becomes readable within the same frame.
+// so the summary becomes readable within the same frame. Cards are
+// rendered window-scoped from the start (using whatever range the
+// chart selector defaults to) so they never briefly flash an all-time
+// value before snapping to the windowed value when the chart paints.
 function renderAnalyticsIncremental(data) {
-  renderCalibration(data);
+  _pnlData = data;
+  // Eager card paint — derive the same xMin/xMax that _drawPnlChart
+  // will use, then run the recompute helper directly. Skips the
+  // chart canvas (deferred below) but gets the cards correct on the
+  // first frame.
+  const ms = _PNL_RANGES[_pnlRange];
+  const now = Date.now();
+  const xMin = ms == null ? 0 : (now - ms);
+  const xMax = ms == null ? Number.POSITIVE_INFINITY : now;
+  renderCalibration(_filterAnalyticsForWindow(data, xMin, xMax));
+  const winLblEl = document.getElementById("cal-window-range");
+  if (winLblEl) winLblEl.textContent = _pnlRange === "MAX" ? "ALL-TIME" : _pnlRange;
+
   const deferCharts = () => renderAnalyticsExtras(data);
   if (window.requestIdleCallback) {
     requestIdleCallback(deferCharts, { timeout: 400 });
@@ -2821,6 +2836,80 @@ function _drawPnlChart() {
     const sign = endY >= 0 ? "+" : "";
     subtitle.textContent = `${winLabel} ${sign}${endY.toFixed(2)}u · ${totalSlips} resolved slips total`;
   }
+
+  // Refresh the stat cards to match the chart's selected window. The
+  // cards use the same xMin/xMax bounds as the chart so a number on
+  // the card always corresponds to a slip whose timestamp is inside
+  // the visible region.
+  const windowed = _filterAnalyticsForWindow(_pnlData, xMin, xMax);
+  renderCalibration(windowed);
+  const winLabel = _pnlRange === "MAX" ? "ALL-TIME" : _pnlRange;
+  const winLblEl = document.getElementById("cal-window-range");
+  if (winLblEl) winLblEl.textContent = winLabel;
+}
+
+// ── Window-filter recompute ──────────────────────────────────────────
+// Given the raw analytics payload and a chart-window timestamp range,
+// recompute Brier / log-loss / hit-rate / avg-pred / CLV stats over only
+// the legs whose slip timestamp falls inside the window. The output has
+// the same shape `renderCalibration()` expects, so the existing card
+// renderer is reused without modification.
+function _filterAnalyticsForWindow(data, xMinMs, xMaxMs) {
+  if (!data) return data;
+  const inRange = (tsStr) => {
+    if (!tsStr) return false;
+    const t = new Date(tsStr).getTime();
+    return Number.isFinite(t) && t >= xMinMs && t <= xMaxMs;
+  };
+
+  // ── Resolved legs ────────────────────────────────────────────────
+  const legs = (data.resolved_legs || []).filter(l => inRange(l.timestamp));
+  const n = legs.length;
+
+  let brier = null, logLoss = null, hitRate = null, avgPred = null;
+  if (n > 0) {
+    let bsum = 0, llsum = 0, hits = 0, psum = 0;
+    const EPS = 1e-7;
+    for (const l of legs) {
+      const p = Math.max(EPS, Math.min(1 - EPS, Number(l.true_prob) || 0));
+      const o = l.outcome ? 1 : 0;
+      bsum  += (p - o) ** 2;
+      llsum += o * Math.log(p) + (1 - o) * Math.log(1 - p);
+      hits  += o;
+      psum  += Number(l.true_prob) || 0;
+    }
+    brier   = bsum / n;
+    logLoss = -llsum / n;
+    hitRate = hits / n;
+    avgPred = psum / n;
+  }
+
+  // ── CLV legs ─────────────────────────────────────────────────────
+  const clvLegs = (data.clv_legs || []).filter(l => inRange(l.timestamp));
+  const nClv = clvLegs.length;
+  let clvPlusRate = null, avgClvPct = null;
+  if (nClv > 0) {
+    let plus = 0, sumPct = 0;
+    for (const l of clvLegs) {
+      const v = Number(l.clv_pct) || 0;
+      if (v > 0) plus += 1;
+      sumPct += v;
+    }
+    clvPlusRate = plus / nClv;
+    avgClvPct   = sumPct / nClv;
+  }
+
+  // Return the same field names renderCalibration() consumes.
+  return {
+    brier_score:        brier,
+    log_loss:           logLoss,
+    n_resolved:         n,
+    hit_rate:           hitRate,
+    avg_predicted_prob: avgPred,
+    n_clv_tracked:      nClv,
+    clv_plus_rate:      clvPlusRate,
+    avg_clv_pct:        avgClvPct,
+  };
 }
 
 
