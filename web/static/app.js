@@ -3662,15 +3662,40 @@ function renderSandboxResults(data) {
     const lineColor = positive ? "#22c55e" : "#ef4444";
     const fillColor = positive ? "rgba(34, 197, 94, 0.10)" : "rgba(239, 68, 68, 0.10)";
 
-    const points = (data.equity_curve || []).map(p => ({
+    const rawPoints = (data.equity_curve || []).map(p => ({
         x: new Date(p.x).getTime(),
         y: Number(p.y) || 0,
     })).filter(p => Number.isFinite(p.x))
        .sort((a, b) => a.x - b.x);
 
+    // Anchor the line to the full horizontal window so it spans edge-to-edge,
+    // Robinhood-style. For a fixed range (1D/1W/...): xMin = now - range,
+    // xMax = now. For MAX: use the first and last slip timestamps so the
+    // line starts at the chart's left edge and ends at its right edge.
+    const rangeMs = _SB_RANGES[data._sbRange || _sbRange];
+    let xMin, xMax;
+    if (rangeMs != null) {
+        xMax = Date.now();
+        xMin = xMax - rangeMs;
+    } else if (rawPoints.length) {
+        xMin = rawPoints[0].x;
+        xMax = rawPoints[rawPoints.length - 1].x;
+    } else {
+        xMax = Date.now();
+        xMin = xMax - 86400000;
+    }
+
+    const startY = 0;
+    const endY = rawPoints.length ? rawPoints[rawPoints.length - 1].y : 0;
+    const inWindow = rawPoints.filter(p => p.x >= xMin && p.x <= xMax);
+    const points = [
+        { x: xMin, y: startY },
+        ...inWindow,
+        { x: xMax, y: inWindow.length ? inWindow[inWindow.length - 1].y : endY },
+    ];
+
     const dateFmtRange = (() => {
-        if (!points.length) return "MAX";
-        const span = points[points.length - 1].x - points[0].x;
+        const span = xMax - xMin;
         const day = 86400000;
         if (span <= day)            return "1D";
         if (span <= 31 * day)       return "1M";
@@ -3678,8 +3703,30 @@ function renderSandboxResults(data) {
         return "MAX";
     })();
 
+    // Robinhood-style vertical crosshair: draw a thin line at the active
+    // tooltip x-position so the user can sight straight down to the axis.
+    const sbCrosshair = {
+        id: "sbCrosshair",
+        afterDatasetsDraw(chart) {
+            const active = chart.tooltip && chart.tooltip.getActiveElements && chart.tooltip.getActiveElements();
+            if (!active || !active.length) return;
+            const x = active[0].element.x;
+            const { top, bottom } = chart.chartArea;
+            const c = chart.ctx;
+            c.save();
+            c.beginPath();
+            c.moveTo(x, top);
+            c.lineTo(x, bottom);
+            c.lineWidth = 1;
+            c.strokeStyle = "rgba(255,255,255,0.35)";
+            c.stroke();
+            c.restore();
+        },
+    };
+
     sandboxChart = new Chart(ctx, {
         type: "line",
+        plugins: [sbCrosshair],
         data: {
             datasets: [{
                 label: "Cumulative P&L",
@@ -3732,6 +3779,8 @@ function renderSandboxResults(data) {
             scales: {
                 x: {
                     type: "linear",
+                    min: xMin,
+                    max: xMax,
                     grid: { color: "rgba(255,255,255,0.04)" },
                     ticks: {
                         color: "#7a80a0",
