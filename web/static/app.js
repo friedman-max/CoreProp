@@ -963,7 +963,15 @@ document.querySelectorAll(".tab").forEach(tab => {
       $("sandbox-view").classList.remove("hidden");
       const firstOpen = !sandboxInitialized;
       initSandbox();
-      if (firstOpen) runSandbox();
+      // Auto-run on first open with the default controls (2-leg power,
+      // min prob 54.1%, Kelly enabled — all set in the HTML markup).
+      // Defer one tick so the stat-type chip fetch can issue first;
+      // the simulation itself doesn't depend on the chips loading
+      // (empty included_props means "all props"), but starting the
+      // chip request first makes the panel paint feel less choppy.
+      if (firstOpen) {
+        setTimeout(() => runSandbox(), 0);
+      }
     }
   });
 });
@@ -3266,15 +3274,23 @@ async function loadSandboxStatTypes() {
     try {
         const res = await apiFetch("/api/sandbox/stat-types");
         if (!res.ok) {
-            let msg = res.status + ' ' + res.statusText;
-            try {
-                const err = await res.json();
-                if (err && err.detail) msg = err.detail;
-            } catch (_) { /* not JSON */ }
-            _renderSandboxStatTypesMessage(`Failed to load stat types: ${msg}`, true);
+            const detail = await _readErrorDetail(res);
+            _renderSandboxStatTypesMessage(`Failed to load stat types: ${detail}`, true);
             return;
         }
-        const groups = await res.json();
+        const text = await res.text();
+        if (!text) {
+            _renderSandboxStatTypesMessage("Failed to load stat types: empty response.", true);
+            return;
+        }
+        let groups;
+        try { groups = JSON.parse(text); }
+        catch {
+            _renderSandboxStatTypesMessage(
+                `Failed to load stat types: non-JSON response (${text.slice(0, 80)})`, true,
+            );
+            return;
+        }
         const leagueOrder = ["NBA", "WNBA", "NCAAB", "MLB", "NHL", "SOCCER"];
         const sortedLeagues = Object.keys(groups).sort((a, b) => {
             const ia = leagueOrder.indexOf(a);
@@ -3346,18 +3362,48 @@ async function runSandbox() {
         });
 
         if (!res.ok) {
-            const err = await res.json();
-            showToast("Simulation error: " + (err.detail || "Unknown error"), "error");
+            const detail = await _readErrorDetail(res);
+            showToast(`Simulation error: ${detail}`, "error");
             return;
         }
 
-        const data = await res.json();
+        // Defensive JSON parse: a successful status with an empty body
+        // (rare, but happens on flaky proxies / cold workers) used to
+        // throw "Unexpected end of JSON input" with no useful context.
+        const text = await res.text();
+        if (!text) {
+            showToast("Simulation error: empty response from server. Try again.", "error");
+            return;
+        }
+        let data;
+        try { data = JSON.parse(text); }
+        catch (parseErr) {
+            showToast(`Simulation error: server returned non-JSON (${text.slice(0, 80)})`, "error");
+            return;
+        }
         renderSandboxResults(data);
     } catch (e) {
-        showToast("Network error: " + e.message, "error");
+        showToast("Network error: " + (e && e.message ? e.message : String(e)), "error");
     } finally {
         btnRun.disabled = false;
         btnRun.textContent = "Run Simulation";
+    }
+}
+
+// Pull a useful detail string out of a non-OK response. Falls through
+// JSON → text → status — never throws.
+async function _readErrorDetail(res) {
+    try {
+        const text = await res.text();
+        if (!text) return `${res.status} ${res.statusText || ""}`.trim() || "Empty response";
+        try {
+            const j = JSON.parse(text);
+            return (j && (j.detail || j.error || j.message)) || text.slice(0, 200);
+        } catch {
+            return text.slice(0, 200);
+        }
+    } catch {
+        return `${res.status} ${res.statusText || ""}`.trim() || "Network error";
     }
 }
 
@@ -3420,16 +3466,22 @@ async function optimizeSandboxThreshold() {
         });
 
         if (!res.ok) {
-            let detail = "Unknown error";
-            try {
-                const err = await res.json();
-                detail = err.detail || detail;
-            } catch (_) { /* response wasn't JSON */ }
+            const detail = await _readErrorDetail(res);
             showToast("Optimization error: " + detail, "error");
             return;
         }
 
-        const data = await res.json();
+        const text = await res.text();
+        if (!text) {
+            showToast("Optimization error: empty response from server. Try again.", "error");
+            return;
+        }
+        let data;
+        try { data = JSON.parse(text); }
+        catch {
+            showToast(`Optimization error: server returned non-JSON (${text.slice(0, 80)})`, "error");
+            return;
+        }
         const bestVal = Number(data && data.best_threshold);
         if (!Number.isFinite(bestVal)) {
             showToast("Optimization returned no usable threshold.", "warning");

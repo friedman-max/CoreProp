@@ -147,10 +147,18 @@ class StrategyTester:
 
         def _fetch_page(cols: str, offset: int) -> tuple[list, bool]:
             """Returns (rows, was_full_page). was_full_page tells the
-            caller whether to keep paging."""
+            caller whether to keep paging.
+
+            Pages are explicitly ordered so the same query returns the
+            same rows in the same order every time. Without an order(),
+            PostgREST is free to return rows in whatever sequence the
+            planner chooses, which makes downstream tie-breaking and
+            re-runs nondeterministic."""
             q = (self.db.table("market_observatory")
                      .select(cols)
-                     .neq("result", "pending"))
+                     .neq("result", "pending")
+                     .order("game_start", desc=False)
+                     .order("market_key", desc=False))
             if leagues:
                 q = q.in_("league", leagues)
             res = q.range(offset, offset + PAGE - 1).execute()
@@ -318,7 +326,21 @@ class StrategyTester:
         downgraded to single-team — this matches the live system's
         behavior and keeps the simulated slip set apples-to-apples
         with what would actually have been logged."""
-        sorted_df = slate.sort_values(score_col, ascending=False)
+        # Stable sort + deterministic tie-breaker. Pandas' default kind
+        # is quicksort (NOT stable), so two legs with the same score
+        # could come out in different relative order between runs. The
+        # tie-breaker uses player+prop+side as a string fallback so the
+        # final pick set is identical for identical inputs.
+        slate = slate.assign(
+            _tie=(slate.get("player", "").astype(str)
+                  + "|" + slate.get("prop", "").astype(str)
+                  + "|" + slate.get("side", "").astype(str))
+        )
+        sorted_df = slate.sort_values(
+            [score_col, "_tie"],
+            ascending=[False, True],
+            kind="stable",
+        )
         # to_dict("records") is one O(n) conversion; subsequent access is
         # O(1) per field versus pandas' O(log n) plus per-call overhead.
         rows = sorted_df.to_dict("records")
@@ -640,7 +662,9 @@ class StrategyTester:
             push_legs_used = 0
             dnp_legs_used  = 0
 
-            sorted_slate_ids = df.sort_values("game_start_dt")["slate_id"].unique()
+            sorted_slate_ids = df.sort_values(
+                "game_start_dt", kind="stable",
+            )["slate_id"].unique()
             slates_with_qualifying = 0
             slates_without_full_slip = 0
 
@@ -1004,7 +1028,7 @@ class StrategyTester:
         n_slips = 0
         n_zero_bets = 0
         running_bankroll = bankroll
-        for sid in df.sort_values("game_start_dt")["slate_id"].unique():
+        for sid in df.sort_values("game_start_dt", kind="stable")["slate_id"].unique():
             slate_df = slates.get_group(sid)
             if len(slate_df) < slip_size:
                 continue

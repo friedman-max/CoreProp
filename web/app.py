@@ -15,6 +15,7 @@ import logging
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -1745,48 +1746,97 @@ class SandboxRequest(BaseModel):
     end_date:       Optional[str] = None
     bootstrap:      bool      = True
 
+# Stat-types cache: the (league, prop) set changes slowly (only when a
+# new league/prop type starts being scraped), so caching the result for
+# a few minutes avoids the 22+ paginated round-trips on every page load.
+_stat_types_cache: dict[str, list] = {}
+_stat_types_cache_lock = threading.Lock()
+_stat_types_cache_ts: float = 0.0
+_STAT_TYPES_TTL_SEC = 300  # 5 min
+
+
 @app.get("/api/sandbox/stat-types")
 def list_sandbox_stat_types(user: dict = Depends(get_current_user)):
-    """Return distinct (league, stat_type) pairs from market_observatory so
-    the Sandbox UI shows only filter chips that will actually match data.
-    Pages through results because the supabase client caps a single
-    response at 1000 rows."""
+    """Return distinct (league, stat_type) pairs from market_observatory.
+
+    Cached for 5 minutes per process — the underlying set only changes
+    when scrapers start ingesting a new league or prop type, which is
+    measured in days, not minutes.
+
+    Pagination is parallel (8 concurrent page fetches via a
+    ThreadPoolExecutor) and filters with `result != pending` so the
+    rows we walk are the same superset the sandbox simulation sees.
+    Without parallelism the 22+ sequential round-trips were timing
+    out the request from the client side.
+    """
+    global _stat_types_cache, _stat_types_cache_ts
     from engine.database import get_db
+
+    now = time.monotonic()
+    with _stat_types_cache_lock:
+        if _stat_types_cache and (now - _stat_types_cache_ts) < _STAT_TYPES_TTL_SEC:
+            return _stat_types_cache
+
     db = get_db()
     if not db:
         raise HTTPException(status_code=503, detail="Database not connected")
 
-    grouped: dict[str, set] = {}
     PAGE = 1000
-    offset = 0
-    try:
-        while True:
+    CONCURRENCY = 8
+    MAX_OFFSET = 200_000
+
+    def _fetch_page(offset: int) -> tuple[list, bool]:
+        # ORDER BY market_key keeps pages disjoint and the result stable
+        # across reruns. The select pulls only the two columns the
+        # endpoint actually needs, so each page is small (~30KB).
+        try:
             res = (
                 db.table("market_observatory")
                 .select("league,prop")
+                .order("market_key", desc=False)
                 .range(offset, offset + PAGE - 1)
                 .execute()
             )
             rows = res.data or []
-            if not rows:
-                break
-            for r in rows:
-                lg = (r.get("league") or "").strip() or "Unknown"
-                prop = (r.get("prop") or "").strip()
-                if not prop:
-                    continue
-                grouped.setdefault(lg, set()).add(prop)
-            if len(rows) < PAGE:
-                break
-            offset += PAGE
-            # Hard cap to avoid pathological loops on a runaway table.
-            if offset > 200000:
-                break
-    except Exception as e:
-        logger.exception("stat-types endpoint failed")
-        raise HTTPException(status_code=500, detail=f"DB query failed: {e}")
+            return rows, len(rows) >= PAGE
+        except Exception as exc:
+            logger.warning("stat-types: page fetch failed at offset %d: %s", offset, exc)
+            return [], False
 
-    return {lg: sorted(props) for lg, props in sorted(grouped.items())}
+    grouped: dict[str, set] = {}
+    offset = 0
+    done = False
+    with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+        while not done and offset <= MAX_OFFSET:
+            batch_offsets = [offset + i * PAGE for i in range(CONCURRENCY)
+                             if offset + i * PAGE <= MAX_OFFSET]
+            futs = {pool.submit(_fetch_page, o): o for o in batch_offsets}
+            results: dict[int, tuple[list, bool]] = {}
+            for fut in as_completed(futs):
+                o = futs[fut]
+                try:
+                    results[o] = fut.result()
+                except Exception as exc:
+                    logger.warning("stat-types: future failed at %d: %s", o, exc)
+                    results[o] = ([], False)
+                    done = True
+            for o in sorted(results):
+                rows, full = results[o]
+                for r in rows:
+                    lg = (r.get("league") or "").strip() or "Unknown"
+                    prop = (r.get("prop") or "").strip()
+                    if not prop:
+                        continue
+                    grouped.setdefault(lg, set()).add(prop)
+                if not full:
+                    done = True
+            offset += CONCURRENCY * PAGE
+
+    out = {lg: sorted(props) for lg, props in sorted(grouped.items())}
+    with _stat_types_cache_lock:
+        _stat_types_cache = out
+        _stat_types_cache_ts = time.monotonic()
+    return out
 
 
 def _config_from_req(req: SandboxRequest):
