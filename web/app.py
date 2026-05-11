@@ -2421,8 +2421,8 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         return {"slips": [], "total": 0}
 
     try:
-        # 1. Fetch the latest 100 slips
-        slips_res = db.table("slips").select("*").order("timestamp", desc=True).limit(100).execute()
+        # 1. Fetch the latest 300 slips (5 pages × 60 slips/page on the UI)
+        slips_res = db.table("slips").select("*").order("timestamp", desc=True).limit(300).execute()
         slip_data = slips_res.data
         if not slip_data:
             return {"slips": [], "total": 0}

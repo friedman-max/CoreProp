@@ -221,11 +221,12 @@
                 <th class="sortable" data-col="side">Side</th>
                 <th class="sortable active desc" data-col="true_prob">True %</th>
                 <th>Book Odds</th>
+                <th class="sortable" data-col="start_time">Game Time</th>
               </tr>
             </thead>
             <tbody id="bets-tbody">
               <tr id="empty-row">
-                <td colspan="7" class="empty-msg">Click "Refresh Now" to load bets.</td>
+                <td colspan="8" class="empty-msg">Click "Refresh Now" to load bets.</td>
               </tr>
             </tbody>
           </table>
@@ -414,15 +415,15 @@
       <!-- Summary cards -->
       <div class="bt-summary" id="bt-summary">
         <div class="bt-card">
-          <div class="bt-card-label">Slips (Done / Total) <span style="font-size: 0.8em; opacity: 0.7;">(Recent 100)</span></div>
+          <div class="bt-card-label">Slips (Done / Total) <span style="font-size: 0.8em; opacity: 0.7;">(Recent 300)</span></div>
           <div class="bt-card-value" id="bt-slips-stat">0 / 0</div>
         </div>
         <div class="bt-card">
-          <div class="bt-card-label">Slip Hit Rate <span style="font-size: 0.8em; opacity: 0.7;">(Recent 100)</span></div>
+          <div class="bt-card-label">Slip Hit Rate <span style="font-size: 0.8em; opacity: 0.7;">(Recent 300)</span></div>
           <div class="bt-card-value" id="bt-hit-rate">0%</div>
         </div>
         <div class="bt-card">
-          <div class="bt-card-label">Legs (Done / Total) <span style="font-size: 0.8em; opacity: 0.7;">(Recent 100)</span></div>
+          <div class="bt-card-label">Legs (Done / Total) <span style="font-size: 0.8em; opacity: 0.7;">(Recent 300)</span></div>
           <div class="bt-card-value" id="bt-legs-stat">0 / 0</div>
         </div>
         <div class="bt-card">
@@ -709,27 +710,10 @@
               </select>
             </div>
             <div class="control-group">
-              <label>Slip-Construction Strategy
-                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Live System Replay mirrors the production BacktestLogger (EV-sorted, player-game dedup). Top EV picks by individual EV%. Top Probability is the legacy v1 behavior. All strategies enforce PrizePicks' rule that every slip must contain picks from at least 2 distinct teams.">ⓘ</span>
-              </label>
-              <select id="sb-select-strategy">
-                <option value="live_replay" selected>Live System Replay</option>
-                <option value="top_ev">Top EV</option>
-                <option value="top_prob">Top Probability (legacy v1)</option>
-              </select>
-            </div>
-            <div class="control-group">
               <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text); cursor: pointer;">
                 <input type="checkbox" id="sb-use-kelly" checked style="width: 16px; height: 16px; cursor: pointer;" />
                 Use Kelly Sizing
                 <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Mathematically optimal sizing based on EV and bankroll. Slips with negative Expected Value will be bet at $0.00, resulting in flat lines on the graph.">ⓘ</span>
-              </label>
-            </div>
-            <div class="control-group">
-              <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text); cursor: pointer;">
-                <input type="checkbox" id="sb-bootstrap" checked style="width: 16px; height: 16px; cursor: pointer;" />
-                Show Confidence Intervals
-                <span style="font-size:0.85em; opacity:0.8; cursor:help;" title="Bootstrap (N=500) the slip set to compute 95% CIs on ROI, win rate, and drawdown. Off saves ~1s on large datasets.">ⓘ</span>
               </label>
             </div>
             <button class="btn btn-accent btn-full" id="btn-run-sandbox" style="margin-top:20px;">Run Simulation</button>
@@ -753,17 +737,6 @@
             <div class="chart-wrap" style="height:300px;"><canvas id="chart-sandbox-equity"></canvas></div>
           </div>
 
-          <div id="sb-funnel" style="display:none;">
-            <div class="analytics-panel-header">
-              <h3>Filter Funnel</h3>
-              <span class="analytics-subtitle">How many observations survived each filter step. If the slip count is low, this tells you which filter culled the rest.</span>
-            </div>
-            <div class="table-wrapper" style="max-height:240px; overflow:auto;">
-              <table><thead><tr>
-                <th>Stage</th><th style="text-align:right;">Count</th>
-              </tr></thead><tbody id="sb-funnel-tbody"></tbody></table>
-            </div>
-          </div>
 
           <div id="sb-slip-log" style="display:none;">
             <div class="analytics-panel-header" style="display:flex; justify-content:space-between; align-items:center;">
@@ -785,7 +758,7 @@
 
 
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script defer src="/static/app.js?v=34"></script>
+  <script defer src="/static/app.js?v=35"></script>
 </body>
 
 </html>
