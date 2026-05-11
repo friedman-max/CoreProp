@@ -3648,35 +3648,113 @@ function renderSandboxResults(data) {
 
     sandboxLastSlips = data.slips || [];
 
-    const baseScales = {
-        y: { grid: { color: '#2a2f42' }, ticks: { color: '#7a80a0' } },
-        x: { grid: { display: false }, ticks: { color: '#7a80a0', maxRotation: 45, autoSkip: true } }
-    };
-
     // ── Equity curve ────────────────────────────────────────────────
+    // Stock-chart hover: tooltip + crosshair point follow the cursor's
+    // x position anywhere inside the chart box, not just when hovering
+    // directly on the line. Same pattern as the Analytics tab's P&L
+    // chart — uses a linear time axis with parsing:false so the
+    // tooltip's x can be any moment, and a stepped line so the y
+    // value at the cursor's x is exactly "P&L through this moment."
     const ctx = $("chart-sandbox-equity").getContext("2d");
     if (sandboxChart) sandboxChart.destroy();
+
+    const positive = s.total_profit >= 0;
+    const lineColor = positive ? "#22c55e" : "#ef4444";
+    const fillColor = positive ? "rgba(34, 197, 94, 0.10)" : "rgba(239, 68, 68, 0.10)";
+
+    const points = (data.equity_curve || []).map(p => ({
+        x: new Date(p.x).getTime(),
+        y: Number(p.y) || 0,
+    })).filter(p => Number.isFinite(p.x))
+       .sort((a, b) => a.x - b.x);
+
+    const dateFmtRange = (() => {
+        if (!points.length) return "MAX";
+        const span = points[points.length - 1].x - points[0].x;
+        const day = 86400000;
+        if (span <= day)            return "1D";
+        if (span <= 31 * day)       return "1M";
+        if (span <= 365 * day)      return "1Y";
+        return "MAX";
+    })();
+
     sandboxChart = new Chart(ctx, {
-        type: 'line',
+        type: "line",
         data: {
-            labels: data.equity_curve.map(p => new Date(p.x).toLocaleDateString()),
             datasets: [{
-                label: 'Cumulative P&L ($)',
-                data: data.equity_curve.map(p => p.y),
-                borderColor: s.total_profit >= 0 ? '#22c55e' : '#ef4444',
+                label: "Cumulative P&L",
+                data: points,
+                borderColor: lineColor,
+                backgroundColor: fillColor,
                 borderWidth: 2,
                 fill: true,
-                backgroundColor: s.total_profit >= 0 ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                tension: 0.1,
-                pointRadius: 0
-            }]
+                stepped: "before",
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                pointHoverBackgroundColor: lineColor,
+                pointHoverBorderColor: "#0d0f14",
+                pointHoverBorderWidth: 2,
+            }],
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            scales: baseScales,
-            plugins: { legend: { display: false } }
-        }
+            parsing: false,
+            interaction: { mode: "index", intersect: false, axis: "x" },
+            hover:       { mode: "index", intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    mode: "index",
+                    intersect: false,
+                    axis: "x",
+                    displayColors: false,
+                    callbacks: {
+                        title: (items) => {
+                            if (!items.length) return "";
+                            const opts = { month: "short", day: "numeric" };
+                            if (dateFmtRange === "1D") {
+                                opts.hour = "numeric";
+                                opts.minute = "2-digit";
+                            }
+                            if (dateFmtRange === "1Y" || dateFmtRange === "MAX") {
+                                opts.year = "numeric";
+                            }
+                            return new Date(items[0].parsed.x).toLocaleString([], opts);
+                        },
+                        label: (item) => {
+                            const v = item.parsed.y;
+                            return `${v >= 0 ? "+" : ""}$${v.toFixed(2)}`;
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    type: "linear",
+                    grid: { color: "rgba(255,255,255,0.04)" },
+                    ticks: {
+                        color: "#7a80a0",
+                        maxTicksLimit: 6,
+                        callback: (val) => {
+                            const d = new Date(val);
+                            if (dateFmtRange === "1D") {
+                                return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                            }
+                            if (dateFmtRange === "1M" || dateFmtRange === "1Y") {
+                                return d.toLocaleDateString([], { month: "short", day: "numeric" });
+                            }
+                            return d.toLocaleDateString([], { month: "short", year: "2-digit" });
+                        },
+                    },
+                },
+                y: {
+                    title: { display: true, text: "$" },
+                    grid: { color: "#2a2f42" },
+                    ticks: { color: "#7a80a0" },
+                },
+            },
+        },
     });
 
     // ── Slip log ────────────────────────────────────────────────────
