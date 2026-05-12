@@ -715,42 +715,13 @@ class StrategyTester:
 
                 # `selected_legs` is now a list of row-dicts (vectorized
                 # away from per-row DataFrame.loc access — see
-                # _select_ranked).
+                # _select_ranked). Cross-slate dedup is enforced inside
+                # _select_ranked via the shared `run_used_pair` /
+                # `run_used_leg` sets — no additional emit-time check is
+                # needed (and an additional check would over-fire,
+                # because _select_ranked has already added these legs
+                # to the shared sets by the time we see them here).
                 for selected_legs in slips_for_slate:
-                    # Defensive: even with _select_ranked's global
-                    # dedup, double-check no leg in this slip has
-                    # already been emitted. If it has, skip the slip
-                    # entirely so users never see the same prop twice.
-                    leg_keys_this = [
-                        make_leg_key(
-                            r.get("player", "") or "",
-                            r.get("prop", "") or "",
-                            r.get("line", "") if "line" in r else "",
-                            r.get("side", "") or "",
-                            r.get("game_start", "") or "",
-                        )
-                        for r in selected_legs
-                    ]
-                    if any(k in run_used_leg for k in leg_keys_this):
-                        logger.warning(
-                            "Sandbox: dropping slip with already-emitted leg "
-                            "(player=%s prop=%s)",
-                            selected_legs[0].get("player"),
-                            selected_legs[0].get("prop"),
-                        )
-                        continue
-                    # Mark legs (and player-game pairs) as used. The
-                    # _select_ranked call above already added these to
-                    # the shared sets in nearly every case, but mark
-                    # again to cover any future call-site that skips
-                    # passing the shared sets in.
-                    for r, lk in zip(selected_legs, leg_keys_this):
-                        run_used_leg.add(lk)
-                        run_used_pair.add(make_bet_key(
-                            r.get("player", "") or "",
-                            r.get("game_start", "") or "",
-                        ))
-
                     if config.use_kelly:
                         probs = [r["calibrated_prob"] for r in selected_legs]
                         k_frac = self._calculate_kelly_fraction(
