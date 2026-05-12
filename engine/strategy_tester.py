@@ -306,7 +306,9 @@ class StrategyTester:
         return _FALLBACK_TEAM_PREFIX + str(player).strip().lower()
 
     def _select_ranked(self, slate: pd.DataFrame, slip_size: int,
-                       *, score_col: str, dedup: bool) -> List[List[dict]]:
+                       *, score_col: str, dedup: bool,
+                       used_pair: Optional[set] = None,
+                       used_leg:  Optional[set] = None) -> List[List[dict]]:
         """Greedy slip builder used by all sandbox strategies.
 
         `score_col` selects the ranking signal ('calibrated_prob' or
@@ -372,8 +374,14 @@ class StrategyTester:
 
         slips: list[list[dict]] = []
         used = [False] * n
-        used_pair: set = set()
-        used_leg:  set = set()
+        # Caller-provided dedup sets persist across slates so a single
+        # leg/player-game can never appear in two slips across the whole
+        # simulation, not just within one slate. Default to empty sets
+        # when no caller passes them (e.g., legacy call sites).
+        if used_pair is None:
+            used_pair = set()
+        if used_leg is None:
+            used_leg = set()
 
         while True:
             picks: list[int] = []
@@ -431,6 +439,7 @@ class StrategyTester:
 
     def _build_slips(
         self, slate: pd.DataFrame, slip_size: int, strategy: str,
+        *, used_pair: Optional[set] = None, used_leg: Optional[set] = None,
     ) -> List[List[dict]]:
         """Dispatch to the chosen slip-construction strategy. Per-game
         cap is intentionally absent — superseded by the PrizePicks
@@ -441,14 +450,26 @@ class StrategyTester:
             slate = slate.copy()
             slate["_ev"] = slate["calibrated_prob"].to_numpy() * OPTIMAL_IMPLIED_DECIMAL - 1.0
 
+        # All strategies now enforce cross-slip dedup. The legacy
+        # `dedup=False` paths for top_prob/top_ev were intentionally
+        # permissive for v2 backward compat, but they let the same leg
+        # (e.g., "Breanna Stewart over 21.5 points" in the same game)
+        # land in multiple slips — surprising to users reading the slip
+        # log, and indefensible when the user asked "no prop in two
+        # slips." Forcing dedup on universally fixes that without
+        # changing what callers pass.
         if strategy == "top_prob":
-            return self._select_ranked(slate, slip_size, score_col="calibrated_prob", dedup=False)
+            return self._select_ranked(slate, slip_size, score_col="calibrated_prob",
+                                       dedup=True, used_pair=used_pair, used_leg=used_leg)
         if strategy == "top_ev":
-            return self._select_ranked(slate, slip_size, score_col="_ev", dedup=False)
+            return self._select_ranked(slate, slip_size, score_col="_ev",
+                                       dedup=True, used_pair=used_pair, used_leg=used_leg)
         if strategy == "live_replay":
-            return self._select_ranked(slate, slip_size, score_col="_ev", dedup=True)
+            return self._select_ranked(slate, slip_size, score_col="_ev",
+                                       dedup=True, used_pair=used_pair, used_leg=used_leg)
         logger.warning("Sandbox: unknown slip_strategy %r — using live_replay", strategy)
-        return self._select_ranked(slate, slip_size, score_col="_ev", dedup=True)
+        return self._select_ranked(slate, slip_size, score_col="_ev",
+                                   dedup=True, used_pair=used_pair, used_leg=used_leg)
 
 
     # ── Push-aware payout ───────────────────────────────────────────────
@@ -668,6 +689,15 @@ class StrategyTester:
             slates_with_qualifying = 0
             slates_without_full_slip = 0
 
+            # Global dedup sets shared across every slate in this run so
+            # the same player+game or exact leg can't be re-used in a
+            # later slate. Without these, slate boundaries could
+            # accidentally split a single game across two slates (e.g.,
+            # UTC-vs-local date edge cases) and let the same prop slip
+            # through twice.
+            run_used_pair: set = set()
+            run_used_leg:  set = set()
+
             for sid in sorted_slate_ids:
                 slate_df = slates.get_group(sid)
                 if len(slate_df) < config.slip_size:
@@ -677,6 +707,7 @@ class StrategyTester:
 
                 slips_for_slate = self._build_slips(
                     slate_df, config.slip_size, config.slip_strategy,
+                    used_pair=run_used_pair, used_leg=run_used_leg,
                 )
                 if not slips_for_slate:
                     slates_without_full_slip += 1
@@ -686,6 +717,40 @@ class StrategyTester:
                 # away from per-row DataFrame.loc access — see
                 # _select_ranked).
                 for selected_legs in slips_for_slate:
+                    # Defensive: even with _select_ranked's global
+                    # dedup, double-check no leg in this slip has
+                    # already been emitted. If it has, skip the slip
+                    # entirely so users never see the same prop twice.
+                    leg_keys_this = [
+                        make_leg_key(
+                            r.get("player", "") or "",
+                            r.get("prop", "") or "",
+                            r.get("line", "") if "line" in r else "",
+                            r.get("side", "") or "",
+                            r.get("game_start", "") or "",
+                        )
+                        for r in selected_legs
+                    ]
+                    if any(k in run_used_leg for k in leg_keys_this):
+                        logger.warning(
+                            "Sandbox: dropping slip with already-emitted leg "
+                            "(player=%s prop=%s)",
+                            selected_legs[0].get("player"),
+                            selected_legs[0].get("prop"),
+                        )
+                        continue
+                    # Mark legs (and player-game pairs) as used. The
+                    # _select_ranked call above already added these to
+                    # the shared sets in nearly every case, but mark
+                    # again to cover any future call-site that skips
+                    # passing the shared sets in.
+                    for r, lk in zip(selected_legs, leg_keys_this):
+                        run_used_leg.add(lk)
+                        run_used_pair.add(make_bet_key(
+                            r.get("player", "") or "",
+                            r.get("game_start", "") or "",
+                        ))
+
                     if config.use_kelly:
                         probs = [r["calibrated_prob"] for r in selected_legs]
                         k_frac = self._calculate_kelly_fraction(
@@ -1028,11 +1093,20 @@ class StrategyTester:
         n_slips = 0
         n_zero_bets = 0
         running_bankroll = bankroll
+        # Cross-slate dedup: same rationale as run_simulation — prevents
+        # one leg from showing up in two slips across a single threshold
+        # evaluation, even when slate-boundary edge cases would otherwise
+        # leak it.
+        opt_used_pair: set = set()
+        opt_used_leg:  set = set()
         for sid in df.sort_values("game_start_dt", kind="stable")["slate_id"].unique():
             slate_df = slates.get_group(sid)
             if len(slate_df) < slip_size:
                 continue
-            for selected_legs in self._build_slips(slate_df, slip_size, strategy):
+            for selected_legs in self._build_slips(
+                slate_df, slip_size, strategy,
+                used_pair=opt_used_pair, used_leg=opt_used_leg,
+            ):
                 # selected_legs is a list-of-dicts after the
                 # vectorization rewrite of _select_ranked.
                 if use_kelly:
