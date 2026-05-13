@@ -5,11 +5,13 @@ Automatically documents the best +EV slip combinations as they appear
 throughout the day. Logs to Supabase with one row per leg.
 
 Dedup is layered:
-  • (player, game_date) — a player in a given game appears in at most one
-    slip across the rolling 48 h window.
-  • (player, prop, line, side, game_date) — an exact leg never appears in
-    two slips. Catches edge cases where the player-key dedup might miss
-    (e.g. a defensive belt-and-suspenders).
+  • (player, sports_day) — a player in a given game appears in at most
+    one slip across the rolling 48 h window. `sports_day` is the UTC
+    date of (game_start − 12 h), so a late ET game spilling past
+    midnight UTC still buckets with the rest of the night's slate.
+  • (player, prop, line, side, sports_day) — an exact leg never appears
+    in two slips. Catches edge cases where the player-key dedup might
+    miss (e.g. a defensive belt-and-suspenders).
   • Per-user threading.Lock — serializes concurrent log attempts so two
     refreshes can't both read the same "used keys" snapshot before either
     commits its slip.
@@ -136,33 +138,31 @@ def make_game_key(league: str, start_time: str) -> tuple[str, str]:
 
 
 def make_bet_key(player: str, start_time: str) -> tuple[str, str]:
-    """Build a unique signature for a player in a specific game (UTC-normalized)."""
+    """Build a unique signature for a player in a specific game.
+
+    The time component is a "sports day" — the UTC timestamp shifted
+    back 12 h before extracting the date, so a single game can't straddle
+    the day boundary. Without the shift, a 10 pm ET tip-off (≈02:00 UTC
+    next day) buckets to a different date than a 7 pm ET tip-off the
+    same night, and the SAME game can land in two buckets if scrapers
+    store its `game_start` inconsistently (naive ET parsed as UTC, vs.
+    offset-aware ISO). 12 h puts the new midnight at 12:00 UTC ≈ 07:00
+    ET, before any North-American game starts — so every same-night
+    slate collapses to one bucket regardless of TZ-parsing drift.
+    """
     time_key = "no_time"
     if start_time:
         try:
-            # Handle standard ISO formats (with or without offset)
-            # fromisoformat handles '2023-10-27T19:45:00-04:00' and '2023-10-27T23:45:00+00:00'
-            # We replace ' ' with 'T' for consistent ISO parsing
             clean_ts = start_time.replace(" ", "T")
-            
-            # Python 3.11+ handles the 'Z' suffix, but for older versions we replace it
             if clean_ts.endswith("Z"):
                 clean_ts = clean_ts[:-1] + "+00:00"
-                
             dt = datetime.fromisoformat(clean_ts)
-            
-            # If naive, assume it's already UTC (common for scrapers) OR Eastern if we wanted to be specific,
-            # but usually scrapers without offsets are UTC or intended to be.
-            # Convert to UTC
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             else:
                 dt = dt.astimezone(timezone.utc)
-            
-            # Use YYYY-MM-DD instead of full minute precision to prevent time-shifting dupes
-            time_key = dt.strftime("%Y-%m-%d")
+            time_key = (dt - timedelta(hours=12)).strftime("%Y-%m-%d")
         except Exception as e:
-            # Fallback for malformed strings: take first 10 chars (YYYY-MM-DD) if parsing fails
             logger.warning("Backtest: _make_key failed to parse '%s': %s", start_time, e)
             time_key = start_time[:10] if start_time else "no_time"
 

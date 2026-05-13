@@ -127,15 +127,21 @@ class StrategyTester:
         # neither is applied we drop to the v1 set. Switching tiers only
         # happens at offset 0 — once a tier succeeds, subsequent pages
         # use the same column list.
+        # `line` is included so the per-leg dedup key (`make_leg_key`)
+        # is actually keyed on line, not collapsed to "". Without it,
+        # two rows that legitimately differ only by line (line moved
+        # mid-day) appear as the same leg_key — which is the wrong
+        # direction of strictness for leg-level dedup, even though
+        # pair_key would still catch them as same-player-same-game.
         cols_v3 = (
-            "result, prop, true_prob, raw_true_prob, side, "
+            "result, prop, line, true_prob, raw_true_prob, side, "
             "game_start, league, player, market_width, team"
         )
         cols_v2 = (
-            "result, prop, true_prob, raw_true_prob, side, "
+            "result, prop, line, true_prob, raw_true_prob, side, "
             "game_start, league, player, market_width"
         )
-        cols_v1 = "result, prop, true_prob, side, game_start, league, player"
+        cols_v1 = "result, prop, line, true_prob, side, game_start, league, player"
         tier_order = [cols_v3, cols_v2, cols_v1]
 
         PAGE = 1000
@@ -413,6 +419,14 @@ class StrategyTester:
             if len(team_set) < TWO_TEAMS_REQUIRED:
                 single_team = next(iter(team_set))
                 pick_set = set(picks)
+                # Within-slip dedup state for the legs we'd keep (all
+                # but the last pick, which is the swap victim). The
+                # replacement must not collide with these either —
+                # otherwise the swap can put e.g. the same player back
+                # into the slip under a different team string.
+                keep_idxs = picks[:-1]
+                kept_pair: set = {p_keys[k] for k in keep_idxs} if dedup else set()
+                kept_leg:  set = {l_keys[k] for k in keep_idxs} if dedup else set()
                 replacement = -1
                 for j in range(n):
                     if used[j] or j in pick_set:
@@ -422,6 +436,8 @@ class StrategyTester:
                     if dedup:
                         if p_keys[j] in used_pair: continue
                         if l_keys[j] in used_leg:  continue
+                        if p_keys[j] in kept_pair: continue
+                        if l_keys[j] in kept_leg:  continue
                     replacement = j
                     break
                 if replacement < 0:
