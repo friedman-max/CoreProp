@@ -2216,7 +2216,12 @@ function renderBacktest() {
       </div>`;
     }).join("");
 
-    return `<div class="bt-slip-card" data-slip-id="${slip.slip_id}">
+    // Card background: green = won, red = lost or busted power, default = pending
+    const slipWon  = first.slip_completed && (first.slip_payout || 0) > 1;
+    const slipLost = (first.slip_completed && (first.slip_payout || 0) <= 1) || isPowerBusted;
+    const cardStatusCls = slipWon ? "bt-slip-card--won" : slipLost ? "bt-slip-card--lost" : "";
+
+    return `<div class="bt-slip-card ${cardStatusCls}" data-slip-id="${slip.slip_id}">
       <div class="bt-slip-card-header">
         <div class="bt-slip-card-title">
           <span class="bt-slip-type-badge">${first.slip_type || ""}</span>
