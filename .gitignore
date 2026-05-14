@@ -54,7 +54,9 @@ engine/__pycache__/
 scrapers/__pycache__/
 
 # Local testing & data dumps
-test_*.py
+# Only ignore loose test_*.py at the repo root — committed tests live
+# under tests/ and MUST be tracked or CI runs against an empty suite.
+/test_*.py
 run_*.sh
 data/*.json
 data/*.png

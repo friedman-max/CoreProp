@@ -414,6 +414,52 @@ class BacktestLogger:
         if best_ev is None or best_ev <= 0:
             return None
 
+        # ── Pre-insert invariant check ─────────────────────────────────
+        # Belt-and-suspenders: verify the slip we're about to write has
+        # no within-slip pair_key duplicate AND none of its pair_keys
+        # already exist in a recently-committed slip. The per-user lock
+        # serializes try_log_slip, but the dedup set read above happened
+        # at the top of the method — if a peer process bypassed the
+        # lock somehow (e.g. logged via a different code path), we'd
+        # catch it here rather than create a duplicate.
+        final_pair_keys: list[tuple] = []
+        final_leg_keys:  list[tuple] = []
+        for bet in best_legs:
+            p_name = bet.get("player_name", "") or ""
+            start  = bet.get("start_time", "") or ""
+            final_pair_keys.append(make_bet_key(p_name, start))
+            final_leg_keys.append(make_leg_key(
+                p_name,
+                bet.get("prop_type", "") or "",
+                bet.get("pp_line", "") or "",
+                bet.get("side", "") or "",
+                start,
+            ))
+        if len(set(final_pair_keys)) != len(final_pair_keys):
+            logger.error(
+                "Backtest: within-slip pair_key duplicate detected just "
+                "before insert — aborting slip for user %s. keys=%s",
+                self.user_id, final_pair_keys,
+            )
+            return None
+        # Re-read the dedup set inside the lock — catches the rare case
+        # of a concurrent commit between the top-of-method read and now.
+        verify_pair, verify_leg = self._load_dedup_sets()
+        if any(k in verify_pair for k in final_pair_keys):
+            logger.error(
+                "Backtest: cross-slip pair_key collision detected just "
+                "before insert — aborting slip for user %s. keys=%s",
+                self.user_id, final_pair_keys,
+            )
+            return None
+        if any(k in verify_leg for k in final_leg_keys):
+            logger.error(
+                "Backtest: cross-slip leg_key collision detected just "
+                "before insert — aborting slip for user %s.",
+                self.user_id,
+            )
+            return None
+
         slip_id = str(uuid.uuid4())[:8].upper()
         timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         proj_ev = round(best_ev, 4)

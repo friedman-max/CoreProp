@@ -46,6 +46,7 @@ from engine.database import get_db
 from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS, OPTIMAL_IMPLIED_DECIMAL
 from engine.isotonic_calibration import load_isotonic_calibration, calibrate
 from engine.backtest import make_bet_key, make_game_key, make_leg_key
+from engine.dedup import drop_duplicate_slips, check_duplicate_pairs
 
 logger = logging.getLogger(__name__)
 
@@ -747,12 +748,22 @@ class StrategyTester:
                     else:
                         bet_size = config.bet_size
 
+                    # Full leg record — line/side/game_start are required
+                    # by the post-build dedup pass (engine.dedup) to
+                    # reconstruct the canonical leg_key. Without them the
+                    # invariant check at end-of-run would silently treat
+                    # different lines on the same player+prop as
+                    # duplicates (or worse, miss real duplicates because
+                    # the keys collapse to `""` ).
                     leg_records = [
                         {
-                            "player":    r.get("player", ""),
-                            "prop":      r.get("prop", ""),
-                            "true_prob": r.get("calibrated_prob"),
-                            "result":    r.get("result", ""),
+                            "player":     r.get("player", ""),
+                            "prop":       r.get("prop", ""),
+                            "line":       r.get("line", ""),
+                            "side":       r.get("side", ""),
+                            "game_start": r.get("game_start", ""),
+                            "true_prob":  r.get("calibrated_prob"),
+                            "result":     r.get("result", ""),
                         }
                         for r in selected_legs
                     ]
@@ -801,11 +812,43 @@ class StrategyTester:
                         "legs":       leg_records,
                     })
 
+            # ── Post-build dedup pass (belt-and-suspenders) ─────────
+            # `_select_ranked` enforces dedup as it builds via the shared
+            # `run_used_pair` / `run_used_leg` sets. This pass is the
+            # invariant check on the final output: re-derive the keys
+            # from the slip records and drop any slip that collides with
+            # an earlier-kept one. Two reasons it's worth doing twice:
+            #   1. Upstream selection has regressed silently three times
+            #      (commits 6908c0a → dabc8de → 3e59a8b). A single check
+            #      on emitted output cannot be bypassed by a future
+            #      change to slip-construction logic.
+            #   2. `_select_ranked` keys legs by their raw observatory
+            #      strings. If a future refactor changes how rows are
+            #      pre-processed (e.g. game_start normalization), the
+            #      shared-set keys could drift from the emit-time keys.
+            #      The post-build pass uses the canonical keys from
+            #      engine.dedup, so the contract holds regardless.
+            # `strict=True` enforces (player, sports_day) — the user
+            # contract "no prop in two slips" reads at this granularity
+            # since two bets on the same player in the same game are
+            # near-perfectly correlated.
+            sim_slips, n_dropped_post = drop_duplicate_slips(
+                sim_slips, strict=True,
+            )
             funnel["slates_with_qualifying"] = slates_with_qualifying
             funnel["slates_without_full_slip"] = slates_without_full_slip
+            funnel["slips_dropped_post_dedup"] = n_dropped_post
             funnel["slips_formed"] = len(sim_slips)
             funnel["push_legs_in_slips"] = push_legs_used
             funnel["dnp_legs_in_slips"]  = dnp_legs_used
+
+            if n_dropped_post > 0:
+                logger.warning(
+                    "Sandbox: post-build dedup dropped %d slip(s) — "
+                    "_select_ranked emitted duplicates that the canonical "
+                    "key check caught. Investigate the slip-builder path.",
+                    n_dropped_post,
+                )
 
             if not sim_slips:
                 return {
@@ -1086,6 +1129,11 @@ class StrategyTester:
         # leak it.
         opt_used_pair: set = set()
         opt_used_leg:  set = set()
+        # Materialize every slip's leg-list so we can run the
+        # post-build dedup pass before aggregating P&L. Aggregating
+        # inline would prevent us from dropping a colliding slip
+        # without un-doing its profit/bet contributions.
+        emitted_slip_legs: list[list[dict]] = []
         for sid in df.sort_values("game_start_dt", kind="stable")["slate_id"].unique():
             slate_df = slates.get_group(sid)
             if len(slate_df) < slip_size:
@@ -1094,24 +1142,39 @@ class StrategyTester:
                 slate_df, slip_size, strategy,
                 used_pair=opt_used_pair, used_leg=opt_used_leg,
             ):
-                # selected_legs is a list-of-dicts after the
-                # vectorization rewrite of _select_ranked.
-                if use_kelly:
-                    probs = [r["calibrated_prob"] for r in selected_legs]
-                    k_frac = self._calculate_kelly_fraction(probs, slip_size, slip_type)
-                    leg_bet_size = running_bankroll * k_frac
-                else:
-                    leg_bet_size = bet_size
-                if leg_bet_size <= 0:
-                    n_zero_bets += 1
-                    continue
-                results = [r.get("result", "") for r in selected_legs]
-                payout_mult, _n_eff, _hits_eff, _n_pushed = self._payout_with_push(results, slip_type)
-                profit = (leg_bet_size * payout_mult) - leg_bet_size
-                total_profit += profit
-                total_bet    += leg_bet_size
-                running_bankroll += profit
-                n_slips += 1
+                emitted_slip_legs.append(selected_legs)
+
+        # Belt-and-suspenders: ensure no leg appears in two emitted slips
+        # before they are scored. Same rationale as run_simulation's
+        # post-build pass — see comment there.
+        emitted_slip_legs, n_dropped_post = drop_duplicate_slips(
+            emitted_slip_legs, strict=True,
+        )
+        if n_dropped_post > 0:
+            logger.warning(
+                "Sandbox optimizer: post-build dedup dropped %d slip(s) "
+                "at threshold scan", n_dropped_post,
+            )
+
+        for selected_legs in emitted_slip_legs:
+            # selected_legs is a list-of-dicts after the
+            # vectorization rewrite of _select_ranked.
+            if use_kelly:
+                probs = [r["calibrated_prob"] for r in selected_legs]
+                k_frac = self._calculate_kelly_fraction(probs, slip_size, slip_type)
+                leg_bet_size = running_bankroll * k_frac
+            else:
+                leg_bet_size = bet_size
+            if leg_bet_size <= 0:
+                n_zero_bets += 1
+                continue
+            results = [r.get("result", "") for r in selected_legs]
+            payout_mult, _n_eff, _hits_eff, _n_pushed = self._payout_with_push(results, slip_type)
+            profit = (leg_bet_size * payout_mult) - leg_bet_size
+            total_profit += profit
+            total_bet    += leg_bet_size
+            running_bankroll += profit
+            n_slips += 1
         if total_bet <= 0:
             return None
         roi = (total_profit / total_bet) * 100.0
