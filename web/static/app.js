@@ -1,3 +1,11 @@
+// app.js is now an ES module (see index.html). Top-level `let` / `const`
+// here are module-scoped, not global. The migration plan and a list of
+// already-extracted modules live in `modules/README.md`. New code should
+// go directly into a module under `modules/` rather than be added here.
+
+import { POWER_PAYOUTS, FLEX_PAYOUTS } from "./modules/constants.js";
+import { fmt, escapeHtml } from "./modules/formatters.js";
+import { PER_USER_LOCALSTORAGE_KEYS, purgePerUserLocalStorage } from "./modules/per_user_cache.js";
 
 // The Supabase CDN exposes a global `supabase` (the module namespace) on
 // `window`. Using the same name as a `let` would throw SyntaxError and abort
@@ -13,26 +21,10 @@ let currentSession = null;
 // over time and any one we forget would leak the previous user's data.
 let _renderedUserId = null;
 
-// localStorage keys whose contents are scoped to a single user. Purged
-// when the user id changes (login / logout / account switch) so the next
-// page paint after the reload can't render the previous user's cached
-// data. Keep in sync with every `localStorage.setItem(...)` call that
-// stores per-user content; global caches like `coreprop_core_cache_v2`
-// (the bets dataset) stay out.
-const PER_USER_LOCALSTORAGE_KEYS = [
-    "coreprop_backtest_cache_v2",
-    "coreprop_analytics_cache_v2",
-    "coreprop_auto_backtest",
-    "coreprop_slip_type",
-    "coreprop_slip_legs",
-    "coreprop_slip_min_prob",
-];
-
-function _purgePerUserLocalStorage() {
-    for (const k of PER_USER_LOCALSTORAGE_KEYS) {
-        try { localStorage.removeItem(k); } catch {}
-    }
-}
+// PER_USER_LOCALSTORAGE_KEYS and the purge helper moved to
+// modules/per_user_cache.js. To register a new per-user cache entry,
+// edit that file — the auth-change reset flow below imports from it.
+const _purgePerUserLocalStorage = purgePerUserLocalStorage;
 
 // Hoisted module state — referenced by functions defined throughout the file.
 const pinState = { allLines: [] };
@@ -454,13 +446,7 @@ async function apiFetch(url, options = {}) {
  * - Slip builder: select 2-6 bets → POST /api/slip → show Power/Flex EV%
  */
 
-const POWER_PAYOUTS = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 40.0 };
-const FLEX_PAYOUTS = {
-  3: { 2: 1.0, 3: 3.0 },
-  4: { 3: 1.5, 4: 6.0 },
-  5: { 3: 0.4, 4: 2.0, 5: 10.0 },
-  6: { 4: 0.4, 5: 2.0, 6: 25.0 }
-};
+// POWER_PAYOUTS / FLEX_PAYOUTS imported from modules/constants.js
 
 // Per-leg breakeven probability, mirrored from engine/constants.py BREAK_EVEN.
 // Power: p = (1/payout)^(1/n). Flex: numerically solved against the partial
@@ -568,14 +554,7 @@ function hydrateFromCache() {
 // Non-blocking replacement for alert(). Stacks top-right, auto-dismisses after
 // `duration` ms (0 to keep until clicked). Types: "error" | "success" |
 // "warning" | "info" — selects the accent color on the left border.
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+// escapeHtml imported from modules/formatters.js
 
 function showToast(message, type = "info", duration = 4500) {
   let container = document.getElementById("toast-container");
@@ -616,18 +595,8 @@ const slipLegsEl      = $("slip-legs");
 const slipResultsEl   = $("slip-results");
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-const fmt = {
-  pct:   v => v == null ? "—" : (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%",
-  prob:  v => v == null ? "—" : (v * 100).toFixed(1) + "%",
-  odds:  v => v == null ? "—" : (v > 0 ? "+" : "") + v,
-  trueOdds: v => v == null ? "—" : (v > 0 ? "+" : "") + Number(v).toFixed(2),
-  dollar:v => v == null ? "—" : (v >= 0 ? "+$" : "-$") + Math.abs(v).toFixed(2),
-  time:  iso => {
-    if (!iso) return "—";
-    const d = new Date(iso);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  },
-};
+// `fmt` and `escapeHtml` are imported from modules/formatters.js. The
+// original local definitions used to live right here.
 
 function evClass(ev_pct) {
   if (ev_pct >= 0.03) return "ev-high";

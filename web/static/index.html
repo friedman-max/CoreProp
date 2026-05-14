@@ -761,7 +761,12 @@
 
 
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script defer src="/static/app.js?v=38"></script>
+  <!-- app.js is an ES module. type="module" implicitly defers, so the
+       Chart.js script above (a UMD bundle) needs explicit `defer` to keep
+       the original load order. Inline event handlers in the HTML (none
+       currently) would break under module scope; if any are added later,
+       wire them with addEventListener inside app.js instead. -->
+  <script type="module" src="/static/app.js?v=39"></script>
 </body>
 
 </html>

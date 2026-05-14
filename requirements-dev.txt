@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# Dev / CI only — kept out of requirements.txt so prod cold-start doesn't
+# install pytest (saves ~30MB of wheels and a few seconds at build time).
+pytest>=8.0
+pytest-cov>=5.0

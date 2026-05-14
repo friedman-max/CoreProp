@@ -87,74 +87,23 @@ _results_checker  = ESPNResultsChecker()
 _clv_tracker      = CLVTracker()
 
 # ---------------------------------------------------------------------------
-# In-memory state
+# In-memory state — moved to web/state.py during the Phase-1 router split.
+# Re-imported here so the bulk of this file's existing code can keep
+# referencing `_state`, `_lock`, etc. without a wholesale rename.
 # ---------------------------------------------------------------------------
-
-_lock = threading.RLock()
-
-_state = {
-    "bets":          [],        # list[dict] — serialized BetResult
-    "bet_map":       {},        # bet_id -> BetResult (for slip calc)
-    "matches":       [],        # list[dict] — unfiltered combined lines
-    "pp_lines":      [],        # list[dict] — raw PrizePicks lines
-    "fd_lines":      [],        # list[dict] — raw FanDuel lines
-    "dk_lines":      [],        # list[dict] — raw DraftKings lines
-    "pin_lines":     [],        # list[dict] — raw Pinnacle lines
-    "last_refresh":  None,      # datetime | None
-    "next_refresh":  None,      # datetime | None
-    "is_scraping":   False,
-    "is_scraping_pp": False,
-    "is_scraping_fd": False,
-    "is_scraping_dk": False,
-    "is_scraping_pin": False,
-    "scrape_errors": {},        # league -> error str | None
-    "interval_min":  5,
-    "min_ev_pct":    -10.0,         # fallback default
-    "active_leagues": dict(cfg.ACTIVE_LEAGUES), # fallback default
-}
-
-# Pre-serialized JSON response cache. Populated once at the end of each scrape
-# cycle so GET endpoints can return bytes directly without a per-request
-# json.dumps (which on the 512MB tier was the largest transient allocation).
-#
-# Values are bytes keyed by dataset. `etag` is a weak hash of last_refresh so
-# clients can 304-short-circuit unchanged polls.
-_payload_cache = {
-    "bets":      None,   # bytes | None
-    "matches":   None,
-    "pp_lines":  None,
-    "fd_lines":  None,
-    "dk_lines":  None,
-    "pin_lines": None,
-    "core":      None,   # bootstrap/core — bets + meta
-    "etag":      None,   # str | None
-}
-_payload_lock = threading.Lock()
-
-# Pending PrizePicks slip store: user_id -> (slip_data, expires_at monotonic).
-# Written by POST /api/pending-slip (authenticated), read by GET /api/pending-slip
-# (called by the browser extension from app.prizepicks.com — no auth required).
-_pending_slips: dict = {}
-_pending_slips_lock = threading.Lock()
-_PENDING_SLIP_TTL_SEC = 300.0  # 5-minute TTL
-
-# Per-user analytics cache. /api/analytics is the slowest endpoint — it does
-# 3 legs-table scans + 1 slips scan, all unbounded. But the underlying data
-# only changes when a slip is added/resolved/deleted, which is rare relative
-# to tab clicks. A short TTL makes repeat access essentially free.
-_analytics_cache: dict = {}       # user_id -> (monotonic_ts, data_dict)
-_analytics_cache_lock = threading.Lock()
-_ANALYTICS_TTL_SEC = 300.0
-
-
-def _invalidate_analytics_cache(user_id: Optional[str] = None):
-    """Drop a specific user's cached analytics (after add/delete slip), or
-    everyone's (pass None) if global state changed."""
-    with _analytics_cache_lock:
-        if user_id is None:
-            _analytics_cache.clear()
-        else:
-            _analytics_cache.pop(user_id, None)
+from web.state import (
+    _lock,
+    _state,
+    _payload_cache,
+    _payload_lock,
+    _pending_slips,
+    _pending_slips_lock,
+    _PENDING_SLIP_TTL_SEC,
+    _analytics_cache,
+    _analytics_cache_lock,
+    _ANALYTICS_TTL_SEC,
+    invalidate_analytics_cache as _invalidate_analytics_cache,
+)
 
 
 def _memory_snapshot() -> dict:
@@ -1089,9 +1038,14 @@ def _run_pipeline_body():
         # representative sample it needs.
         def _log_observatory_bg(entries=obs_entries):
             try:
-                from engine.database import get_db as _get_db
-                obs_db = _get_db()
-                if not obs_db:
+                from engine.writer import writer as _writer
+                # All writes from the pipeline observatory feed flow through
+                # a single audited surface (see engine/writer.py). The
+                # underlying client is still the service-role one, but the
+                # surface is the seam where a future two-pod split can route
+                # writes to a separate process without touching this file.
+                obs_db = _writer("observatory.log")
+                if obs_db is None:
                     return
                 rows_to_upsert = []
                 for e in entries:
@@ -1793,152 +1747,12 @@ def auto_build_slip(req: SlipRequest, user: Optional[dict] = Depends(get_current
     }
 
 
-class SandboxRequest(BaseModel):
-    leagues:        list[str] = []
-    min_prob:       float     = 0.5408
-    slip_size:      int       = 6
-    slip_type:      str       = "flex"
-    bet_size:       float     = 1.0
-    use_kelly:      bool      = False
-    included_props: list[str] = []
-    # v2 fields. Defaults reproduce v1 behavior except slip_strategy,
-    # which defaults to "live_replay" so the headline numbers reflect what
-    # the production system would actually have done. Per-game-cap is
-    # gone (replaced by the PrizePicks ≥2-distinct-teams rule, which
-    # the strategy_tester now enforces inside _select_ranked).
-    slip_strategy:  str       = "live_replay"
-    start_date:     Optional[str] = None      # YYYY-MM-DD
-    end_date:       Optional[str] = None
-    bootstrap:      bool      = True
-
-# Stat-types cache: the (league, prop) set changes slowly (only when a
-# new league/prop type starts being scraped), so caching the result for
-# a few minutes avoids the 22+ paginated round-trips on every page load.
-_stat_types_cache: dict[str, list] = {}
-_stat_types_cache_lock = threading.Lock()
-_stat_types_cache_ts: float = 0.0
-_STAT_TYPES_TTL_SEC = 300  # 5 min
+# Sandbox endpoints, SandboxRequest, stat-types cache, simulation cache,
+# and per-config invalidation all moved to web/routers/sandbox.py during
+# the Phase-1 router split. The router is mounted at the bottom of this
+# file via `app.include_router(...)`.
 
 
-@app.get("/api/sandbox/stat-types")
-def list_sandbox_stat_types(user: dict = Depends(get_current_user)):
-    """Return distinct (league, stat_type) pairs from market_observatory.
-
-    Cached for 5 minutes per process — the underlying set only changes
-    when scrapers start ingesting a new league or prop type, which is
-    measured in days, not minutes.
-
-    Pagination is parallel (8 concurrent page fetches via a
-    ThreadPoolExecutor) and filters with `result != pending` so the
-    rows we walk are the same superset the sandbox simulation sees.
-    Without parallelism the 22+ sequential round-trips were timing
-    out the request from the client side.
-    """
-    global _stat_types_cache, _stat_types_cache_ts
-    from engine.database import get_db
-
-    now = time.monotonic()
-    with _stat_types_cache_lock:
-        if _stat_types_cache and (now - _stat_types_cache_ts) < _STAT_TYPES_TTL_SEC:
-            return _stat_types_cache
-
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=503, detail="Database not connected")
-
-    PAGE = 1000
-    CONCURRENCY = 8
-    MAX_OFFSET = 200_000
-
-    def _fetch_page(offset: int) -> tuple[list, bool]:
-        # ORDER BY market_key keeps pages disjoint and the result stable
-        # across reruns. The select pulls only the two columns the
-        # endpoint actually needs, so each page is small (~30KB).
-        try:
-            res = (
-                db.table("market_observatory")
-                .select("league,prop")
-                .order("market_key", desc=False)
-                .range(offset, offset + PAGE - 1)
-                .execute()
-            )
-            rows = res.data or []
-            return rows, len(rows) >= PAGE
-        except Exception as exc:
-            logger.warning("stat-types: page fetch failed at offset %d: %s", offset, exc)
-            return [], False
-
-    grouped: dict[str, set] = {}
-    offset = 0
-    done = False
-    with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
-        while not done and offset <= MAX_OFFSET:
-            batch_offsets = [offset + i * PAGE for i in range(CONCURRENCY)
-                             if offset + i * PAGE <= MAX_OFFSET]
-            futs = {pool.submit(_fetch_page, o): o for o in batch_offsets}
-            results: dict[int, tuple[list, bool]] = {}
-            for fut in as_completed(futs):
-                o = futs[fut]
-                try:
-                    results[o] = fut.result()
-                except Exception as exc:
-                    logger.warning("stat-types: future failed at %d: %s", o, exc)
-                    results[o] = ([], False)
-                    done = True
-            for o in sorted(results):
-                rows, full = results[o]
-                for r in rows:
-                    lg = (r.get("league") or "").strip() or "Unknown"
-                    prop = (r.get("prop") or "").strip()
-                    if not prop:
-                        continue
-                    grouped.setdefault(lg, set()).add(prop)
-                if not full:
-                    done = True
-            offset += CONCURRENCY * PAGE
-
-    out = {lg: sorted(props) for lg, props in sorted(grouped.items())}
-    with _stat_types_cache_lock:
-        _stat_types_cache = out
-        _stat_types_cache_ts = time.monotonic()
-    return out
-
-
-def _config_from_req(req: SandboxRequest):
-    from engine.strategy_tester import StrategyConfig
-    return StrategyConfig(
-        leagues=req.leagues,
-        min_prob=req.min_prob,
-        slip_size=req.slip_size,
-        slip_type=req.slip_type,
-        bet_size=req.bet_size,
-        use_kelly=req.use_kelly,
-        included_props=req.included_props,
-        slip_strategy=req.slip_strategy,
-        start_date=req.start_date,
-        end_date=req.end_date,
-        bootstrap=req.bootstrap,
-    )
-
-
-@app.post("/api/sandbox/run")
-def run_sandbox_simulation(req: SandboxRequest, user: dict = Depends(get_current_user)):
-    from engine.strategy_tester import StrategyTester
-    tester = StrategyTester()
-    result = tester.run_simulation(_config_from_req(req))
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    return result
-
-
-@app.post("/api/sandbox/optimize")
-def optimize_sandbox_threshold(req: SandboxRequest, user: dict = Depends(get_current_user)):
-    from engine.strategy_tester import StrategyTester
-    tester = StrategyTester()
-    result = tester.optimize_threshold(_config_from_req(req))
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    return result
 
 
 class ConfigUpdate(BaseModel):
@@ -2858,83 +2672,7 @@ def delete_backtest_slip(slip_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"Delete failed: {e}")
 
 
-# ── Admin / diagnostics ────────────────────────────────────────────────────
-
-@app.get("/api/admin/memory")
-def get_memory_diagnostics():
-    """Diagnostic dump of process memory usage. Used to find what's eating the
-    512 MB tier — RSS, peak RSS, payload-cache breakdown, pandas DataFrame
-    inventory, GC stats, and active thread names. Unauthenticated so it can
-    be hit directly from the browser URL bar; the snapshot exposes no user
-    data."""
-    return _memory_snapshot()
-
-
-@app.post("/api/admin/refit-calibration")
-def refit_calibration():
-    """Force an immediate refit of all three persisted models (isotonic
-    calibration, sharpness weights, correlation map) so production can
-    populate the Observatory tab without waiting for the hourly job.
-
-    Unauthenticated for the same reason as `/api/admin/memory`: it's an
-    operator-only diagnostic and exposes no user data. Each refit runs
-    independently — failures are reported per-section, not as a 500."""
-    result: dict = {"isotonic": None, "sharpness": None, "correlation": None}
-
-    try:
-        from engine.isotonic_calibration import update_isotonic_calibration
-        from engine.ev_calculator import reload_calibration as _reload_iso
-        curves = update_isotonic_calibration()
-        if curves:
-            _reload_iso()
-            result["isotonic"] = {
-                "status":       "refit",
-                "leagues":      len(curves.get("leagues") or {}),
-                "props":        len(curves.get("props") or {}),
-                "global_n_eff": (curves.get("global") or {}).get("n_eff"),
-                "fitted_at":    curves.get("fitted_at"),
-            }
-        else:
-            result["isotonic"] = {"status": "no-data"}
-    except Exception as e:
-        logger.error("Manual isotonic refit failed: %s", e)
-        result["isotonic"] = {"status": "error", "detail": str(e)}
-
-    try:
-        from engine.sharpness_calibration import update_sharpness_weights
-        from engine.consensus import reload_sharpness as _reload_sharp
-        sharp = update_sharpness_weights()
-        if sharp:
-            n_books = _reload_sharp()
-            result["sharpness"] = {
-                "status":    "refit",
-                "books":     n_books,
-                "fitted_at": sharp.get("fitted_at"),
-            }
-        else:
-            result["sharpness"] = {"status": "no-data"}
-    except Exception as e:
-        logger.error("Manual sharpness refit failed: %s", e)
-        result["sharpness"] = {"status": "error", "detail": str(e)}
-
-    try:
-        from engine.correlation import update_correlation_map, reload_correlation, MIN_PAIR_OBS
-        corr = update_correlation_map()
-        if corr:
-            n_trusted = reload_correlation()
-            result["correlation"] = {
-                "status":      "refit",
-                "buckets":     len(corr.get("buckets") or {}),
-                "trusted":     n_trusted,
-                "min_pair_obs": MIN_PAIR_OBS,
-            }
-        else:
-            result["correlation"] = {"status": "no-data"}
-    except Exception as e:
-        logger.error("Manual correlation refit failed: %s", e)
-        result["correlation"] = {"status": "error", "detail": str(e)}
-
-    return result
+# ── Admin / diagnostics moved to web/routers/admin.py ─────────────────────
 
 
 # ── Market Observatory Endpoints ───────────────────────────────────────────
@@ -3102,3 +2840,16 @@ def get_calibration_curves_api():
 
 
 
+
+
+# ---------------------------------------------------------------------------
+# Routers extracted during the Phase-1 split (see web/routers/__init__.py for
+# migration status). Each router is self-contained: it imports shared state
+# from web/state.py only, never from this module. Mounted here so the
+# OpenAPI schema stays unified and the lifespan / scheduler stays one place.
+# ---------------------------------------------------------------------------
+from web.routers import sandbox as _r_sandbox
+from web.routers import admin as _r_admin
+
+app.include_router(_r_sandbox.router)
+app.include_router(_r_admin.router)
