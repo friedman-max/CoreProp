@@ -628,6 +628,70 @@ def _run_pipeline_body():
         bets: list[BetResult] = []
         bet_book_odds: dict[str, dict] = {}  # bet_id -> {fd_odds, dk_odds, pin_odds}
         serialized_matches = []
+        # Observatory feed. Every priced side with raw consensus prob >= 0.30
+        # is logged regardless of EV filter. Using `bets` (the EV-filtered
+        # list) as the feed biased the calibrator toward markets where the
+        # consensus agreed with our model — a closed feedback loop that
+        # systematically under-represented sides where the book was sharp.
+        # Especially visible on low-volume leagues (NHL) where most matches
+        # ended up below the EV bar and never reached the observatory.
+        # The 0.30 floor is a sanity gate: extreme tails (<0.30 raw) get
+        # logged on the complement side anyway since that side is >=0.70.
+        OBS_MIN_PROB = 0.30
+        obs_entries: list[dict] = []
+
+        def _devigged_book_probs(_m, _side: str) -> dict:
+            """Snapshot each book's devigged probability for `_side`. Mirrors
+            `_per_book_probs` defined further down the loop, but available
+            outside the per-match closure so observatory rows can attach a
+            books dict for every priced side, not just the +EV ones."""
+            from engine.devig import devig_power as _dp, devig_single_sided_scaled as _dss
+            out: dict[str, float] = {}
+            for name, prefix in (("fanduel", "fd"), ("draftkings", "dk"), ("pinnacle", "pin")):
+                bk = getattr(_m, f"{prefix}_{_side}_equiv", None)
+                if bk is None:
+                    continue
+                prob = None
+                is_exact = bk.line == _m.pp.line_score
+                if is_exact and bk.both_sided and bk.over_odds is not None and bk.under_odds is not None:
+                    t_o, t_u = _dp(bk.over_odds, bk.under_odds)
+                    prob = t_o if _side == "over" else t_u
+                elif _side == "over" and bk.over_odds is not None:
+                    prob = _dss(bk.over_odds)
+                elif _side == "under" and bk.under_odds is not None:
+                    prob = _dss(bk.under_odds)
+                if prob is not None and 0.0 < prob < 1.0:
+                    out[name] = round(float(prob), 4)
+            return out
+
+        def _observe(_m, _side: str, raw_prob: float, mw):
+            """Capture an observatory entry for the given side if the raw
+            consensus prob clears the threshold. Calibrated prob is computed
+            inline so observatory rows mirror what BetResult would have
+            stored, ensuring the sandbox / calibration UI sees the same
+            true_prob whether or not the line was +EV at scrape time."""
+            if raw_prob is None or raw_prob < OBS_MIN_PROB:
+                return
+            try:
+                from engine.ev_calculator import _apply_calibration as _ac
+                from engine.ev_calculator import _calibration_curves as _cc
+                calibrated = min(_ac(_cc, _m.pp.league, _m.pp.stat_type, _side, raw_prob), 0.999)
+            except Exception:
+                calibrated = raw_prob
+            obs_entries.append({
+                "player_name":   _m.pp.player_name,
+                "league":        _m.pp.league,
+                "prop_type":     _m.pp.stat_type,
+                "pp_line":       _m.pp.line_score,
+                "side":          _side,
+                "true_prob":     calibrated,
+                "raw_true_prob": raw_prob,
+                "market_width":  mw,
+                "team":          getattr(_m.pp, "team", "") or "",
+                "start_time":    _m.pp.start_time,
+                "books_probs":   _devigged_book_probs(_m, _side),
+            })
+
         for m in matches:
             # The matcher already populates per-side equivalents. A match
             # is kept when any book has a usable line for at least one
@@ -747,6 +811,11 @@ def _run_pipeline_body():
             # Process Over side
             if pp_side in ("both", "over") and any_over:
                 best, prob, true, mw = get_combined_true_odds("over")
+                # Log to observatory whenever a probability was successfully
+                # computed — even when `best` is None (no displayable odds
+                # for the UI). Calibration cares about the consensus prob,
+                # not about whether a book chose to display this side.
+                _observe(m, "over", prob, mw)
                 if best is not None:
                     base_over = _base_for_side("over")
                     fd_o  = _book_display_odds("over", "fd",  fd_margin)
@@ -795,6 +864,7 @@ def _run_pipeline_body():
             # Process Under side
             if pp_side in ("both", "under") and any_under:
                 best, prob, true, mw = get_combined_true_odds("under")
+                _observe(m, "under", prob, mw)
                 if best is not None:
                     base_under = _base_for_side("under")
                     fd_u  = _book_display_odds("under", "fd",  fd_margin)
@@ -850,11 +920,10 @@ def _run_pipeline_body():
         # Sort by individual EV% descending
         bets.sort(key=lambda b: b.individual_ev_pct, reverse=True)
 
-        # Sidecar map (not serialized to the client) so the market_observatory
-        # background worker can attach per-book devigged probs to each row.
-        # The empirical sharpness fitter uses these vs the eventual closing
-        # line to refit consensus weights.
-        bet_books_probs: dict[str, dict] = {}
+        # Per-book devigged prob attachment moved upstream: the observatory
+        # now feeds from `obs_entries` (built directly in the match loop),
+        # which already carries each side's `books_probs` dict. The
+        # sidecar map this scope used to maintain is no longer read.
 
         serialized_bets = []
         for b in bets:
@@ -863,7 +932,6 @@ def _run_pipeline_body():
             d["fd_odds_book"] = extras.get("fd_odds")
             d["dk_odds_book"] = extras.get("dk_odds")
             d["pin_odds_book"] = extras.get("pin_odds")
-            bet_books_probs[b.bet_id] = extras.get("books_probs") or {}
             start_time = extras.get("start_time", "")
             d["start_time"] = start_time
             # Precompute the backtest-dedup key so the client can join
@@ -1011,39 +1079,36 @@ def _run_pipeline_body():
         threading.Thread(target=_auto_log_bg, daemon=True).start()
 
         # ── Market Observatory: log lines for global calibration ──
-        # No min/max threshold — every successfully-priced combined line is
-        # logged. Restricting by true_prob biases the calibration sample (a
-        # >0.50 floor logs only "expected hits"; even a 0.30 floor drops the
-        # left-tail which the curve needs to shape its low end). Logging the
-        # full distribution lets the calibration see hits and misses across
-        # the entire probability range.
-        def _log_observatory_bg(bets=serialized_bets, books_probs_map=bet_books_probs):
+        # Source: `obs_entries`, which is every priced side from the match
+        # loop with raw consensus prob >= 0.30. This is deliberately upstream
+        # of the EV filter and the bet-id dedup that shapes `serialized_bets`
+        # — both of those bias the calibration sample toward markets the
+        # current model already agrees with. Logging from `obs_entries`
+        # restores full coverage across leagues (the NHL gap was a
+        # downstream symptom of this filter) and gives the calibrator the
+        # representative sample it needs.
+        def _log_observatory_bg(entries=obs_entries):
             try:
                 from engine.database import get_db as _get_db
                 obs_db = _get_db()
                 if not obs_db:
                     return
                 rows_to_upsert = []
-                # Track whether the `books` column exists; if a write fails we
-                # retry once without it for older schemas (pre-migration_003).
-                _books_supported = True
-                for b in bets:
-                    tp = float(b.get("true_prob") or 0)
-                    # raw_true_prob is the pre-calibration consensus probability.
-                    # The refit reads this column (with COALESCE fallback to
-                    # true_prob for legacy rows from before migration_006), so
-                    # the calibrator trains on raw consensus → empirical hit
-                    # rate rather than on its own previous output.
-                    raw_tp_val = b.get("raw_true_prob")
-                    raw_tp = float(raw_tp_val) if raw_tp_val is not None else tp
-                    mw_val = b.get("market_width")
+                for e in entries:
+                    raw_tp_val = e.get("raw_true_prob")
+                    if raw_tp_val is None:
+                        continue
+                    raw_tp = float(raw_tp_val)
+                    tp_val = e.get("true_prob")
+                    tp = float(tp_val) if tp_val is not None else raw_tp
+                    mw_val = e.get("market_width")
                     mw = float(mw_val) if mw_val is not None else None
-                    player = b.get("player_name", "")
-                    league = b.get("league", "")
-                    prop   = b.get("prop_type", "")
-                    line   = b.get("pp_line", "")
-                    side   = b.get("side", "")
-                    start  = b.get("start_time", "")
+                    player = e.get("player_name", "")
+                    league = e.get("league", "")
+                    prop   = e.get("prop_type", "")
+                    line   = e.get("pp_line", "")
+                    side   = e.get("side", "")
+                    start  = e.get("start_time", "")
                     market_key = f"{player}|{league}|{prop}|{line}|{side}|{start}"
                     row = {
                         "market_key":     market_key,
@@ -1059,10 +1124,10 @@ def _run_pipeline_body():
                     }
                     if mw is not None:
                         row["market_width"] = round(mw, 4)
-                    team_val = (b.get("team") or "").strip()
+                    team_val = (e.get("team") or "").strip()
                     if team_val:
                         row["team"] = team_val
-                    bp = books_probs_map.get(b.get("bet_id")) if books_probs_map else None
+                    bp = e.get("books_probs")
                     if bp:
                         row["books"] = bp
                     rows_to_upsert.append(row)
