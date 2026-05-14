@@ -5,6 +5,35 @@
 let sbClient = null;
 let currentSession = null;
 
+// Tracks the user id we last rendered for. When Supabase fires an auth
+// event whose user id differs from this (login, logout, account switch),
+// we force a full page reload so every cache, module-scope variable, and
+// Chart.js instance gets rebuilt against the new identity. The alternative
+// — surgical cache resets — is fragile because new data caches get added
+// over time and any one we forget would leak the previous user's data.
+let _renderedUserId = null;
+
+// localStorage keys whose contents are scoped to a single user. Purged
+// when the user id changes (login / logout / account switch) so the next
+// page paint after the reload can't render the previous user's cached
+// data. Keep in sync with every `localStorage.setItem(...)` call that
+// stores per-user content; global caches like `coreprop_core_cache_v2`
+// (the bets dataset) stay out.
+const PER_USER_LOCALSTORAGE_KEYS = [
+    "coreprop_backtest_cache_v2",
+    "coreprop_analytics_cache_v2",
+    "coreprop_auto_backtest",
+    "coreprop_slip_type",
+    "coreprop_slip_legs",
+    "coreprop_slip_min_prob",
+];
+
+function _purgePerUserLocalStorage() {
+    for (const k of PER_USER_LOCALSTORAGE_KEYS) {
+        try { localStorage.removeItem(k); } catch {}
+    }
+}
+
 // Hoisted module state — referenced by functions defined throughout the file.
 const pinState = { allLines: [] };
 
@@ -23,17 +52,21 @@ async function initAuth() {
 
         const { data: { session } } = await sbClient.auth.getSession();
         currentSession = session;
+        _renderedUserId = session?.user?.id || null;
         handleSessionUpdate(session);
 
         sbClient.auth.onAuthStateChange(async (event, session) => {
-            currentSession = session;
-            handleSessionUpdate(session);
+            const newUserId = session?.user?.id || null;
 
             // PASSWORD_RECOVERY fires when the user lands on the page via
             // the reset-email link. Supabase has already exchanged the
             // recovery token for a (limited-scope) session — we now need to
-            // collect a new password and update the user.
+            // collect a new password and update the user. Handle inline,
+            // do NOT reload (the recovery flow is mid-conversation).
             if (event === 'PASSWORD_RECOVERY') {
+                currentSession = session;
+                _renderedUserId = newUserId;
+                handleSessionUpdate(session);
                 let pw1 = '';
                 while (true) {
                     pw1 = window.prompt('Reset your password — enter a new password (min 6 chars):') || '';
@@ -53,7 +86,42 @@ async function initAuth() {
                 } catch (e) {
                     alert('Could not update password: ' + (e.message || e));
                 }
+                return;
             }
+
+            // Identity changed (login / logout / account switch) → hard-
+            // reload the page. This is the only reliable way to flush every
+            // module-scope cache, every Chart.js instance, every in-flight
+            // fetch, and every per-tab dataset. Surgical resets miss new
+            // caches added over time, and the symptom (previous user's data
+            // still visible) is a privacy bug, not just a UX nit.
+            if (newUserId !== _renderedUserId) {
+                _renderedUserId = newUserId;
+                currentSession = session;
+                // Purge per-user localStorage so the next page (after the
+                // reload) doesn't first-paint from the previous user's
+                // cached slips / analytics. The bets cache stays — it's a
+                // global dataset, not per-user.
+                try { _purgePerUserLocalStorage(); } catch {}
+                // Best-effort: hide the current view immediately so the
+                // ~100ms before the reload starts can't flash the previous
+                // user's data. The reload itself does the real reset.
+                try {
+                    document.querySelectorAll('.app-content').forEach(e => {
+                        e.style.visibility = 'hidden';
+                    });
+                    if (typeof showLoadingOverlay === 'function') {
+                        showLoadingOverlay(newUserId ? 'Loading…' : 'Signing out…');
+                    }
+                } catch {}
+                window.location.reload();
+                return;
+            }
+
+            // Same identity — token refresh or user metadata update.
+            // No reload; just sync state and refresh affected UI.
+            currentSession = session;
+            handleSessionUpdate(session);
         });
 
         // ── Auth tab switching ──
