@@ -367,29 +367,15 @@ def load_correlation_map() -> dict:
     """Read the persisted empirical map from disk into the plain-dict form
     used by `_pair_correlation`. Falls back to the Supabase-mirrored copy
     when the local JSON is missing (ephemeral-disk redeploys)."""
-    payload = None
-    if os.path.exists(CORRELATION_FILE):
-        try:
-            with open(CORRELATION_FILE, "r") as f:
-                payload = json.load(f)
-        except Exception as exc:
-            logger.warning("Correlation load: %s", exc)
-            payload = None
-
-    if payload is None:
-        try:
-            from engine.persistence import load_state_from_supabase
-            mirrored, _ = load_state_from_supabase("correlation_map")
-            if isinstance(mirrored, dict) and mirrored.get("buckets") is not None:
-                try:
-                    os.makedirs(os.path.dirname(CORRELATION_FILE), exist_ok=True)
-                    with open(CORRELATION_FILE, "w") as f:
-                        json.dump(mirrored, f, indent=2)
-                except Exception:
-                    pass
-                payload = mirrored
-        except Exception:
-            pass
+    try:
+        from engine.persistence import load_artefact
+        payload = load_artefact(
+            "correlation_map", CORRELATION_FILE,
+            validator=lambda p: isinstance(p, dict) and p.get("buckets") is not None,
+        )
+    except Exception as exc:
+        logger.warning("Correlation load: %s", exc)
+        payload = None
 
     if payload is None:
         return {}

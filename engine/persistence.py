@@ -2,7 +2,8 @@ import base64
 import gzip
 import json
 import logging
-from datetime import datetime
+import os
+from datetime import datetime, timezone
 from engine.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,99 @@ def load_state_from_supabase(key: str):
         logger.error(f"Failed to load state '{key}' from Supabase: {e}")
 
     return None, None
+
+def _parse_iso(ts: str | None):
+    if not ts:
+        return None
+    try:
+        # Supabase upserts naive ISO strings; treat as UTC for ordering.
+        s = ts.replace("Z", "+00:00") if isinstance(ts, str) else ts
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def load_artefact(key: str, disk_path: str, validator=None):
+    """Load a JSON artefact preferring the newer of the on-disk copy and the
+    Supabase mirror, so a long-stopped local environment doesn't keep using
+    a stale local file while prod has refit. When Supabase is newer the
+    local file is rewritten so subsequent reads stay on disk.
+
+    Why: every loader in this codebase used to do "read disk if present, else
+    Supabase fallback". Prod has no disk (ephemeral fs) so it always reads
+    Supabase — which the hourly refit keeps current. Local has a disk copy
+    that wins by default, so any time prod's refit advanced state while
+    local was offline the two diverged. This helper makes them re-converge.
+
+    `validator(payload) -> bool` is optional; payloads that fail validation
+    are ignored on either side, so a corrupt mirror can't replace a healthy
+    local file (or vice versa).
+    """
+    disk_payload = None
+    disk_ts = None
+    if os.path.exists(disk_path):
+        try:
+            with open(disk_path, "r") as f:
+                disk_payload = json.load(f)
+            disk_ts = datetime.fromtimestamp(
+                os.path.getmtime(disk_path), tz=timezone.utc,
+            )
+        except Exception:
+            disk_payload = None
+            disk_ts = None
+
+    sb_payload, sb_ts_str = load_state_from_supabase(key)
+    sb_ts = _parse_iso(sb_ts_str)
+
+    if validator is not None:
+        if disk_payload is not None:
+            try:
+                if not validator(disk_payload):
+                    disk_payload = None
+            except Exception:
+                disk_payload = None
+        if sb_payload is not None:
+            try:
+                if not validator(sb_payload):
+                    sb_payload = None
+            except Exception:
+                sb_payload = None
+
+    chosen_src = None
+    chosen = None
+    if disk_payload is not None and sb_payload is not None:
+        # If only one side has a timestamp, prefer that side (it's the
+        # authoritative-write copy). Otherwise pick the newer.
+        if disk_ts and sb_ts:
+            if sb_ts > disk_ts:
+                chosen_src, chosen = "sb", sb_payload
+            else:
+                chosen_src, chosen = "disk", disk_payload
+        elif sb_ts and not disk_ts:
+            chosen_src, chosen = "sb", sb_payload
+        else:
+            chosen_src, chosen = "disk", disk_payload
+    elif disk_payload is not None:
+        chosen_src, chosen = "disk", disk_payload
+    elif sb_payload is not None:
+        chosen_src, chosen = "sb", sb_payload
+
+    if chosen is None:
+        return None
+
+    if chosen_src == "sb":
+        try:
+            os.makedirs(os.path.dirname(disk_path) or ".", exist_ok=True)
+            with open(disk_path, "w") as f:
+                json.dump(chosen, f, indent=2)
+        except Exception as exc:
+            logger.debug("Artefact %s: disk rewrite failed: %s", key, exc)
+
+    return chosen
+
 
 def load_multiple_states_from_supabase(keys: list[str]):
     """

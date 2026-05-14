@@ -347,6 +347,25 @@ function handleSessionUpdate(session) {
     }
 
     document.querySelectorAll('.app-content').forEach(e => e.style.display = 'flex');
+
+    // Warm the Sandbox in the background once we have a session, so the
+    // tab is paint-ready by the time the user clicks it. Deferred with
+    // requestIdleCallback (or setTimeout fallback) so it never competes
+    // with the initial paint or the auto-refresh scrape; gated by
+    // `_sbPreloadStarted` inside preloadSandbox() so multiple session
+    // updates can't kick off duplicate runs. Chart construction is
+    // deferred to renderSandboxResults() — preload only stores JSON in
+    // memory, keeping us well under the 512 MB ceiling.
+    if (session && typeof preloadSandbox === "function") {
+        const kick = () => {
+            if (currentSession) preloadSandbox();
+        };
+        if (window.requestIdleCallback) {
+            window.requestIdleCallback(kick, { timeout: 4000 });
+        } else {
+            setTimeout(kick, 2500);
+        }
+    }
 }
 
 async function apiFetch(url, options = {}) {
@@ -963,14 +982,25 @@ document.querySelectorAll(".tab").forEach(tab => {
       $("sandbox-view").classList.remove("hidden");
       const firstOpen = !sandboxInitialized;
       initSandbox();
-      // Auto-run on first open with the default controls (2-leg power,
-      // min prob 54.1%, Kelly enabled — all set in the HTML markup).
-      // Defer one tick so the stat-type chip fetch can issue first;
-      // the simulation itself doesn't depend on the chips loading
-      // (empty included_props means "all props"), but starting the
-      // chip request first makes the panel paint feel less choppy.
+      // First-open render strategy, in priority order:
+      //   1. If a background preload is still in flight, await it and
+      //      render the cached payload as soon as it lands.
+      //   2. If preload already finished, render the cached payload
+      //      immediately — zero network calls, no chart re-creation
+      //      until the tab is actually visible (memory win).
+      //   3. Otherwise fall back to runSandbox(), which fetches afresh.
       if (firstOpen) {
-        setTimeout(() => runSandbox(), 0);
+        if (_sbPreloadPromise) {
+          _sbPreloadPromise.then((data) => {
+            if (activeTab !== "sandbox") return;       // user switched away
+            if (data && _sbFullData) renderSandboxResults(_sbFullData);
+            else runSandbox();
+          });
+        } else if (_sbFullData) {
+          renderSandboxResults(_sbFullData);
+        } else {
+          setTimeout(() => runSandbox(), 0);
+        }
       }
     }
   });
@@ -3185,6 +3215,94 @@ let sandboxChart = null;
 let sandboxLastSlips = [];
 let sandboxInitialized = false;
 
+// Preload state. _sbFullData holds the unfiltered server response from
+// either the background preload or the most recent manual run; _sbConfigKey
+// is a deterministic hash of the controls that produced it. When the user
+// hits "Run Simulation" with controls unchanged the cached payload is
+// reused — no extra network call and the chart can never drift between
+// consecutive runs of an identical config.
+let _sbConfigKey = null;
+let _sbPreloadPromise = null;
+let _sbPreloadStarted = false;
+
+function _readSandboxControls() {
+    // Defensive defaults so this function works even if called before the
+    // sandbox DOM is fully wired (e.g. background preload firing while the
+    // stat-type chips are still loading).
+    const leagueChips = document.querySelectorAll("#sb-league-chips .chip.active");
+    const propChips   = document.querySelectorAll("#sb-prop-chips .chip.active");
+    const probEl = $("sb-range-prob");
+    const sizeEl = $("sb-select-size");
+    const typeEl = $("sb-select-type");
+    const kellyEl = $("sb-use-kelly");
+    return {
+        leagues: [...leagueChips].map(c => c.dataset.val),
+        included_props: [...propChips].map(c => c.dataset.val),
+        min_prob: probEl ? parseFloat(probEl.value) : 0.541,
+        slip_size: sizeEl ? parseInt(sizeEl.value) : 2,
+        slip_type: typeEl ? typeEl.value : "power",
+        use_kelly: kellyEl ? !!kellyEl.checked : true,
+        bet_size: 1.0,
+        slip_strategy: "live_replay",
+        bootstrap: false,
+    };
+}
+
+function _sandboxConfigKey(cfg) {
+    // Canonical key independent of array order so chip-click order can't
+    // generate a spurious cache miss.
+    const norm = {
+        ...cfg,
+        leagues: [...cfg.leagues].sort(),
+        included_props: [...cfg.included_props].sort(),
+    };
+    return JSON.stringify(norm);
+}
+
+async function _executeSandboxRun(cfg, key) {
+    const res = await apiFetch("/api/sandbox/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cfg),
+    });
+    if (!res.ok) {
+        const detail = await _readErrorDetail(res);
+        throw new Error(`Simulation error: ${detail}`);
+    }
+    const text = await res.text();
+    if (!text) throw new Error("Simulation error: empty response from server.");
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error(`Simulation error: server returned non-JSON (${text.slice(0, 80)})`); }
+    _sbFullData = data;
+    _sbConfigKey = key;
+    sandboxLastSlips = data.slips || [];
+    return data;
+}
+
+// Fire-and-cache background preload. Idempotent: a second call while one
+// is in flight returns the same promise; a third call after success is a
+// no-op. Held to one concurrent simulation so we can never spike past
+// the 512 MB ceiling.
+function preloadSandbox() {
+    if (_sbPreloadPromise) return _sbPreloadPromise;
+    if (_sbPreloadStarted && _sbFullData) return Promise.resolve(_sbFullData);
+    _sbPreloadStarted = true;
+    const cfg = _readSandboxControls();
+    const key = _sandboxConfigKey(cfg);
+    _sbPreloadPromise = _executeSandboxRun(cfg, key)
+        .catch((e) => {
+            // Swallow — the user-initiated run will surface its own toast.
+            console.warn("Sandbox preload failed:", e && e.message ? e.message : e);
+            _sbPreloadStarted = false;  // allow another attempt on tab open
+            _sbFullData = null;
+            _sbConfigKey = null;
+            return null;
+        })
+        .finally(() => { _sbPreloadPromise = null; });
+    return _sbPreloadPromise;
+}
+
 function initSandbox() {
     if (sandboxInitialized) return;
     sandboxInitialized = true;
@@ -3329,66 +3447,50 @@ async function loadSandboxStatTypes() {
 
 async function runSandbox() {
     const btnRun = $("btn-run-sandbox");
-    const leagues = [...document.querySelectorAll("#sb-league-chips .chip.active")].map(c => c.dataset.val);
-    const includedProps = [...document.querySelectorAll("#sb-prop-chips .chip.active")].map(c => c.dataset.val);
-    const minProb = parseFloat($("sb-range-prob").value);
-    const slipSize = parseInt($("sb-select-size").value);
-    const slipType = $("sb-select-type").value;
-    const useKelly = $("sb-use-kelly") ? $("sb-use-kelly").checked : false;
+    const cfg = _readSandboxControls();
+    const key = _sandboxConfigKey(cfg);
 
-    // Slip-construction strategy is fixed to "live_replay" — the user
-    // chose a single canonical answer rather than a dropdown of options.
-    // Bootstrap CIs are off; the UI no longer surfaces them.
-    const slipStrategy = "live_replay";
-    const bootstrap = false;
-    // Date range is now a chart-level toggle (#sb-range-selector). Server
-    // always simulates over MAX history; the client filters in memory on
-    // toggle clicks. Reset to MAX so a re-run shows the new full data.
+    // Date range is a chart-level toggle. Reset to MAX so the latest run
+    // always paints the full window regardless of where the previous run
+    // left it.
     _sbRange = "MAX";
+
+    // Cache short-circuit: if the controls match what produced the cached
+    // payload (either from preload or a prior identical click), reuse it
+    // verbatim. This is what fixes the "I changed nothing but the graph
+    // changed" complaint — the hourly recalibration job can otherwise
+    // shift results between two back-to-back runs with the same inputs.
+    if (_sbConfigKey === key && _sbFullData) {
+        renderSandboxResults(_sbFullData);
+        return;
+    }
+
+    // If the preload is still in flight for the same config, await it
+    // instead of firing a duplicate request.
+    if (_sbPreloadPromise) {
+        try {
+            const data = await _sbPreloadPromise;
+            if (data && _sbConfigKey === key) {
+                renderSandboxResults(_sbFullData);
+                return;
+            }
+        } catch {
+            // Fall through to a fresh run.
+        }
+    }
 
     btnRun.disabled = true;
     btnRun.textContent = "Simulating...";
-
     try {
-        const res = await apiFetch("/api/sandbox/run", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                leagues,
-                min_prob: minProb,
-                slip_size: slipSize,
-                slip_type: slipType,
-                bet_size: 1.0,
-                use_kelly: useKelly,
-                included_props: includedProps,
-                slip_strategy: slipStrategy,
-                bootstrap,
-            })
-        });
-
-        if (!res.ok) {
-            const detail = await _readErrorDetail(res);
-            showToast(`Simulation error: ${detail}`, "error");
-            return;
-        }
-
-        // Defensive JSON parse: a successful status with an empty body
-        // (rare, but happens on flaky proxies / cold workers) used to
-        // throw "Unexpected end of JSON input" with no useful context.
-        const text = await res.text();
-        if (!text) {
-            showToast("Simulation error: empty response from server. Try again.", "error");
-            return;
-        }
-        let data;
-        try { data = JSON.parse(text); }
-        catch (parseErr) {
-            showToast(`Simulation error: server returned non-JSON (${text.slice(0, 80)})`, "error");
-            return;
-        }
+        const data = await _executeSandboxRun(cfg, key);
         renderSandboxResults(data);
     } catch (e) {
-        showToast("Network error: " + (e && e.message ? e.message : String(e)), "error");
+        const msg = e && e.message ? e.message : String(e);
+        if (msg.startsWith("Simulation error")) {
+            showToast(msg, "error");
+        } else {
+            showToast("Network error: " + msg, "error");
+        }
     } finally {
         btnRun.disabled = false;
         btnRun.textContent = "Run Simulation";

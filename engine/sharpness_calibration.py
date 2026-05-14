@@ -322,28 +322,14 @@ def load_sharpness_weights() -> dict[str, float]:
     JSON file is missing (ephemeral-disk redeploys). Callers fall back to
     the hardcoded prior when this returns empty.
     """
-    raw = None
-    if os.path.exists(SHARPNESS_FILE):
-        try:
-            with open(SHARPNESS_FILE, "r") as f:
-                raw = json.load(f)
-        except Exception:
-            raw = None
-
-    if raw is None:
-        try:
-            from engine.persistence import load_state_from_supabase
-            mirrored, _ = load_state_from_supabase("sharpness_weights")
-            if isinstance(mirrored, dict) and mirrored.get("weights"):
-                try:
-                    os.makedirs(os.path.dirname(SHARPNESS_FILE), exist_ok=True)
-                    with open(SHARPNESS_FILE, "w") as f:
-                        json.dump(mirrored, f, indent=2)
-                except Exception:
-                    pass
-                raw = mirrored
-        except Exception:
-            pass
+    try:
+        from engine.persistence import load_artefact
+        raw = load_artefact(
+            "sharpness_weights", SHARPNESS_FILE,
+            validator=lambda p: isinstance(p, dict),
+        )
+    except Exception:
+        raw = None
 
     if raw is None:
         return {}
@@ -384,23 +370,16 @@ def load_sharpness_biases_fine() -> dict[str, dict[str, dict[str, float]]]:
 
 
 def _load_raw_sharpness() -> dict | None:
-    """Internal: read the sharpness file (with Supabase fallback). Used by
-    both the weight and bias loaders so we read the file once."""
-    raw = None
-    if os.path.exists(SHARPNESS_FILE):
-        try:
-            with open(SHARPNESS_FILE, "r") as f:
-                raw = json.load(f)
-        except Exception:
-            raw = None
-    if raw is None:
-        try:
-            from engine.persistence import load_state_from_supabase
-            mirrored, _ = load_state_from_supabase("sharpness_weights")
-            if isinstance(mirrored, dict):
-                raw = mirrored
-        except Exception:
-            pass
+    """Internal: read the sharpness artefact preferring the newer of disk
+    vs Supabase. Used by both the weight and bias loaders so we read once."""
+    try:
+        from engine.persistence import load_artefact
+        raw = load_artefact(
+            "sharpness_weights", SHARPNESS_FILE,
+            validator=lambda p: isinstance(p, dict),
+        )
+    except Exception:
+        raw = None
     return raw if isinstance(raw, dict) else None
 
 
@@ -410,23 +389,7 @@ def load_sharpness_biases() -> dict[str, dict[str, float]]:
     dict when no fit exists or the v2 schema isn't yet on disk — the
     consensus engine then leaves book probabilities untouched.
     """
-    raw = None
-    if os.path.exists(SHARPNESS_FILE):
-        try:
-            with open(SHARPNESS_FILE, "r") as f:
-                raw = json.load(f)
-        except Exception:
-            raw = None
-
-    if raw is None:
-        try:
-            from engine.persistence import load_state_from_supabase
-            mirrored, _ = load_state_from_supabase("sharpness_weights")
-            if isinstance(mirrored, dict):
-                raw = mirrored
-        except Exception:
-            pass
-
+    raw = _load_raw_sharpness()
     if not isinstance(raw, dict):
         return {}
     biases = raw.get("biases") or {}

@@ -180,13 +180,14 @@ def compute_brier_snapshot(window_days: int = MONITOR_WINDOW_DAYS) -> dict:
 
 
 def _load_history() -> list[dict]:
-    if not os.path.exists(MONITOR_FILE):
-        return []
     try:
-        with open(MONITOR_FILE, "r") as f:
-            data = json.load(f)
+        from engine.persistence import load_artefact
+        data = load_artefact(
+            "brier_monitor", MONITOR_FILE,
+            validator=lambda p: isinstance(p, list),
+        )
     except Exception:
-        return []
+        data = None
     return data if isinstance(data, list) else []
 
 
@@ -220,16 +221,6 @@ def update_brier_monitor(window_days: int = MONITOR_WINDOW_DAYS) -> dict:
 
 def load_brier_history() -> list[dict]:
     """Return the persisted snapshots (most recent last). Used by the
-    Observatory diagnostic endpoint."""
-    history = _load_history()
-    if history:
-        return history
-    # Fall back to Supabase mirror for ephemeral-disk deploys.
-    try:
-        from engine.persistence import load_state_from_supabase
-        mirrored, _ = load_state_from_supabase("brier_monitor")
-        if isinstance(mirrored, list):
-            return mirrored
-    except Exception:
-        pass
-    return []
+    Observatory diagnostic endpoint. _load_history already prefers the
+    newer of disk vs Supabase, so this is just a thin wrapper."""
+    return _load_history()

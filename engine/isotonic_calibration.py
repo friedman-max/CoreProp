@@ -377,24 +377,19 @@ def _normalize_state_bins(state: dict) -> None:
 
 
 def _load_state() -> dict:
-    """Load incremental state from disk → Supabase fallback. Returns an
-    empty state when nothing usable exists (a bootstrap will then run)."""
+    """Load incremental state preferring the newer of disk vs Supabase mirror.
+    Returns an empty state when nothing usable exists (a bootstrap will
+    then run)."""
     raw: dict | None = None
-    if os.path.exists(ISOTONIC_STATE_FILE):
-        try:
-            with open(ISOTONIC_STATE_FILE, "r") as f:
-                raw = json.load(f)
-        except Exception:
-            raw = None
-
-    if raw is None:
-        try:
-            from engine.persistence import load_state_from_supabase
-            mirrored, _ = load_state_from_supabase("isotonic_state")
-            if isinstance(mirrored, dict):
-                raw = mirrored
-        except Exception:
-            raw = None
+    try:
+        from engine.persistence import load_artefact
+        raw = load_artefact(
+            "isotonic_state",
+            ISOTONIC_STATE_FILE,
+            validator=lambda p: isinstance(p, dict) and p.get("version") == 3,
+        )
+    except Exception:
+        raw = None
 
     if not isinstance(raw, dict) or raw.get("version") != 3:
         return _empty_state()
@@ -1063,29 +1058,16 @@ def load_isotonic_calibration() -> dict:
     deploys). Returns an empty (no-op) shape if neither is available or
     the version is from a prior schema.
     """
-    raw = None
-    if os.path.exists(ISOTONIC_FILE):
-        try:
-            with open(ISOTONIC_FILE, "r") as f:
-                raw = json.load(f)
-        except Exception:
-            raw = None
-
-    if raw is None:
-        try:
-            from engine.persistence import load_state_from_supabase
-            mirrored, _ = load_state_from_supabase("isotonic_calibration")
-            if isinstance(mirrored, dict) and mirrored.get("version") == 2:
-                # Hydrate the local file so subsequent reads skip the round trip.
-                try:
-                    os.makedirs(os.path.dirname(ISOTONIC_FILE), exist_ok=True)
-                    with open(ISOTONIC_FILE, "w") as f:
-                        json.dump(mirrored, f, indent=2)
-                except Exception:
-                    pass
-                raw = mirrored
-        except Exception as exc:
-            logger.debug("IsotonicCalibration: Supabase fallback unavailable: %s", exc)
+    try:
+        from engine.persistence import load_artefact
+        raw = load_artefact(
+            "isotonic_calibration",
+            ISOTONIC_FILE,
+            validator=lambda p: isinstance(p, dict) and p.get("version") == 2,
+        )
+    except Exception as exc:
+        logger.debug("IsotonicCalibration: artefact load failed: %s", exc)
+        raw = None
 
     if raw is None:
         return {"global": None, "leagues": {}, "props": {}}
