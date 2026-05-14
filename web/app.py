@@ -586,7 +586,12 @@ def _run_pipeline_body():
         # ended up below the EV bar and never reached the observatory.
         # The 0.30 floor is a sanity gate: extreme tails (<0.30 raw) get
         # logged on the complement side anyway since that side is >=0.70.
-        OBS_MIN_PROB = 0.30
+        # OBS_MIN_PROB lives in engine.observatory so the gate has a single
+        # source of truth — `_observe` reads it via `should_log_observation`.
+        from engine.observatory import (
+            build_observation_entry as _build_obs,
+            should_log_observation as _should_obs,
+        )
         obs_entries: list[dict] = []
 
         def _devigged_book_probs(_m, _side: str) -> dict:
@@ -615,31 +620,26 @@ def _run_pipeline_body():
 
         def _observe(_m, _side: str, raw_prob: float, mw):
             """Capture an observatory entry for the given side if the raw
-            consensus prob clears the threshold. Calibrated prob is computed
-            inline so observatory rows mirror what BetResult would have
-            stored, ensuring the sandbox / calibration UI sees the same
-            true_prob whether or not the line was +EV at scrape time."""
-            if raw_prob is None or raw_prob < OBS_MIN_PROB:
+            consensus prob clears the threshold. Threshold + entry shape
+            are owned by engine.observatory so this closure stays thin —
+            a single bug-fix surface for "what does a logged observation
+            look like?"."""
+            if not _should_obs(raw_prob):
                 return
-            try:
-                from engine.ev_calculator import _apply_calibration as _ac
-                from engine.ev_calculator import _calibration_curves as _cc
-                calibrated = min(_ac(_cc, _m.pp.league, _m.pp.stat_type, _side, raw_prob), 0.999)
-            except Exception:
-                calibrated = raw_prob
-            obs_entries.append({
-                "player_name":   _m.pp.player_name,
-                "league":        _m.pp.league,
-                "prop_type":     _m.pp.stat_type,
-                "pp_line":       _m.pp.line_score,
-                "side":          _side,
-                "true_prob":     calibrated,
-                "raw_true_prob": raw_prob,
-                "market_width":  mw,
-                "team":          getattr(_m.pp, "team", "") or "",
-                "start_time":    _m.pp.start_time,
-                "books_probs":   _devigged_book_probs(_m, _side),
-            })
+            entry = _build_obs(
+                player_name=_m.pp.player_name,
+                league=_m.pp.league,
+                prop=_m.pp.stat_type,
+                line=_m.pp.line_score,
+                side=_side,
+                raw_prob=raw_prob,
+                market_width=mw,
+                team=getattr(_m.pp, "team", "") or "",
+                start_time=_m.pp.start_time,
+                books_probs=_devigged_book_probs(_m, _side),
+            )
+            if entry is not None:
+                obs_entries.append(entry)
 
         for m in matches:
             # The matcher already populates per-side equivalents. A match
@@ -858,6 +858,29 @@ def _run_pipeline_body():
                                 "start_time": base_under.get("start_time", ""),
                                 "books_probs": _per_book_probs("under"),
                             }
+
+        # Per-league observability: log how many priced sides each league
+        # contributed to obs_entries this cycle, and what fraction were
+        # >= the observatory threshold vs below it. Surfaces the
+        # difference between "the scrapers found no NHL games" (counts
+        # are 0) and "we matched NHL props but they all came back below
+        # 0.30" (matched > 0, obs == 0). Without this, the only way to
+        # diagnose a missing-league report was to scan the entire scrape
+        # log by hand.
+        try:
+            from collections import Counter
+            obs_counts = Counter()
+            for e in obs_entries:
+                lg = (e.get("league") or "UNKNOWN").upper()
+                obs_counts[lg] += 1
+            match_counts = Counter((getattr(m.pp, "league", "") or "UNKNOWN").upper() for m in matches)
+            league_summary = ", ".join(
+                f"{lg}: matched={match_counts.get(lg, 0)} obs={obs_counts.get(lg, 0)}"
+                for lg in sorted(set(match_counts) | set(obs_counts))
+            )
+            logger.info("Pipeline per-league: %s", league_summary)
+        except Exception as exc:
+            logger.warning("Pipeline per-league summary failed: %s", exc)
 
         # Deduplicate bets based on bet_id, keeping the one with highest EV
         unique_bets = {}
@@ -2677,34 +2700,168 @@ def delete_backtest_slip(slip_id: str, user: dict = Depends(get_current_user)):
 
 # ── Market Observatory Endpoints ───────────────────────────────────────────
 
+# Per-league row caps. The earlier endpoint took the 100 newest resolved +
+# 100 newest pending GLOBALLY — which meant a high-volume league (NBA)
+# would crowd out every NHL row in-season and every NHL row would be
+# absent off-season too, since NHL never makes the global top-N by
+# created_at. The UI's Market Feed (Verified Lines) table then showed
+# "no NHL" not because the observatory wasn't logging NHL — it WAS — but
+# because the API capped the response before NHL could surface.
+#
+# Per-league fetch: each (league × result-bucket) gets its own cap, so
+# low-volume leagues are guaranteed visibility. Total ceiling is large
+# enough to be useful for the UI but bounded so a single endpoint hit
+# can't OOM the 512 MB tier.
+_OBS_PER_LEAGUE_PER_BUCKET_LIMIT = 200          # per league × {resolved, pending}
+_OBS_RESPONSE_HARD_CAP           = 3000         # overall safety net
+
+_OBS_TRACKED_LEAGUES = ("NBA", "WNBA", "MLB", "NHL", "NCAAB", "SOCCER")
+
+
+def _fetch_observatory_for_league(db, league: str, *, resolved: bool,
+                                  limit: int) -> list[dict]:
+    """One DB call: latest `limit` rows of (league, resolved-or-pending),
+    ordered most-recent first. Pulled into a helper so the per-league
+    loop is uniform across resolved/pending and easier to test."""
+    q = db.table("market_observatory").select("*").eq("league", league)
+    if resolved:
+        q = q.neq("result", "pending")
+    else:
+        q = q.eq("result", "pending")
+    res = q.order("created_at", desc=True).limit(limit).execute()
+    return res.data or []
+
+
 @app.get("/api/observatory")
-def get_observatory_data():
+def get_observatory_data(league: Optional[str] = None):
     """Returns the latest observations from the market_observatory table.
-    Resolved and pending rows are fetched separately so a flood of recent
-    pending rows can't push all the hit/miss rows past the row cap."""
+
+    Per-league round-robin: each tracked league gets up to
+    `_OBS_PER_LEAGUE_PER_BUCKET_LIMIT` resolved AND that many pending
+    rows. Low-volume leagues (NHL off-season, WNBA off-season) thus
+    stay visible in the UI even when high-volume leagues dominate the
+    global recency ordering.
+
+    `?league=NHL` requests a single league at the full per-bucket cap —
+    useful for the UI to deep-dive one league without re-pulling the
+    others.
+    """
     try:
         from engine.database import get_db
         db = get_db()
         if not db:
             return []
-        resolved = db.table("market_observatory") \
-            .select("*") \
-            .neq("result", "pending") \
-            .order("created_at", desc=True) \
-            .limit(100) \
-            .execute().data or []
-        pending = db.table("market_observatory") \
-            .select("*") \
-            .eq("result", "pending") \
-            .order("created_at", desc=True) \
-            .limit(100) \
-            .execute().data or []
-        combined = resolved + pending
+
+        leagues = [league.upper()] if league else list(_OBS_TRACKED_LEAGUES)
+        per_bucket = _OBS_PER_LEAGUE_PER_BUCKET_LIMIT
+
+        combined: list[dict] = []
+        for lg in leagues:
+            try:
+                resolved = _fetch_observatory_for_league(db, lg, resolved=True,  limit=per_bucket)
+                pending  = _fetch_observatory_for_league(db, lg, resolved=False, limit=per_bucket)
+            except Exception as exc:
+                logger.warning("Observatory: fetch failed for %s: %s", lg, exc)
+                continue
+            combined.extend(resolved)
+            combined.extend(pending)
+            if len(combined) >= _OBS_RESPONSE_HARD_CAP:
+                # Already over the cap from one verbose league; stop
+                # before doing more I/O we'll just throw away.
+                break
+
+        # Newest first across the union so the UI's "latest" ordering is
+        # preserved. Truncate to the hard cap *after* the round-robin so
+        # the cap doesn't bias against the last-iterated leagues.
         combined.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+        if len(combined) > _OBS_RESPONSE_HARD_CAP:
+            combined = combined[:_OBS_RESPONSE_HARD_CAP]
         return combined
     except Exception as e:
         logger.error("API: observatory fetch error: %s", e)
         return []
+
+
+@app.get("/api/observatory/coverage")
+def get_observatory_coverage():
+    """Per-league row counts for the observatory. Surfaces a simple
+    diagnostic the UI can use to tell the user "NHL has 0 rows logged"
+    vs "NHL has 47 rows logged but the API only returns 200 newest" —
+    the second was the long-standing source of the "no NHL" complaint.
+
+    Counts are CHEAP — Postgres handles `count='exact'` on a few
+    thousand rows in milliseconds — and run once per request. Cached
+    upstream by the dashboard tab so we're not hitting this every paint.
+
+    Returns:
+        {
+          "by_league": [
+            {"league": "NBA", "total": 12345, "resolved": 9000,
+             "pending": 3345, "newest_at": "2026-05-14T01:00:00Z"},
+            ...
+          ],
+          "total": 23456,
+        }
+    """
+    try:
+        from engine.database import get_db
+        db = get_db()
+        if not db:
+            return {"by_league": [], "total": 0}
+
+        by_league: list[dict] = []
+        grand_total = 0
+        for lg in _OBS_TRACKED_LEAGUES:
+            try:
+                # Three head-counts per league: total, resolved-only,
+                # pending-only. Each runs as a separate Postgres COUNT
+                # with the planner choosing an index — sub-ms on the
+                # current row volume.
+                total_res = (db.table("market_observatory")
+                             .select("id", count="exact")
+                             .eq("league", lg)
+                             .limit(1)
+                             .execute())
+                total = total_res.count or 0
+                pending_res = (db.table("market_observatory")
+                               .select("id", count="exact")
+                               .eq("league", lg)
+                               .eq("result", "pending")
+                               .limit(1)
+                               .execute())
+                pending = pending_res.count or 0
+                resolved = max(0, total - pending)
+
+                newest_at = None
+                if total > 0:
+                    newest_res = (db.table("market_observatory")
+                                  .select("created_at")
+                                  .eq("league", lg)
+                                  .order("created_at", desc=True)
+                                  .limit(1)
+                                  .execute())
+                    if newest_res.data:
+                        newest_at = newest_res.data[0].get("created_at")
+
+                by_league.append({
+                    "league":    lg,
+                    "total":     total,
+                    "resolved":  resolved,
+                    "pending":   pending,
+                    "newest_at": newest_at,
+                })
+                grand_total += total
+            except Exception as exc:
+                logger.warning("Observatory coverage: %s failed: %s", lg, exc)
+                by_league.append({
+                    "league": lg, "total": 0, "resolved": 0,
+                    "pending": 0, "newest_at": None,
+                    "error": str(exc)[:120],
+                })
+        return {"by_league": by_league, "total": grand_total}
+    except Exception as e:
+        logger.error("API: observatory coverage error: %s", e)
+        return {"by_league": [], "total": 0}
 
 @app.get("/api/observatory/multipliers")
 def get_calibration_map_api():
