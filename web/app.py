@@ -2607,6 +2607,7 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
                 "proj_slip_ev_pct": proj_ev
             }).execute()
             # 2. Insert legs
+            from engine.backtest import make_leg_fingerprint
             db_legs = []
             for r in rows:
                 db_legs.append({
@@ -2623,10 +2624,45 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
                     "closing_prob": r["closing_prob"],
                     "clv_pct":      r["clv_pct"],
                     "result":       r["result"],
-                    "stat_actual":  r["stat_actual"]
+                    "stat_actual":  r["stat_actual"],
+                    # See engine/backtest.py — same partial-unique-index
+                    # backstop. The manual add-slip path historically had
+                    # no dedup at all; the DB-level constraint now blocks
+                    # both auto and manual paths uniformly.
+                    "dedup_key":    make_leg_fingerprint(
+                        r["player"], r["prop"], r["line"], r["side"], r["game_start"] or "",
+                    ),
                 })
-            db_client.table("legs").insert(db_legs).execute()
+            try:
+                db_client.table("legs").insert(db_legs).execute()
+            except Exception as legs_exc:
+                err_msg = str(legs_exc)
+                # Pre-migration_008 schema: drop dedup_key and retry once.
+                if "dedup_key" in err_msg.lower():
+                    for dl in db_legs:
+                        dl.pop("dedup_key", None)
+                    db_client.table("legs").insert(db_legs).execute()
+                # Unique-violation: another slip (auto or manual) already
+                # contains a leg with this canonical fingerprint. Roll
+                # back the slip header and surface a clear 409 so the UI
+                # can tell the user they already have this leg.
+                elif "23505" in err_msg or "duplicate key" in err_msg.lower():
+                    try:
+                        db_client.table("slips").delete().eq("id", slip_id).execute()
+                    except Exception as cleanup_exc:
+                        logger.warning(
+                            "Backtest: failed to roll back orphan manual slip %s after "
+                            "duplicate-leg rejection: %s", slip_id, cleanup_exc,
+                        )
+                    raise HTTPException(
+                        status_code=409,
+                        detail="One or more legs in this slip duplicate a leg already in your backtest.",
+                    )
+                else:
+                    raise
             logger.info("Backtest: manually added slip %s to Supabase", slip_id)
+        except HTTPException:
+            raise
         except Exception as db_exc:
             logger.error("Backtest: manual slip write failed: %s", db_exc)
             raise HTTPException(status_code=500, detail=f"Database write failed: {db_exc}")

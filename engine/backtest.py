@@ -129,6 +129,19 @@ def make_leg_key(player: str, prop: str, line, side: str, start_time: str) -> tu
     return (p_key, prop_key, _normalize_line(line), side_key, t_key)
 
 
+def make_leg_fingerprint(player: str, prop: str, line, side: str, start_time: str) -> str:
+    """String form of make_leg_key, suitable for the `legs.dedup_key`
+    column. The DB has a partial UNIQUE INDEX on (user_id, dedup_key)
+    so a second insert with the same fingerprint is rejected at write
+    time (migration_008). This is the bulletproof backstop to
+    application-level dedup, which is race-prone across multiple
+    Render workers."""
+    p_key, prop_key, line_key, side_key, t_key = make_leg_key(
+        player, prop, line, side, start_time
+    )
+    return f"{p_key}|{prop_key}|{line_key}|{side_key}|{t_key}"
+
+
 def make_game_key(league: str, start_time: str) -> tuple[str, str]:
     """Best-effort 'same game' bucket. Two legs sharing this key are
     presumed to be from the same game (or at least same league + same UTC
@@ -535,15 +548,48 @@ class BacktestLogger:
                     "result":        r["result"],
                     "stat_actual":   None if r["stat_actual"] == "" else r["stat_actual"],
                     "team":          r["team"] or None,
+                    # Canonical fingerprint — backed by the partial
+                    # UNIQUE INDEX on (user_id, dedup_key) added in
+                    # migration_008. Second insertion of the same
+                    # (player, prop, line, side, game-day) for this
+                    # user is rejected by Postgres regardless of which
+                    # worker/process attempts it.
+                    "dedup_key":     make_leg_fingerprint(
+                        r["player"], r["prop"], r["line"], r["side"], r["game_start"] or "",
+                    ),
                 })
             # Optional column compatibility: each migration may not yet be
             # applied on the deployed schema. Strip optionals one at a time
             # and retry until the insert succeeds (or all retries are
             # exhausted, in which case the original error is raised).
-            _OPTIONAL_LEG_COLS = ("team", "raw_true_prob")
+            # `dedup_key` is listed so older deploys (pre-migration_008)
+            # still log slips correctly; once the migration runs, the
+            # column is present and the unique index becomes the backstop.
+            _OPTIONAL_LEG_COLS = ("dedup_key", "team", "raw_true_prob")
             try:
                 db.table("legs").insert(db_legs).execute()
             except Exception as legs_exc:
+                # Postgres unique_violation = SQLSTATE 23505. Means another
+                # worker / earlier cycle already logged a leg with the same
+                # canonical fingerprint for this user. The slip header has
+                # already been written, so roll it back and silently abandon
+                # — auto-logger will try again on the next refresh cycle
+                # with the duplicate already excluded from the candidate
+                # pool by the next dedup-set load.
+                err_msg = str(legs_exc)
+                if "23505" in err_msg or "duplicate key" in err_msg.lower():
+                    try:
+                        db.table("slips").delete().eq("id", slip_id).execute()
+                    except Exception as cleanup_exc:
+                        logger.warning(
+                            "Backtest: failed to roll back orphan slip header %s after duplicate-leg "
+                            "rejection: %s", slip_id, cleanup_exc,
+                        )
+                    logger.info(
+                        "Backtest: skipped Auto-Slip %s — duplicate leg(s) already in DB for user %s "
+                        "(unique-index rejected the insert: %s)", slip_id, self.user_id, err_msg[:200],
+                    )
+                    return None
                 last = legs_exc
                 ok = False
                 for col in _OPTIONAL_LEG_COLS:
@@ -556,6 +602,22 @@ class BacktestLogger:
                         ok = True
                         break
                     except Exception as retry_exc:
+                        # Same unique-violation handling if the retry trips
+                        # the constraint after stripping an unrelated column.
+                        retry_msg = str(retry_exc)
+                        if "23505" in retry_msg or "duplicate key" in retry_msg.lower():
+                            try:
+                                db.table("slips").delete().eq("id", slip_id).execute()
+                            except Exception as cleanup_exc:
+                                logger.warning(
+                                    "Backtest: failed to roll back orphan slip header %s after duplicate-leg "
+                                    "rejection: %s", slip_id, cleanup_exc,
+                                )
+                            logger.info(
+                                "Backtest: skipped Auto-Slip %s — duplicate leg(s) for user %s",
+                                slip_id, self.user_id,
+                            )
+                            return None
                         last = retry_exc
                         continue
                 if not ok:
