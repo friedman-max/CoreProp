@@ -57,7 +57,6 @@ LEAGUE_PACE_MULTIPLIER: dict[str, float] = {
     "NCAAF":      1.00,
     "NHL":        0.95,
     "MLB":        0.60,
-    "SOCCER":     0.90,
 }
 
 # Absolute ceiling on any single ρ entry. Latent ρ close to 1 makes the

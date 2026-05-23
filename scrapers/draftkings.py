@@ -108,18 +108,6 @@ LEAGUE_CONFIG = {
             "Pts+Rebs+Asts": "16483",
         }
     },
-    "SOCCER": {
-        "id": "40253,12513,12301,12290,12285,12286,12284,12283,12521",
-        "subcategories": {
-            "Goals": "53",
-            "Shots on Target": "130",
-            "Shots": "131",
-            "Passes Attempted": "153",
-            "Tackles": "154",
-            "Saves": "156",
-            "Assists": "132",
-        }
-    }
 }
 
 # ---------------------------------------------------------------------------
@@ -187,15 +175,6 @@ SUBCAT_TO_PROP_TYPE = {
         "Pts+Rebs":         "Pts+Rebs",
         "Pts+Rebs+Asts":    "Pts+Rebs+Asts",
     },
-    "SOCCER": {
-        "Goals":            "Goals",
-        "Shots":            "Shots",
-        "Shots on Target":  "Shots On Target",
-        "Passes Attempted": "Passes Attempted",
-        "Tackles":          "Tackles",
-        "Assists":          "Assists",
-        "Saves":            "Goalie Saves",
-    }
 }
 
 

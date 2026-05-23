@@ -364,15 +364,15 @@ class HierarchicalFitTests(unittest.TestCase):
         self.assertIn("MLB|Hits",   out["props"])
 
     def test_skips_thin_buckets(self):
-        # 2 rows for SOCCER — well below MIN_BUCKET_N_EFF=5.
-        rows = _bulk(league="NBA",    prop="Points", n=200, true_prob=0.60, hit_rate=0.55) \
-             + _bulk(league="SOCCER", prop="Goals",  n=2,   true_prob=0.60, hit_rate=1.00)
+        # 2 rows for a low-volume league — well below MIN_BUCKET_N_EFF=5.
+        rows = _bulk(league="NBA",  prop="Points", n=200, true_prob=0.60, hit_rate=0.55) \
+             + _bulk(league="WNBA", prop="Points", n=2,   true_prob=0.60, hit_rate=1.00)
         out = _fit_with_rows(self, market_rows=rows)
         self.assertIn("NBA", out["leagues"])
-        # SOCCER may or may not appear depending on recency weight; if it
-        # does, n_eff must clear the threshold.
-        if "SOCCER" in out["leagues"]:
-            self.assertGreaterEqual(out["leagues"]["SOCCER"]["n_eff"], iso.MIN_BUCKET_N_EFF)
+        # The thin bucket may or may not appear depending on recency weight;
+        # if it does, n_eff must clear the threshold.
+        if "WNBA" in out["leagues"]:
+            self.assertGreaterEqual(out["leagues"]["WNBA"]["n_eff"], iso.MIN_BUCKET_N_EFF)
 
 
 @_STALE_AGAINST_V3

@@ -55,19 +55,7 @@ def _normalize_prop_type(raw: str, league: str = "") -> Optional[str]:
     # 2. League-Specific substring matching (handles FanDuel's verbose market names)
     lkey = league.upper()
 
-    if lkey == "SOCCER":
-        if "shots on target" in raw_norm or "shots on goal" in raw_norm: return "Shots On Target"
-        if "total shots" in raw_norm or raw_norm.endswith(" - shots") or raw_norm.endswith(" shots"): return "Shots"
-        if "shots" in raw_norm: return "Shots"
-        if raw_norm.endswith(" - passes") or "passes completed" in raw_norm or "passes attempted" in raw_norm or "passes" in raw_norm: return "Passes Attempted"
-        if raw_norm.endswith(" - tackles") or "tackles" in raw_norm: return "Tackles"
-        if raw_norm.endswith(" - crosses") or "crosses" in raw_norm: return "Crosses"
-        if raw_norm.endswith(" - clearances") or "clearances" in raw_norm: return "Clearances"
-        if raw_norm.endswith(" - assists") or " assists" in raw_norm: return "Assists"
-        if raw_norm.endswith(" - saves") or "goalie saves" in raw_norm or "goalkeeper saves" in raw_norm or "saves" in raw_norm: return "Goalie Saves"
-        if "goals" in raw_norm or "to score" in raw_norm or "goal-scorer" in raw_norm or "goalscorer" in raw_norm: return "Goals"
-
-    elif lkey in ("NBA", "WNBA", "NCAAB"):
+    if lkey in ("NBA", "WNBA", "NCAAB"):
         if "made 3 point field goals" in raw_norm or "made threes" in raw_norm or " threes" in raw_norm: return "3-PT Made"
         if "points + rebounds + assists" in raw_norm or "pts + reb + ast" in raw_norm or "pts+reb+ast" in raw_norm: return "Pts+Rebs+Asts"
         if "points + rebounds" in raw_norm or "pts + reb" in raw_norm: return "Pts+Rebs"
@@ -241,24 +229,6 @@ _MULTI_RUNNER_MAP = {
     "goalscorer":         "Goals",
     "goal scorer":        "Goals",
 
-    # Soccer
-    "shots on target":    "Shots On Target",
-    "shot on target":     "Shots On Target",
-    "sot":                "Shots On Target",
-    "total shots":        "Shots",
-    "total shot":         "Shots",
-    "goalie save":        "Goalie Saves",
-    "goalie saves":       "Goalie Saves",
-    "goalkeeper saves":   "Goalie Saves",
-    "pass":               "Passes Attempted",
-    "passes":             "Passes Attempted",
-    "tackle":             "Tackles",
-    "tackles":            "Tackles",
-    "cross":              "Crosses",
-    "crosses":            "Crosses",
-    "clearance":          "Clearances",
-    "clearances":         "Clearances",
-
     # Generic
     "points-assists":     "Pts+Asts",
 }
@@ -301,12 +271,6 @@ def _parse_multi_runner_market(mkt_name: str, league: str = "") -> Optional[tupl
                 stat_part = m3.group(1).strip()
                 threshold_str = m3.group(2)
             else:
-                # Binary soccer props (no threshold)
-                low = s.lower()
-                if low in ("anytime goalscorer", "anytime goal scorer",
-                           "goalscorer", "goal scorer", "player to score",
-                           "to score", "to score a goal"):
-                    return ("Goals", 0.5)
                 return None
 
     threshold = int(threshold_str) if threshold_str else 1
@@ -320,12 +284,6 @@ def _parse_multi_runner_market(mkt_name: str, league: str = "") -> Optional[tupl
             if key in stat_raw:
                 pp_stat = _MULTI_RUNNER_MAP[key]
                 break
-
-    # Soccer overrides: "Shots" means open shots, not on-goal; "Saves" means goalie saves
-    if league == "SOCCER" and pp_stat == "Shots on Goal":
-        pp_stat = "Shots"
-    if league == "SOCCER" and pp_stat == "Saves":
-        pp_stat = "Goalie Saves"
 
     if not pp_stat:
         return None
@@ -587,25 +545,13 @@ LEAGUE_TABS = {
         "pitcher-outs", "pitcher-hits-allowed", "pitcher-walks",
         "pitcher-earned-runs",
     ],
-    "SOCCER": [
-        "player-props", "goalscorer", "shots", "cards", "assists", "passes",
-        "shots-on-target", "tackles", "crosses", "clearances", "saves",
-        "player-shots", "player-goals", "player-assists",
-        "player-shots-on-target", "player-passes", "player-tackles",
-        "player-crosses", "player-saves", "to-score", "first-goalscorer",
-    ],
 }
 
 async def _scrape_league(client: httpx.AsyncClient, league: str) -> list[FanDuelProp]:
     all_props = []
 
     logger.info("FanDuel [%s]: fetching events (Phase 1)", league)
-    if league == "SOCCER":
-        nav_urls = [
-            f"https://sbapi.nj.sportsbook.fanduel.com/api/content-managed-page?page=SPORT&eventTypeId=1&_ak={FD_AK_TOKEN}"
-        ]
-    else:
-        nav_urls = [f"https://sbapi.nj.sportsbook.fanduel.com/api/content-managed-page?page=CUSTOM&customPageId={league.lower()}&_ak={FD_AK_TOKEN}"]
+    nav_urls = [f"https://sbapi.nj.sportsbook.fanduel.com/api/content-managed-page?page=CUSTOM&customPageId={league.lower()}&_ak={FD_AK_TOKEN}"]
 
     event_ids = set()
     for nav_url in nav_urls:

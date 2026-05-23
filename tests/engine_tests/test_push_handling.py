@@ -78,7 +78,7 @@ class GradeLegTests(unittest.TestCase):
         self.assertEqual(grade_leg(15, 14.5, "under"), "miss")
 
     def test_float_precision_noise_within_tolerance_pushes(self):
-        # `_compute_stat` does floating-point arithmetic for soccer/fantasy
+        # `_compute_stat` does floating-point arithmetic for combo
         # props. A delta of 1e-12 must still resolve to push.
         actual = 14.0 + 1e-12
         self.assertEqual(grade_leg(actual, 14.0, "over"),  "push")

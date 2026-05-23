@@ -23,7 +23,6 @@ ESPN_SCOREBOARD = {
     "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard",
     "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard",
     "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
-    "SOCCER": "https://site.api.espn.com/apis/site/v2/sports/soccer/scoreboard",
 }
 
 # ESPN event summary (for box scores)
@@ -33,7 +32,6 @@ ESPN_SUMMARY = {
     "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/summary",
     "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary",
     "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary",
-    "SOCCER": "https://site.api.espn.com/apis/site/v2/sports/soccer/summary",
 }
 
 # Conservative estimate of how long after game_start a result can be fetched
@@ -43,14 +41,61 @@ GAME_DURATION_MINUTES = {
     "NCAAB": 150,   # 2.5 h
     "MLB":   225,   # 3.75 h
     "NHL":   180,   # 3 h
-    "SOCCER": 120,   # 2 h
 }
 
 FUZZY_THRESHOLD = 80   # Strict threshold for name matching
 
+# Suffixes that should be stripped before comparing last names. ESPN often
+# omits "Jr."/"Sr."/"III" while PrizePicks includes them (or vice versa).
+_NAME_SUFFIXES = {"jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"}
+
+
+def _norm_name(n: str) -> str:
+    return unidecode.unidecode(n or "").lower().strip()
+
+
+def _name_tokens(n: str) -> list[str]:
+    """Normalized tokens with Jr/Sr/III suffixes stripped."""
+    toks = [t for t in _norm_name(n).split() if t]
+    cleaned = [t for t in toks if t.rstrip(".") not in _NAME_SUFFIXES]
+    return cleaned or toks
+
+
+def _is_same_player(query: str, candidate: str) -> bool:
+    """Strict same-player check used to disambiguate brothers / Jrs / cousins
+    on the same roster (Mobley, Morris, Holiday, Antetokounmpo, Porter, etc.).
+
+    Exact normalized match is always accepted. Otherwise we require the last
+    name to match exactly and the first names to share an initial AND be
+    near-identical (fuzz.ratio >= 80), which rejects e.g. "Evan Mobley" vs
+    "Isaiah Mobley" while still accepting "Bobby Portis Jr." vs "Bobby Portis"
+    or "Patrick Beverley" vs "Pat Beverley"."""
+    q = _norm_name(query)
+    c = _norm_name(candidate)
+    if not q or not c:
+        return False
+    if q == c:
+        return True
+    q_tok = _name_tokens(query)
+    c_tok = _name_tokens(candidate)
+    if not q_tok or not c_tok:
+        return False
+    if q_tok[-1] != c_tok[-1]:
+        return False
+    q_first, c_first = q_tok[0], c_tok[0]
+    if q_first == c_first:
+        return True
+    if not q_first or not c_first or q_first[0] != c_first[0]:
+        return False
+    # Same initial: accept abbreviations ("pat" vs "patrick") via prefix
+    # OR genuinely close spellings via fuzz.ratio. Reject otherwise.
+    if q_first.startswith(c_first) or c_first.startswith(q_first):
+        return True
+    return fuzz.ratio(q_first, c_first) >= 80
+
 # Tolerance for the actual==line comparison. Lines are quoted in halves or
 # whole numbers, and `actual` for every supported stat is integral or comes
-# from a small integer sum (soccer cards/goals). 1e-9 is comfortably below
+# from a small integer sum. 1e-9 is comfortably below
 # any meaningful difference but absorbs float-precision noise from arithmetic
 # done in `_compute_stat` (e.g. fantasy-point weighting on integers).
 PUSH_TOLERANCE = 1e-9
@@ -346,15 +391,24 @@ class ESPNResultsChecker:
         if not all_matches:
             return None
 
-        def _norm(n): return unidecode.unidecode(n).lower().strip()
-        name_lower = _norm(player_name)
-        
-        best_score  = 0
-        best_stats  = None
-        best_display = None
+        name_lower = _norm_name(player_name)
 
+        # Exact normalized match wins — the only fully-safe disambiguation
+        # when same-surname players (e.g. Evan vs Isaiah Mobley) share a roster.
         for known_name, stats in all_matches.items():
-            score = fuzz.token_sort_ratio(name_lower, _norm(known_name))
+            if _norm_name(known_name) == name_lower:
+                return stats
+
+        # Fuzzy fallback. Restrict candidates to players who pass the strict
+        # same-player gate first; otherwise the highest token_sort_ratio
+        # routinely picks a wrong-but-similar teammate.
+        best_score = 0
+        best_stats = None
+        best_display = None
+        for known_name, stats in all_matches.items():
+            if not _is_same_player(player_name, known_name):
+                continue
+            score = fuzz.token_sort_ratio(name_lower, _norm_name(known_name))
             if score > best_score:
                 best_score = score
                 best_stats = stats
@@ -627,21 +681,6 @@ class ESPNResultsChecker:
         if prop_type == "Blocked Shots":
             return _num("blockedshots", "blk")
 
-        # ── Soccer ──────────────────────────────────────────────
-        if league.upper() == "SOCCER":
-            sog = _num("st", "sog", "shotsongoal")
-            sh  = _num("sh", "shots")
-            gl  = _num("g", "goals")
-            asst = _num("a", "assists")
-            if prop_type.lower() in ("shots on goal", "sog"):
-                return sog
-            if prop_type.lower() == "shots":
-                return sh
-            if prop_type.lower() == "goals":
-                return gl
-            if prop_type.lower() == "assists":
-                return asst
-
         return None
 
     def _fetch_gamelog_stats(self, league: str, player_name: str, target_date: datetime) -> Optional[dict]:
@@ -660,15 +699,23 @@ class ESPNResultsChecker:
             self._gamelog_cache[cache_key] = None
             return None
             
+        # Pick the first ESPN search result whose displayName passes the
+        # strict same-player gate. Without this guard, searching "Evan Mobley"
+        # can return Isaiah Mobley's profile (or any teammate with overlapping
+        # tokens), silently grading the wrong player.
         uid = None
         for res in data.get("results", []):
-            if res.get("type") == "player":
-                for c in res.get("contents", []):
-                    uid = c.get("uid")
+            if res.get("type") != "player":
+                continue
+            for c in res.get("contents", []):
+                cand_uid = c.get("uid")
+                cand_name = c.get("displayName") or c.get("name") or ""
+                if cand_uid and _is_same_player(player_name, cand_name):
+                    uid = cand_uid
                     break
             if uid:
                 break
-                
+
         if not uid or "a:" not in uid:
             self._gamelog_cache[cache_key] = None
             return None
@@ -684,13 +731,8 @@ class ESPNResultsChecker:
         }.get(league.upper())
         
         if not league_path:
-            # For Soccer, the path is often just "soccer" or "soccer/league.id"
-            # UID format: "s:600~a:12345" (no league) or "s:600~l:94~a:12345"
-            if league.upper() == "SOCCER" and uid and "s:600" in uid:
-                league_path = "soccer"
-            else:
-                self._gamelog_cache[cache_key] = None
-                return None
+            self._gamelog_cache[cache_key] = None
+            return None
             
         gl_url = f"https://site.web.api.espn.com/apis/common/v3/sports/{league_path}/athletes/{athlete_id}/gamelog"
         try:

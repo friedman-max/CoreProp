@@ -21,7 +21,6 @@ ACTIVE_LEAGUES = {
     "MLB":   os.getenv("LEAGUE_MLB", "true").lower()   == "true",
     "NHL":   os.getenv("LEAGUE_NHL", "true").lower()   == "true",
     "NCAAB": os.getenv("LEAGUE_NCAAB", "true").lower() == "true",
-    "SOCCER": os.getenv("LEAGUE_SOCCER", "true").lower() == "true",
 }
 
 # FanDuel URLs per league
@@ -40,7 +39,6 @@ PRIZEPICKS_LEAGUE_IDS = {
     "MLB":   2,
     "NHL":   8,
     "NCAAB": 20,   # PrizePicks calls this "CBB" (ID=20); 189 is a defunct alias that returns 0
-    "SOCCER": 82,
 }
 
 # Fuzzy match threshold (0-100)

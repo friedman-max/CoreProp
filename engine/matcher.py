@@ -131,14 +131,9 @@ def match_props(
         key = (pin.league.upper(), pin.prop_type.lower())
         pin_index.setdefault(key, []).append(pin)
 
-    # League-aware alias map: PrizePicks stat names that differ from book prop names
-    # Only apply aliases for specific leagues to avoid cross-league pollution
-    _STAT_ALIASES = {
-        "SOCCER": {
-            "saves": "goalie saves",
-            "goalkeeper saves": "goalie saves",
-        },
-    }
+    # League-aware alias map: PrizePicks stat names that differ from book prop names.
+    # Only apply aliases for specific leagues to avoid cross-league pollution.
+    _STAT_ALIASES: dict[str, dict[str, str]] = {}
 
     results: list[MatchedProp] = []
 

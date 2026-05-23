@@ -610,12 +610,6 @@ tbody tr.selected {
   color: #facc15;
 }
 
-.league-SOC,
-.league-SOCCER {
-  background: rgba(139, 92, 246, 0.15);
-  color: #a78bfa;
-}
-
 .book-tag {
   display: inline-block;
   padding: 1px 5px;

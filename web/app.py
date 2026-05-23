@@ -2751,7 +2751,7 @@ def delete_backtest_slip(slip_id: str, user: dict = Depends(get_current_user)):
 _OBS_PER_LEAGUE_PER_BUCKET_LIMIT = 200          # per league × {resolved, pending}
 _OBS_RESPONSE_HARD_CAP           = 3000         # overall safety net
 
-_OBS_TRACKED_LEAGUES = ("NBA", "WNBA", "MLB", "NHL", "NCAAB", "SOCCER")
+_OBS_TRACKED_LEAGUES = ("NBA", "WNBA", "MLB", "NHL", "NCAAB")
 
 
 def _fetch_observatory_for_league(db, league: str, *, resolved: bool,

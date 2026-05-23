@@ -28,7 +28,7 @@ export const BREAK_EVEN = {
 
 // Display order for league chips. Anything not in this list sorts
 // alphabetically at the tail.
-export const LEAGUE_ORDER = ["NBA", "WNBA", "NCAAB", "MLB", "NHL", "SOCCER"];
+export const LEAGUE_ORDER = ["NBA", "WNBA", "NCAAB", "MLB", "NHL"];
 
 // Minimum raw consensus probability the observatory accepts. Mirrors
 // OBS_MIN_PROB in web/app.py. Used by the sandbox copy that explains

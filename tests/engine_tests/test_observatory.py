@@ -215,11 +215,11 @@ class CollectMatchObservationsTests(unittest.TestCase):
         self.assertEqual(out[0]["side"], "over")
 
     def test_every_league_contributes_when_above_threshold(self):
-        # Cross-league smoke: NBA, WNBA, MLB, NHL, NCAAB, SOCCER all
-        # at prob=0.55. Every league must appear in the output. This
-        # is the protection against accidentally adding a league-level
-        # filter to the ingest path (e.g. "skip non-NBA for now").
-        leagues = ["NBA", "WNBA", "MLB", "NHL", "NCAAB", "SOCCER"]
+        # Cross-league smoke: NBA, WNBA, MLB, NHL, NCAAB all at prob=0.55.
+        # Every league must appear in the output. This is the protection
+        # against accidentally adding a league-level filter to the ingest
+        # path (e.g. "skip non-NBA for now").
+        leagues = ["NBA", "WNBA", "MLB", "NHL", "NCAAB"]
         matches = [
             self._match(league=lg, player=f"P_{lg}", prop="Points", line=20.5)
             for lg in leagues
@@ -369,12 +369,12 @@ class ObservatoryEndpointPerLeagueTests(unittest.TestCase):
     def test_every_league_with_data_appears(self):
         # One row per tracked league. All must come back.
         rows = []
-        for lg in ("NBA", "WNBA", "MLB", "NHL", "NCAAB", "SOCCER"):
+        for lg in ("NBA", "WNBA", "MLB", "NHL", "NCAAB"):
             rows.append(_row(lg, "hit",     f"2025-05-14T10:00:00Z"))
             rows.append(_row(lg, "pending", f"2025-05-14T10:01:00Z"))
         out = self._call_endpoint(_FakeDB(rows))
         leagues = {r["league"] for r in out}
-        self.assertEqual(leagues, {"NBA", "WNBA", "MLB", "NHL", "NCAAB", "SOCCER"})
+        self.assertEqual(leagues, {"NBA", "WNBA", "MLB", "NHL", "NCAAB"})
 
     def test_league_query_param_filters_to_single(self):
         rows = []

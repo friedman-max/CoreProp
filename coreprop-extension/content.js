@@ -340,9 +340,9 @@ async function waitForBoard(timeoutMs = 25000) {
 
 // ---------------------------------------------------------------------------
 // Sport-tab navigation — each leg's `league` maps to a tab labeled with the
-// abbreviation (NBA, MLB, NHL, NCAAB, SOCCER). PP's URL doesn't change per
-// sport, so we must click the tab in the DOM. The tab bar can scroll out of
-// view, so we always scroll to top before clicking.
+// abbreviation (NBA, MLB, NHL, NCAAB). PP's URL doesn't change per sport,
+// so we must click the tab in the DOM. The tab bar can scroll out of view,
+// so we always scroll to top before clicking.
 // ---------------------------------------------------------------------------
 
 const LEAGUE_TAB_LABELS = {
@@ -351,7 +351,6 @@ const LEAGUE_TAB_LABELS = {
   MLB:    ["MLB"],
   NHL:    ["NHL"],
   NCAAB:  ["NCAAB", "CBB"],
-  SOCCER: ["SOCCER", "EPL", "UCL"],   // PP sometimes splits soccer competitions
 };
 
 async function scrollToTop() {

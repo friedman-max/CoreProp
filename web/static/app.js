@@ -1196,7 +1196,6 @@ const _LEAGUE_COLORS = {
   NCAAB:  "#f97316",
   NCAAF:  "#ec4899",
   WNBA:   "#facc15",
-  SOCCER: "#10b981",
   EUROLEAGUE: "#6366f1",
   NBL:    "#06b6d4",
 };
@@ -2245,11 +2244,7 @@ function renderBacktest() {
     const evPct = first.proj_slip_ev_pct != null ? (parseFloat(first.proj_slip_ev_pct) * 100).toFixed(1) + "%" : "—";
 
     let payoutHtml;
-    const isPowerBusted = (first.slip_type || "").toLowerCase() === "power"
-      && slip.legs.some(l => l.result === "miss");
-    if (isPowerBusted && !first.slip_completed) {
-      payoutHtml = `<span class="ev-low" style="font-weight:700;">0x</span> <span class="result-pending">(Pending)</span>`;
-    } else if (first.slip_completed) {
+    if (first.slip_completed) {
       const p = first.slip_payout || 0;
       const cls = p > 1 ? "ev-high" : p > 0 ? "ev-medium" : "ev-low";
       payoutHtml = `<span class="${cls}" style="font-weight:700;">${p}x</span> <span class="bt-slip-hits">(${first.slip_hits}/${first.n_legs})</span>`;
@@ -2283,9 +2278,12 @@ function renderBacktest() {
       </div>`;
     }).join("");
 
-    // Card background: green = won, red = lost or busted power, default = pending
+    // Card background: green = won, red = lost, default = pending.
+    // Symmetric with stats: a slip is neither won nor lost until every leg
+    // grades, so Power busts stay pending visually to avoid biasing the eye
+    // (and matches the headline Slip Hit Rate / ROI denominators).
     const slipWon  = first.slip_completed && (first.slip_payout || 0) > 1;
-    const slipLost = (first.slip_completed && (first.slip_payout || 0) <= 1) || isPowerBusted;
+    const slipLost = first.slip_completed && (first.slip_payout || 0) <= 1;
     const cardStatusCls = slipWon ? "bt-slip-card--won" : slipLost ? "bt-slip-card--lost" : "";
 
     return `<div class="bt-slip-card ${cardStatusCls}" data-slip-id="${slip.slip_id}">
@@ -3451,7 +3449,7 @@ async function loadSandboxStatTypes() {
             );
             return;
         }
-        const leagueOrder = ["NBA", "WNBA", "NCAAB", "MLB", "NHL", "SOCCER"];
+        const leagueOrder = ["NBA", "WNBA", "NCAAB", "MLB", "NHL"];
         const sortedLeagues = Object.keys(groups).sort((a, b) => {
             const ia = leagueOrder.indexOf(a);
             const ib = leagueOrder.indexOf(b);
