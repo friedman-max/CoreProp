@@ -1262,24 +1262,49 @@ function renderCalibrationCurves(isotonic) {
     borderDash: [5, 4],
     borderWidth: 1,
     pointRadius: 0,
+    pointHoverRadius: 0,
     fill: false,
     tension: 0,
     order: 99,
-    // Carried in tooltips; we suppress the identity line's tooltip below.
     _meta: { neff: null, kind: "identity" },
   }];
 
   if (global && global.curve && global.curve.length) {
+    // PAV returns only representative breakpoints (typically <20 points
+    // across the whole [0.30, 1.0] range). Hovering between two
+    // breakpoints would otherwise jump to the nearest one and skip every
+    // value in between. We resample the piecewise-linear interpolant on a
+    // dense grid (0.5% steps from X_MIN to xMax) so the user can hover
+    // any model probability and see the exact mapped observed rate.
+    const sorted = [...global.curve].sort((a, b) => a[0] - b[0]);
+    const interpolate = (px) => {
+      if (px <= sorted[0][0]) return sorted[0][1];
+      if (px >= sorted[sorted.length - 1][0]) return sorted[sorted.length - 1][1];
+      for (let i = 1; i < sorted.length; i++) {
+        const [x0, y0] = sorted[i - 1];
+        const [x1, y1] = sorted[i];
+        if (px <= x1) {
+          const t = x1 === x0 ? 0 : (px - x0) / (x1 - x0);
+          return y0 + t * (y1 - y0);
+        }
+      }
+      return sorted[sorted.length - 1][1];
+    };
+    const STEP = 0.005;
+    const dense = [];
+    for (let x = X_MIN; x <= xMax + 1e-9; x += STEP) {
+      const xr = Math.round(x * 10000) / 10000;
+      dense.push({ x: xr, y: interpolate(xr) });
+    }
     datasets.push({
       type: "line",
       label: "Global",
-      data: global.curve.map(([x, y]) => ({ x, y })),
+      data: dense,
       borderColor: "#ffffff",
       borderWidth: 2.5,
       pointRadius: 0,
       pointHoverRadius: 4,
       fill: false,
-      // PAV is piecewise-linear; tension:0 plots the actual interpolant.
       tension: 0,
       order: 1,
       _meta: { neff: global.n_eff, kind: "global" },
@@ -1297,7 +1322,10 @@ function renderCalibrationCurves(isotonic) {
       borderColor: c,
       borderWidth: 1.75,
       pointRadius: 0,
-      pointHoverRadius: 4,
+      // Per-league lines are decoration only — the user asked for hover
+      // restricted to the Global curve. pointHoverRadius:0 + tooltip
+      // filter (below) keeps them visible but inert.
+      pointHoverRadius: 0,
       fill: false,
       tension: 0,
       order: 2,
@@ -1331,7 +1359,13 @@ function renderCalibrationCurves(isotonic) {
           },
         },
         tooltip: {
-          // Move the n_eff into the tooltip so legend stays clean.
+          // Tooltip restricted to the Global curve. Per-league lines are
+          // visual reference only (different fits with different n_eff
+          // ranges that aren't directly comparable cell-by-cell).
+          filter: (item) => {
+            const ds = item.chart.data.datasets[item.datasetIndex];
+            return !!(ds && ds._meta && ds._meta.kind === "global");
+          },
           callbacks: {
             title: (items) => {
               if (!items.length) return "";
@@ -1340,7 +1374,6 @@ function renderCalibrationCurves(isotonic) {
             label: (ctx) => {
               const ds = ctx.dataset;
               const meta = ds._meta || {};
-              if (meta.kind === "identity") return null; // hide identity line tooltip
               const neff = meta.neff != null ? `  ·  n_eff ${Math.round(meta.neff).toLocaleString()}` : "";
               return `${ds.label}: ${(ctx.parsed.y * 100).toFixed(1)}%${neff}`;
             },

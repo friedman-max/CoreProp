@@ -533,6 +533,19 @@
       <div class="analytics-row">
         <div class="analytics-panel">
           <div class="analytics-panel-header">
+            <h3>Calibration Curves</h3>
+            <span class="analytics-subtitle" id="cal-curves-subtitle">Loading…</span>
+          </div>
+          <div class="chart-wrap" style="height: 360px;"><canvas id="chart-calibration-curves"></canvas></div>
+          <div id="cal-curves-empty" class="empty-msg" style="display:none; padding: 32px 16px; text-align:center;">
+            No fitted curves yet. The hourly model job runs once enough observations have accumulated.
+          </div>
+        </div>
+      </div>
+
+      <div class="analytics-row">
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
             <h3>Per-Prop Calibration</h3>
             <span class="analytics-subtitle">Boost/nerf applied to each (league, prop, side) bucket at p=0.60, based on historical hit rate. 1.00x = no adjustment. n = effective sample size for that bucket.</span>
           </div>
@@ -550,19 +563,6 @@
                 <tr><td colspan="4" class="empty-msg">Waiting for next hourly calibration refit...</td></tr>
               </tbody>
             </table>
-          </div>
-        </div>
-      </div>
-
-      <div class="analytics-row">
-        <div class="analytics-panel">
-          <div class="analytics-panel-header">
-            <h3>Calibration Curves</h3>
-            <span class="analytics-subtitle" id="cal-curves-subtitle">Loading…</span>
-          </div>
-          <div class="chart-wrap" style="height: 360px;"><canvas id="chart-calibration-curves"></canvas></div>
-          <div id="cal-curves-empty" class="empty-msg" style="display:none; padding: 32px 16px; text-align:center;">
-            No fitted curves yet. The hourly model job runs once enough observations have accumulated.
           </div>
         </div>
       </div>
