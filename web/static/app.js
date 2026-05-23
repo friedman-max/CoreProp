@@ -2241,11 +2241,27 @@ function renderBacktest() {
   const completedSlips = btSlips.filter(s => s.completed);
   const pendingSlips = totalSlips - completedSlips.length;
 
-  // Slip hit rate: payout > 1x counts as a "hit"
-  const slipHits = completedSlips.filter(s => s.payout > 1.0).length;
+  // Slip hit rate: payout > 1x counts as a "hit".
+  const winningSlips = completedSlips.filter(s => s.payout > 1.0);
+  const slipHits = winningSlips.length;
   const slipHitRate = completedSlips.length > 0
     ? ((slipHits / completedSlips.length) * 100).toFixed(1) + "%"
     : "—";
+
+  // Effective break-even hit rate. PrizePicks downgrades a 3-power with 1
+  // push to a 2-power (3x) instead of paying the full 6x, so when pushes
+  // are common the average winning payout sits below the nominal N-leg
+  // multiplier and the true break-even hit rate is above 1/N. Surface it
+  // so the user can compare hit rate to the real target instead of mental-
+  // mathing 1/N and being confused when ROI is negative above it.
+  const avgWinPayout = winningSlips.length > 0
+    ? winningSlips.reduce((sum, s) => sum + (s.payout || 0), 0) / winningSlips.length
+    : null;
+  const breakevenRate = avgWinPayout && avgWinPayout > 0 ? (1.0 / avgWinPayout) : null;
+  const slipHitRateBeatsBreakeven =
+    breakevenRate != null && completedSlips.length > 0
+      ? (slipHits / completedSlips.length) > breakevenRate
+      : null;
 
   // Actual ROI: (total payouts - total wagered) / total wagered × 100
   // Each slip is 1 unit wagered
@@ -2296,7 +2312,21 @@ function renderBacktest() {
     $("bt-slips-stat").textContent = `${completedSlips.length} / ${totalSlips}`;
   }
   $("bt-hit-rate").textContent = slipHitRate;
-  $("bt-hit-rate").className = "bt-card-value" + (completedSlips.length > 0 && slipHits / completedSlips.length >= 0.3 ? " positive" : completedSlips.length > 0 ? " negative" : "");
+  // Color the headline against the *true* break-even (push-aware), not a
+  // hardcoded threshold. Falls back to neutral when we have no completed
+  // wins yet to estimate avg payout from.
+  $("bt-hit-rate").className = "bt-card-value" + (
+    slipHitRateBeatsBreakeven == null ? "" :
+    slipHitRateBeatsBreakeven        ? " positive" : " negative"
+  );
+  if ($("bt-hit-rate-breakeven")) {
+    if (breakevenRate != null) {
+      $("bt-hit-rate-breakeven").textContent =
+        `Breakeven ${(breakevenRate * 100).toFixed(1)}%  ·  avg win ${avgWinPayout.toFixed(2)}x`;
+    } else {
+      $("bt-hit-rate-breakeven").textContent = "Breakeven —";
+    }
+  }
   
   if ($("bt-legs-stat")) {
     $("bt-legs-stat").textContent = `${completedLegsCount} / ${totalLegsCount}`;

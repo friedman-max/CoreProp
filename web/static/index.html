@@ -414,8 +414,9 @@
           <div class="bt-card-value" id="bt-slips-stat">0 / 0</div>
         </div>
         <div class="bt-card">
-          <div class="bt-card-label">Slip Hit Rate <span style="font-size: 0.8em; opacity: 0.7;">(Recent 300)</span></div>
+          <div class="bt-card-label" title="Fraction of completed slips that paid >1x. Breakeven shown below accounts for push downgrades — a 3-power with 1 push pays 3x instead of 6x, so the real breakeven hit rate is above 1/N even before vig.">Slip Hit Rate <span style="font-size: 0.8em; opacity: 0.7;">(Recent 300)</span> <span style="font-size:0.85em; opacity:0.8; cursor:help;">ⓘ</span></div>
           <div class="bt-card-value" id="bt-hit-rate">0%</div>
+          <div class="bt-card-subvalue" id="bt-hit-rate-breakeven" style="font-size: 0.65em; opacity: 0.7; margin-top: 2px;">&mdash;</div>
         </div>
         <div class="bt-card">
           <div class="bt-card-label">Legs (Done / Total) <span style="font-size: 0.8em; opacity: 0.7;">(Recent 300)</span></div>
