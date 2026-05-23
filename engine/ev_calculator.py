@@ -87,13 +87,14 @@ class BetResult:
         # global PAV curve combined with the (league, prop, side) curve via
         # κ-shrinkage. Strictly more flexible than the Beta-Binomial bands
         # because PAV borrows monotone signal across neighbouring raw-prob
-        # bins instead of cliffing at hard band edges. 0.999 ceiling is a
-        # numerical guard for downstream log-loss / EV math; the calibrated
-        # number is allowed to push above raw_prob when the data warrants.
-        calibrated_prob = min(
-            _apply_calibration(_calibration_curves, league, prop_type, side, true_prob),
-            0.999,
+        # bins instead of cliffing at hard band edges. The [0.001, 0.999]
+        # window is a numerical guard for downstream log-loss / EV math;
+        # the calibrated number is allowed to push above or below raw_prob
+        # when the data warrants.
+        _raw_calibrated = _apply_calibration(
+            _calibration_curves, league, prop_type, side, true_prob,
         )
+        calibrated_prob = max(0.001, min(0.999, _raw_calibrated))
         self.true_prob = calibrated_prob
         self.true_odds = prob_to_american(calibrated_prob)
 

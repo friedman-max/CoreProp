@@ -680,7 +680,9 @@ def update_isotonic_calibration() -> dict | None:
     # used as a confidence weight on each observation: tight markets
     # contribute more, wide markets less.
     obs_cols  = "league, prop, side, true_prob, raw_true_prob, market_width, result, closing_prob, resolved_at"
-    legs_cols = "league, prop, side, true_prob, raw_true_prob, result, closing_prob, resolved_at"
+    # legs.closing_prob deliberately omitted — see the explanation in the
+    # legs-ingest loop below for why feeding it back is a feedback loop.
+    legs_cols = "league, prop, side, true_prob, raw_true_prob, result, resolved_at"
     obs_rows  = _pull_resolved_since(db, "market_observatory", state.get("hwm_observatory"), obs_cols)
     if not obs_rows:
         # Pre-migration_006 shim — fall back to the original column set.
@@ -692,7 +694,7 @@ def update_isotonic_calibration() -> dict | None:
     if not leg_rows:
         leg_rows = _pull_resolved_since(
             db, "legs", state.get("hwm_legs"),
-            "league, prop, side, true_prob, result, closing_prob, resolved_at",
+            "league, prop, side, true_prob, result, resolved_at",
         )
 
     # ── 3. Fold into accumulators ───────────────────────────────────────
@@ -741,11 +743,21 @@ def update_isotonic_calibration() -> dict | None:
             continue
         ra = r.get("resolved_at")
         ra_dt = _parse_dt(ra)
-        # `legs` rows don't carry market_width yet — neutral confidence (1.0)
-        # until the bet logger starts populating it on the legs path too.
+        # IMPORTANT: closing_prob in the `legs` table is the *calibrated*
+        # value (CLVTracker writes the post-isotonic number so the CLV %
+        # shown to users compares like with like against the stored
+        # true_prob). Feeding that back into the calibrator as a target
+        # creates a feedback loop where the PAV learns raw -> calibrated
+        # instead of raw -> outcome and slowly drifts toward an identity-
+        # through-calibration fixed point. Pass None for the CLV signal
+        # here; market_observatory rows feed the calibrator the *raw*
+        # closing_prob (CLVTracker stages the raw value to that table),
+        # which is the actual clean source.
+        # `legs` rows don't carry market_width yet — neutral confidence
+        # (1.0) until the bet logger starts populating it on this path.
         _ingest_resolved_row(state, league, r.get("prop") or "",
                              (r.get("side") or "").lower(), tp,
-                             r.get("result") or "", r.get("closing_prob"),
+                             r.get("result") or "", None,
                              ra_dt, now, confidence_weight=1.0)
         n_ingested += 1
         if ra and (new_hwm_legs is None or ra > new_hwm_legs):

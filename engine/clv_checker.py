@@ -153,10 +153,15 @@ class CLVTracker:
                 league = row.get("league")
                 prop_for_cal = row.get("prop")
                 side_for_cal = (row.get("side") or "").lower()
-                calibrated_cp = min(
-                    _apply_calibration(self._calibration_table, league, prop_for_cal, side_for_cal, new_cp_val),
-                    0.999,
+                _cp_raw = _apply_calibration(
+                    self._calibration_table, league, prop_for_cal,
+                    side_for_cal, new_cp_val,
                 )
+                # Same [0.001, 0.999] window BetResult uses on the live
+                # path; closing-side math must stay numerically symmetric
+                # with the stored true_prob or CLV % can read negative
+                # on degenerate edge cases.
+                calibrated_cp = max(0.001, min(0.999, _cp_raw))
 
                 # Update only when the calibrated value has moved materially
                 # from whatever was last written.

@@ -61,10 +61,11 @@ def calibrate_for_observation(
     try:
         from engine.ev_calculator import _apply_calibration as _ac
         from engine.ev_calculator import _calibration_curves as _cc
-        # `min(..., 0.999)` mirrors the ceiling clip applied by
-        # BetResult so observatory true_prob can't exceed what the
-        # bet path would have stored.
-        return min(_ac(_cc, league, prop, side, raw_prob), 0.999)
+        # Mirror the [0.001, 0.999] window applied by BetResult so the
+        # observatory's true_prob can't drift outside the range the bet
+        # path would have stored — same downstream log-loss math sees
+        # both surfaces.
+        return max(0.001, min(0.999, _ac(_cc, league, prop, side, raw_prob)))
     except Exception:
         return raw_prob
 
