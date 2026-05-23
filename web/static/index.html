@@ -454,10 +454,22 @@
            the chart to slips inside that window. MAX shows all-time. -->
       <div class="analytics-row">
         <div class="analytics-panel">
-          <div class="analytics-panel-header">
-            <h3>Cumulative P&amp;L (Unit Stake / Slip)</h3>
-            <span class="analytics-subtitle" id="pnl-summary">—</span>
+          <!-- Robinhood-style header: big P&L on the left, default = window
+               total; updates live to "through hovered moment" on hover. -->
+          <div class="pnl-header">
+            <div class="pnl-header-left">
+              <div class="pnl-header-title">Cumulative P&amp;L (Unit Stake / Slip)</div>
+              <div class="pnl-header-total" id="pnl-header-total">—</div>
+              <div class="pnl-header-delta" id="pnl-header-delta">—</div>
+            </div>
+            <div class="pnl-header-right">
+              <div class="pnl-hover-date" id="pnl-hover-date"></div>
+            </div>
           </div>
+          <div class="chart-wrap"><canvas id="chart-pnl"></canvas></div>
+          <!-- Date-range selector: moved below the chart so the header
+               can foreground the headline number, matching the Robinhood
+               layout the user asked for. -->
           <div class="pnl-range-selector" id="pnl-range-selector" role="tablist" aria-label="Date range">
             <button type="button" class="pnl-range-btn" data-range="1D">1D</button>
             <button type="button" class="pnl-range-btn" data-range="1W">1W</button>
@@ -466,13 +478,12 @@
             <button type="button" class="pnl-range-btn" data-range="1Y">1Y</button>
             <button type="button" class="pnl-range-btn" data-range="MAX">MAX</button>
           </div>
-          <div class="chart-wrap"><canvas id="chart-pnl"></canvas></div>
 
           <!-- Window-scoped stats. The Brier / log-loss / hit-rate /
                avg-predicted / delta cards reflect resolved legs with
                slip timestamps inside the selected window. CLV cards
                reflect CLV-tracked legs in the same window. -->
-          <div style="margin-top:12px; font-size:11px; opacity:0.7; text-transform:uppercase; letter-spacing:0.5px;" id="cal-window-label">
+          <div style="margin-top:12px; font-size:11px; opacity:0.7; text-transform:uppercase; letter-spacing:0.5px; display:none;" id="cal-window-label">
             Stats for: <span id="cal-window-range">1M</span>
           </div>
           <div class="bt-summary" id="cal-summary" style="margin-top:8px;">

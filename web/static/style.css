@@ -2399,6 +2399,59 @@ tr.in-backtest.selected {
   color: #fff;
   border-color: var(--accent);
 }
+/* Robinhood-style P&L header: title above a big total, with a small
+   delta line under it. The hover-date label sits in the top-right and
+   only renders while the user is hovering the chart. */
+.pnl-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 4px 0 12px;
+  gap: 16px;
+}
+.pnl-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pnl-header-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.pnl-header-total {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.pnl-header-delta {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pnl-header-delta.positive { color: var(--green); }
+.pnl-header-delta.negative { color: var(--red); }
+.pnl-header-right {
+  display: flex;
+  align-items: flex-start;
+}
+.pnl-hover-date {
+  font-size: 12px;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.12s;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pnl-hover-date.visible { opacity: 1; }
+
 /* P&L date-range selector — Robinhood-style row of pill buttons under the
    chart header. Underline on the active button matches the line color
    (green when ending in profit, red when in the red). */

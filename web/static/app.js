@@ -2787,6 +2787,67 @@ function _formatPnlTick(ms, rangeKey) {
   return d.toLocaleDateString([], { month: "short", year: "2-digit" });
 }
 
+// Crosshair plugin: draws a thin vertical line at the active tooltip's x
+// position. Matches the Robinhood-style "scrub the chart" interaction
+// the user asked for — pairs with the header that updates on hover.
+const _pnlCrosshairPlugin = {
+  id: "pnlCrosshair",
+  afterDraw(chart) {
+    const tt = chart.tooltip;
+    if (!tt || !tt.getActiveElements || !tt.getActiveElements().length) return;
+    const ax = tt.getActiveElements()[0].element.x;
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(ax, chartArea.top);
+    ctx.lineTo(ax, chartArea.bottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(255,255,255,0.35)";
+    ctx.stroke();
+    ctx.restore();
+  },
+};
+
+function _fmtUnits(v) {
+  const sign = v >= 0 ? "+" : "−";
+  return `${sign}${Math.abs(v).toFixed(2)}u`;
+}
+
+function _writePnlHeader(endY, baselineY, hoverTs) {
+  // endY = total P&L for the window (or up to hovered moment when hovering).
+  // baselineY = window's starting cumulative; delta is endY - 0 since the
+  // line is rebased to start at 0 inside the window.
+  const totalEl = $("pnl-header-total");
+  const deltaEl = $("pnl-header-delta");
+  const dateEl  = $("pnl-hover-date");
+  if (totalEl) {
+    const sign = endY >= 0 ? "+" : "−";
+    totalEl.textContent = `${sign}${Math.abs(endY).toFixed(2)}u`;
+  }
+  if (deltaEl) {
+    const winLabel = _pnlRange === "MAX" ? "all-time" : _pnlRange;
+    deltaEl.textContent = `${_fmtUnits(endY)}  ${winLabel}`;
+    deltaEl.classList.toggle("positive", endY >= 0);
+    deltaEl.classList.toggle("negative", endY < 0);
+  }
+  if (dateEl) {
+    if (hoverTs == null) {
+      dateEl.classList.remove("visible");
+      dateEl.textContent = "";
+    } else {
+      const opts = {
+        month: "short", day: "numeric",
+        hour: (_pnlRange === "1D") ? "numeric" : undefined,
+        minute: (_pnlRange === "1D") ? "2-digit" : undefined,
+        year: (_pnlRange === "1Y" || _pnlRange === "MAX") ? "numeric" : undefined,
+      };
+      dateEl.textContent = new Date(hoverTs).toLocaleString([], opts);
+      dateEl.classList.add("visible");
+    }
+  }
+}
+
 function _drawPnlChart() {
   if (!_pnlData) return;
   const ctx = document.getElementById("chart-pnl");
@@ -2798,7 +2859,6 @@ function _drawPnlChart() {
       b.classList.toggle("active", b.dataset.range === _pnlRange));
   }
 
-  const subtitle = $("pnl-summary");
   const ms = _PNL_RANGES[_pnlRange];
   const now = Date.now();
 
@@ -2815,7 +2875,7 @@ function _drawPnlChart() {
 
   if (!allParsed.length) {
     if (_charts.pnl) { _charts.pnl.destroy(); _charts.pnl = null; }
-    if (subtitle) subtitle.textContent = "No resolved slips yet.";
+    _writePnlHeader(0, 0, null);
     return;
   }
 
@@ -2871,51 +2931,44 @@ function _drawPnlChart() {
         // 'before' = each value carries forward until the next event.
         stepped: "before",
         pointRadius: 0,
-        pointHoverRadius: 4,
+        pointHoverRadius: 5,
         pointHoverBackgroundColor: lineColor,
         pointHoverBorderColor: "#0d0f14",
         pointHoverBorderWidth: 2,
         borderWidth: 2,
       }],
     },
+    plugins: [_pnlCrosshairPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
       parsing: false,
-      // Stock-chart hover: tooltip and crosshair point follow the cursor's
-      // x position even when not directly on a data point. Combined with
-      // the stepped line, the tooltip's y is exactly "P&L through this
-      // moment" — the value the cumulative line had at the cursor's x.
-      interaction: {
-        mode: "index",
-        intersect: false,
-        axis: "x",
-      },
-      hover: {
-        mode: "index",
-        intersect: false,
-      },
+      // Stock-chart hover: tooltip's caret follows the cursor's x even
+      // off the data points; combined with the stepped line, the y at
+      // the caret IS "P&L through this moment".
+      interaction: { mode: "index", intersect: false, axis: "x" },
+      hover:       { mode: "index", intersect: false },
       plugins: {
         legend: { display: false },
+        // The on-chart tooltip is fully suppressed (enabled:false) — the
+        // hovered date renders in the header (pnl-hover-date) and the
+        // hovered P&L replaces the big number, both written by the
+        // external callback below. Mirrors the Robinhood interaction
+        // where the chart itself shows just a crosshair + a marker dot.
         tooltip: {
+          enabled: false,
           mode: "index",
           intersect: false,
           axis: "x",
-          displayColors: false,
-          callbacks: {
-            title: (items) => {
-              if (!items.length) return "";
-              return new Date(items[0].parsed.x).toLocaleString([], {
-                month: "short", day: "numeric",
-                hour: _pnlRange === "1D" ? "numeric" : undefined,
-                minute: _pnlRange === "1D" ? "2-digit" : undefined,
-                year: (_pnlRange === "1Y" || _pnlRange === "MAX") ? "numeric" : undefined,
-              });
-            },
-            label: (item) => {
-              const v = item.parsed.y;
-              return `${v >= 0 ? "+" : ""}${v.toFixed(2)}u`;
-            },
+          external: (ctxObj) => {
+            const tt = ctxObj.tooltip;
+            if (!tt || tt.opacity === 0 || !tt.dataPoints || !tt.dataPoints.length) {
+              // Restore the window-total view when the cursor leaves.
+              _writePnlHeader(endY, 0, null);
+              return;
+            }
+            const dp = tt.dataPoints[0];
+            _writePnlHeader(dp.parsed.y, 0, dp.parsed.x);
           },
         },
       },
@@ -2940,13 +2993,8 @@ function _drawPnlChart() {
     },
   });
 
-  // Subtitle: window-specific net change, plus all-time count for context.
-  if (subtitle) {
-    const totalSlips = _pnlData.resolved_slips || 0;
-    const winLabel = _pnlRange === "MAX" ? "all-time" : _pnlRange;
-    const sign = endY >= 0 ? "+" : "";
-    subtitle.textContent = `${winLabel} ${sign}${endY.toFixed(2)}u · ${totalSlips} resolved slips total`;
-  }
+  // Default (not-hovering) state: header shows the window total.
+  _writePnlHeader(endY, 0, null);
 
   // Refresh the stat cards to match the chart's selected window. The
   // cards use the same xMin/xMax bounds as the chart so a number on
