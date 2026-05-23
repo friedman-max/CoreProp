@@ -1233,24 +1233,13 @@ function renderCalibrationCurves(isotonic) {
   canvas.style.display = "";
   if (empty) empty.style.display = "none";
 
-  // Discover the actual x-range across every fitted curve so the axis tracks
-  // the data. We log lines down to 0.30, so the lower bound is fixed there;
-  // the upper bound floats to whatever the highest recorded probability is
-  // (capped at 1.0 for sanity).
+  // Fixed [30%, 100%] on both axes so the identity (perfect-calibration)
+  // line is a true 45° diagonal and curves are comparable to it visually.
+  // Pre-floating the upper bound used to break this — a curve that only
+  // reached 75% would let the diagonal go from (0.30, 0.30) to (0.75,
+  // 0.75) on a non-square chart, which is visually misleading.
   const X_MIN = 0.30;
-  let xMaxObserved = X_MIN;
-  const _scanCurve = (curve) => {
-    if (!curve || !curve.length) return;
-    for (const pt of curve) {
-      const x = Array.isArray(pt) ? pt[0] : pt.x;
-      if (Number.isFinite(x) && x > xMaxObserved) xMaxObserved = x;
-    }
-  };
-  if (global && global.curve) _scanCurve(global.curve);
-  leagueNames.forEach(lg => _scanCurve((leagues[lg] || {}).curve));
-  // Pad slightly so the rightmost point isn't flush with the axis edge,
-  // and clamp to a reasonable display ceiling.
-  const xMax = Math.min(1.0, Math.max(0.85, Math.ceil((xMaxObserved + 0.02) * 20) / 20));
+  const xMax = 1.00;
 
   // Identity (perfect calibration) reference line — drawn first so it sits behind.
   // Using {x,y} parsing for everything so we can mix line types cleanly.
@@ -1356,7 +1345,11 @@ function renderCalibrationCurves(isotonic) {
     plugins: [_crosshairPlugin],
     options: {
       responsive: true,
-      maintainAspectRatio: false,
+      // 1:1 aspect ratio so each axis percentage maps to the same pixel
+      // length — required for the dashed identity line to actually look
+      // like a 45° diagonal.
+      maintainAspectRatio: true,
+      aspectRatio: 1,
       parsing: false,
       interaction: { mode: "nearest", intersect: false, axis: "x" },
       plugins: {
@@ -1410,7 +1403,7 @@ function renderCalibrationCurves(isotonic) {
         },
         y: {
           type: "linear",
-          min: 0.0, max: 1.0,
+          min: X_MIN, max: xMax,
           title: { display: true, text: "Observed hit rate", color: _chartTextColor() },
           ticks: { color: _chartTextColor(), callback: (v) => (v * 100).toFixed(0) + "%" },
           grid: { color: "rgba(255,255,255,0.06)" },
