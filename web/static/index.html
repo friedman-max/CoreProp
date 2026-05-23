@@ -541,7 +541,7 @@
     <!-- ── Observatory view ── -->
     <div class="backtest-view hidden" id="observatory-view">
       <div class="analytics-row">
-        <div class="analytics-panel" style="max-width: 720px; margin: 0 auto;">
+        <div class="analytics-panel" style="max-width: 640px; margin: 0 auto;">
           <div class="analytics-panel-header">
             <div>
               <h3 style="display:inline; margin-right:8px;">Calibration Curves</h3>
@@ -549,7 +549,8 @@
             </div>
             <span class="pnl-hover-date" id="cal-curves-hover-label"></span>
           </div>
-          <div class="chart-wrap" style="aspect-ratio: 1; width: 100%;"><canvas id="chart-calibration-curves"></canvas></div>
+          <div class="chart-wrap" style="aspect-ratio: 1; width: 100%; position: relative;"><canvas id="chart-calibration-curves"></canvas></div>
+          <div class="cal-curves-legend" id="cal-curves-legend"></div>
           <div id="cal-curves-empty" class="empty-msg" style="display:none; padding: 32px 16px; text-align:center;">
             No fitted curves yet. The hourly model job runs once enough observations have accumulated.
           </div>

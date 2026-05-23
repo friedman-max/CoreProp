@@ -1345,29 +1345,21 @@ function renderCalibrationCurves(isotonic) {
     plugins: [_crosshairPlugin],
     options: {
       responsive: true,
-      // 1:1 aspect ratio so each axis percentage maps to the same pixel
-      // length — required for the dashed identity line to actually look
-      // like a 45° diagonal.
-      maintainAspectRatio: true,
-      aspectRatio: 1,
+      // Fill the container (a CSS-driven 1:1 square). With the in-chart
+      // legend removed and balanced padding below, the plot region
+      // inside the canvas is itself square — the only way the dashed
+      // identity line can read as a true 45° diagonal.
+      maintainAspectRatio: false,
+      // Pad top + right to match the axis-title + tick space on bottom
+      // + left. Without this, the plot rectangle is shorter than wide
+      // (~30px difference) and the diagonal tilts.
+      layout: { padding: { top: 12, right: 12, bottom: 0, left: 0 } },
       parsing: false,
       interaction: { mode: "nearest", intersect: false, axis: "x" },
       plugins: {
-        legend: {
-          position: "bottom",
-          labels: {
-            color: _chartTextColor(),
-            boxWidth: 12,
-            padding: 10,
-            usePointStyle: true,
-            // Drop the identity reference from the legend to reduce clutter —
-            // it's self-explanatory from the dashed line on the chart.
-            filter: (item, data) => {
-              const ds = data.datasets[item.datasetIndex];
-              return !(ds && ds._meta && ds._meta.kind === "identity");
-            },
-          },
-        },
+        // In-chart legend disabled; the custom HTML legend below the
+        // canvas (built post-creation) keeps the plot region square.
+        legend: { display: false },
         // On-chart tooltip suppressed. Hovered values render in the
         // panel header (cal-curves-hover-label) Robinhood-style.
         tooltip: {
@@ -1418,6 +1410,22 @@ function renderCalibrationCurves(isotonic) {
   const fittedTxt = fitted ? fitted.toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "—";
   if (sub) {
     sub.textContent = `${leagueNames.length} league curve${leagueNames.length !== 1 ? "s" : ""} · ${propBucketCount} (league, prop) bucket${propBucketCount !== 1 ? "s" : ""} · last fit ${fittedTxt}`;
+  }
+
+  // Custom HTML legend. Built here rather than via Chart.js because the
+  // in-chart legend ate enough vertical space to make the plot region
+  // non-square, which broke the 45° diagonal we explicitly wanted.
+  const legendEl = document.getElementById("cal-curves-legend");
+  if (legendEl) {
+    const items = datasets
+      .filter(d => d._meta && d._meta.kind !== "identity")
+      .map(d => `
+        <span class="cal-curves-legend-item">
+          <span class="cal-curves-legend-swatch" style="background:${d.borderColor};"></span>
+          ${escapeHtml(d.label)}
+        </span>
+      `).join("");
+    legendEl.innerHTML = items;
   }
 }
 
