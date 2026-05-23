@@ -39,8 +39,14 @@ def _load_resolved_rows(user_jwt: str) -> list[dict]:
         # leg's worth of CLV/odds/timestamp baggage into RAM.
         cols = "result, true_prob, player, prop, side, league, slip_id"
         res = db.table("legs").select(cols).in_("result", ["won", "win", "hit", "1", "lost", "loss", "miss", "0"]).execute()
+        from engine.constants import is_excluded_league
         rows = []
         for r in res.data:
+            # Skip legacy legs whose league has since been removed (e.g.
+            # soccer). Otherwise their resolved outcomes silently feed
+            # the per-league calibration display.
+            if is_excluded_league(r.get("league")):
+                continue
             outcome = 1 if str(r.get("result")).lower() in ("won", "win", "hit", "1") else 0
             try:
                 true_prob = float(r.get("true_prob", 0))
@@ -252,10 +258,15 @@ def evaluate_analytics(user_jwt: str) -> dict:
         except Exception as exc:
             logger.warning("Analytics: slip timestamp fetch failed: %s", exc)
 
+    from engine.constants import is_excluded_league
     _RESOLVED = {"won", "win", "hit", "1", "lost", "loss", "miss", "0"}
     rows: list[dict] = []
     resolved_legs_with_ts: list[dict] = []
     for leg in all_legs:
+        # Drop legs from excluded leagues (e.g. soccer) so historical
+        # rows can't surface in the per-league analytics breakdowns.
+        if is_excluded_league(leg.get("league")):
+            continue
         r = str(leg.get("result") or "").lower()
         if r not in _RESOLVED:
             continue

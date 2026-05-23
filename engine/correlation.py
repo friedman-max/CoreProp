@@ -378,7 +378,14 @@ def load_correlation_map() -> dict:
 
     if payload is None:
         return {}
-    return payload.get("buckets", {}) or {}
+    buckets = payload.get("buckets", {}) or {}
+    # Strip any bucket whose key starts with an excluded league. Bucket
+    # keys are "<LEAGUE>|<base>[|<prop_a>|<prop_b>]" — see _bucket_key.
+    from engine.constants import is_excluded_league
+    return {
+        k: v for k, v in buckets.items()
+        if not is_excluded_league(k.split("|", 1)[0] if "|" in k else k)
+    }
 
 
 def reload_correlation() -> int:

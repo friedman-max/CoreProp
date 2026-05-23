@@ -43,7 +43,10 @@ import pandas as pd
 import numpy as np
 
 from engine.database import get_db
-from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS, OPTIMAL_IMPLIED_DECIMAL, BREAK_EVEN
+from engine.constants import (
+    POWER_PAYOUTS, FLEX_PAYOUTS, OPTIMAL_IMPLIED_DECIMAL, BREAK_EVEN,
+    EXCLUDED_LEAGUES,
+)
 from engine.isotonic_calibration import load_isotonic_calibration, calibrate
 from engine.backtest import (
     make_bet_key, make_game_key, make_leg_key,
@@ -127,6 +130,13 @@ class StrategyTester:
         is the pre-calibration consensus probability we re-calibrate
         with the current curves, and `side` is needed for the per-(L,
         prop, side) bucket lookup."""
+        from engine.constants import is_excluded_league
+        # Apply the league exclusion list before the query so even raw API
+        # callers that pass `leagues=["SOCCER"]` can't dredge up legacy
+        # observatory rows. When the caller passes no leagues at all (=
+        # "all leagues"), we still filter post-fetch below; the in_()
+        # clause only narrows positively.
+        leagues = [lg for lg in (leagues or []) if not is_excluded_league(lg)]
         # Three column tiers, tried in order on the first page. The fallback
         # is graceful per-migration: if migration_007 (team) isn't applied
         # we still get raw_true_prob/market_width from migration_006; if
@@ -246,7 +256,12 @@ class StrategyTester:
                     if not full:
                         done = True
                 offset += CONCURRENCY * PAGE
-        return pd.DataFrame(all_rows)
+        df = pd.DataFrame(all_rows)
+        if not df.empty and "league" in df.columns:
+            # Belt-and-suspenders: drop excluded leagues post-fetch too,
+            # since `leagues=[]` (= all leagues) bypasses the in_() guard.
+            df = df[~df["league"].fillna("").str.upper().isin(EXCLUDED_LEAGUES)]
+        return df
 
 
     # ── Calibration ──────────────────────────────────────────────────────

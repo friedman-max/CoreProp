@@ -190,6 +190,12 @@ def update_sharpness_weights() -> dict | None:
             continue
 
         league = (r.get("league") or "").strip().upper() or None
+        # Skip legacy observatory rows whose league has since been excluded
+        # (e.g. soccer). They'd otherwise distort the per-(book, league)
+        # bias buckets even though no live scraper still feeds the league.
+        from engine.constants import is_excluded_league
+        if is_excluded_league(league):
+            continue
         prop   = (r.get("prop") or "").strip() or None
 
         for book_name, book_p in books.items():

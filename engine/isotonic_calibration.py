@@ -1033,6 +1033,11 @@ def export_heatmap() -> dict:
         except Exception as exc:
             logger.warning("Heatmap DB fallback failed: %s", exc)
 
+    # Strip rows belonging to excluded leagues (e.g. soccer) so stale
+    # state from before a league was de-listed can't surface here.
+    from engine.constants import is_excluded_league
+    rows = [r for r in rows if not is_excluded_league(r.get("league"))]
+
     rows.sort(key=lambda r: (r["league"], -r["n_eff"]))
 
     return {
@@ -1085,10 +1090,19 @@ def load_isotonic_calibration() -> dict:
             "n_obs": int(level.get("n_obs") or 0),
         }
 
+    # Strip excluded leagues at load time so stale curves fitted before a
+    # league was de-listed (e.g. soccer) can't surface in the UI or in
+    # downstream calibration lookups. The props map keys on
+    # "<league>|<prop>|<side>" so the same filter applies there.
+    from engine.constants import is_excluded_league
+    leagues_raw = (raw.get("leagues") or {})
+    props_raw   = (raw.get("props") or {})
     return {
         "global":  _normalize(raw.get("global")),
-        "leagues": {lg: _normalize(v) for lg, v in (raw.get("leagues") or {}).items()},
-        "props":   {k: _normalize(v) for k, v in (raw.get("props") or {}).items()},
+        "leagues": {lg: _normalize(v) for lg, v in leagues_raw.items()
+                    if not is_excluded_league(lg)},
+        "props":   {k: _normalize(v) for k, v in props_raw.items()
+                    if not is_excluded_league((k.split("|", 1)[0]) if "|" in k else k)},
         "fitted_at": raw.get("fitted_at"),
         "config":  raw.get("config", {}),
     }

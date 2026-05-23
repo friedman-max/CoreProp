@@ -40,6 +40,22 @@ FLEX_PAYOUTS = {
 OPTIMAL_IMPLIED_DECIMAL = 1.849
 OPTIMAL_BREAK_EVEN = 1.0 / OPTIMAL_IMPLIED_DECIMAL  # ≈ 0.54083
 
+# Leagues that must NEVER surface in any user-facing view, even if old rows
+# (observatory, calibration JSON, correlation map, sharpness state) still
+# contain them. Filter at every read path so legacy data can't leak back
+# into the UI.
+#
+# Adding a league here is the single source of truth — `is_excluded_league`
+# below and the per-module filters that consult it.
+EXCLUDED_LEAGUES = frozenset({"SOCCER"})
+
+
+def is_excluded_league(league: str | None) -> bool:
+    """True if `league` belongs to the EXCLUDED_LEAGUES set (case-insensitive)."""
+    if not league:
+        return False
+    return league.strip().upper() in EXCLUDED_LEAGUES
+
 # Prop type normalization: FanDuel label → PrizePicks stat_type label
 # Keys are league names, values are nested maps of {FanDuel label: PrizePicks label}
 PROP_TYPE_MAP = {

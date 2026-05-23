@@ -2794,6 +2794,11 @@ def get_observatory_data(league: Optional[str] = None):
         if not db:
             return []
 
+        from engine.constants import is_excluded_league
+        if league and is_excluded_league(league):
+            # Excluded leagues (e.g. soccer) must never return rows even
+            # if an explicit query param requests them.
+            return []
         leagues = [league.upper()] if league else list(_OBS_TRACKED_LEAGUES)
         per_bucket = _OBS_PER_LEAGUE_PER_BUCKET_LIMIT
 
