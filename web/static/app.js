@@ -1326,33 +1326,55 @@ function renderCalibrationCurves(isotonic) {
   // tooltip can filter to it without re-scanning every call.
   const globalIdx = datasets.findIndex(d => d._meta && d._meta.kind === "global");
   const hoverLabel = document.getElementById("cal-curves-hover-label");
+
+  // Default reading shown both on first paint AND whenever the cursor
+  // leaves the chart. Pick the densified Global curve's last point —
+  // the highest model probability we have a fit for, which is the most
+  // useful "headline" value to show by default (mirrors how Robinhood
+  // defaults to the latest price when not hovering).
+  let defaultModel = null, defaultObs = null;
+  if (globalIdx >= 0) {
+    const arr = datasets[globalIdx].data;
+    if (arr && arr.length) {
+      const last = arr[arr.length - 1];
+      defaultModel = last.x;
+      defaultObs   = last.y;
+    }
+  }
+
   const _writeCurvesHover = (modelP, obsP) => {
     if (!hoverLabel) return;
+    // Fall back to the default reading when called with null (= cursor
+    // outside chart). The label is never blanked — there's no other
+    // surface that shows numeric values for this chart.
     if (modelP == null) {
-      hoverLabel.classList.remove("visible");
-      hoverLabel.textContent = "";
+      modelP = defaultModel;
+      obsP   = defaultObs;
+    }
+    if (modelP == null) {
+      hoverLabel.textContent = "Hover the curve for values";
       return;
     }
     hoverLabel.textContent =
       `Model ${(modelP * 100).toFixed(1)}%  ·  Observed ${(obsP * 100).toFixed(1)}%`;
-    hoverLabel.classList.add("visible");
   };
+  // Paint the default immediately so the label has content before any
+  // hover event fires.
+  _writeCurvesHover(null, null);
 
   if (_charts.calibrationCurves) _charts.calibrationCurves.destroy();
   _charts.calibrationCurves = new Chart(canvas, {
     type: "line",
     data: { datasets },
-    plugins: [_crosshairPlugin],
+    plugins: [_crosshairPlugin, _squarePlotRegionPlugin],
     options: {
       responsive: true,
-      // Fill the container (a CSS-driven 1:1 square). With the in-chart
-      // legend removed and balanced padding below, the plot region
-      // inside the canvas is itself square — the only way the dashed
-      // identity line can read as a true 45° diagonal.
+      // Fill the wide container. The `squarePlotRegion` plugin below
+      // adds dynamic horizontal padding so the plot rectangle itself
+      // stays square (height-driven) even though the canvas is much
+      // wider — this is what keeps the dashed identity line a true 45°
+      // diagonal while letting the panel span full width.
       maintainAspectRatio: false,
-      // Pad top + right to match the axis-title + tick space on bottom
-      // + left. Without this, the plot rectangle is shorter than wide
-      // (~30px difference) and the diagonal tilts.
       layout: { padding: { top: 12, right: 12, bottom: 0, left: 0 } },
       parsing: false,
       interaction: { mode: "nearest", intersect: false, axis: "x" },
@@ -2832,6 +2854,49 @@ const _crosshairPlugin = {
 };
 // Alias kept for any older call site that still imports the old name.
 const _pnlCrosshairPlugin = _crosshairPlugin;
+
+// squarePlotRegion: enforce a square plot rectangle inside a non-square
+// canvas by padding the layout horizontally. Runs in `beforeLayout` so
+// Chart.js incorporates the padding into the axis scale, and only fires
+// when the chart area would otherwise be wider than tall. Without this
+// plugin, a full-width calibration-curves canvas (e.g. 1200×480) gives
+// a wide-rectangle plot region and the 45° diagonal tilts visibly.
+const _squarePlotRegionPlugin = {
+  id: "squarePlotRegion",
+  beforeLayout(chart) {
+    const h = chart.height || (chart.canvas && chart.canvas.clientHeight) || 0;
+    const w = chart.width  || (chart.canvas && chart.canvas.clientWidth)  || 0;
+    if (h <= 0 || w <= 0) return;
+    const AXIS_RESERVE_Y = 52;     // x-axis title + ticks at the bottom
+    const AXIS_RESERVE_X = 56;     // y-axis title + ticks on the left
+    const plotH = Math.max(0, h - AXIS_RESERVE_Y);
+    const plotW = Math.max(0, w - AXIS_RESERVE_X);
+    const opts  = chart.options.layout = chart.options.layout || {};
+    const pad   = opts.padding = opts.padding || {};
+    // Snapshot user-supplied padding the first time so subsequent
+    // resizes don't accumulate on top of the previous run.
+    if (pad.__base == null) {
+      pad.__base = {
+        top:    Number(pad.top    || 0),
+        right:  Number(pad.right  || 0),
+        bottom: Number(pad.bottom || 0),
+        left:   Number(pad.left   || 0),
+      };
+    }
+    if (plotW <= plotH) {
+      // No squaring needed at this size — restore base padding so a
+      // window-shrink doesn't leave stale extra padding from earlier.
+      Object.assign(pad, pad.__base);
+      return;
+    }
+    const extra = plotW - plotH;
+    const each  = Math.floor(extra / 2);
+    pad.top    = pad.__base.top;
+    pad.bottom = pad.__base.bottom;
+    pad.left   = pad.__base.left  + each;
+    pad.right  = pad.__base.right + each;
+  },
+};
 
 function _fmtUnits(v) {
   const sign = v >= 0 ? "+" : "−";

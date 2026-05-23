@@ -2469,6 +2469,11 @@ tr.in-backtest.selected {
   font-variant-numeric: tabular-nums;
 }
 .pnl-hover-date.visible { opacity: 1; }
+/* Always-visible variant: used by the calibration curves chart where
+   the label is the *only* surface that shows the numeric Model/Observed
+   pair (the in-chart tooltip is suppressed). Keep it visible at all
+   times so the user is never staring at a curve with no numbers. */
+.pnl-hover-date--always { opacity: 1 !important; }
 
 /* P&L date-range selector — Robinhood-style row of pill buttons under the
    chart header. Underline on the active button matches the line color
