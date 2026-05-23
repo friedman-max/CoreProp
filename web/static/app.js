@@ -1266,9 +1266,17 @@ function renderCalibrationCurves(isotonic) {
     // dense grid (0.5% steps from X_MIN to xMax) so the user can hover
     // any model probability and see the exact mapped observed rate.
     const sorted = [...global.curve].sort((a, b) => a[0] - b[0]);
+    const xLo = sorted[0][0];
+    const xHi = sorted[sorted.length - 1][0];
+    // Strict in-range interpolant. Returns null outside [xLo, xHi]
+    // rather than clamping to the endpoint value — clamping created
+    // a flat tail (e.g. "Model 100% → Observed 99.3%") for a region
+    // the calibrator has no fit for, which was misleading on hover
+    // and let the line appear to extend past the data.
     const interpolate = (px) => {
-      if (px <= sorted[0][0]) return sorted[0][1];
-      if (px >= sorted[sorted.length - 1][0]) return sorted[sorted.length - 1][1];
+      if (px < xLo - 1e-9 || px > xHi + 1e-9) return null;
+      if (px <= xLo) return sorted[0][1];
+      if (px >= xHi) return sorted[sorted.length - 1][1];
       for (let i = 1; i < sorted.length; i++) {
         const [x0, y0] = sorted[i - 1];
         const [x1, y1] = sorted[i];
@@ -1277,7 +1285,7 @@ function renderCalibrationCurves(isotonic) {
           return y0 + t * (y1 - y0);
         }
       }
-      return sorted[sorted.length - 1][1];
+      return null;
     };
     const STEP = 0.005;
     const dense = [];
@@ -1295,6 +1303,10 @@ function renderCalibrationCurves(isotonic) {
       pointHoverRadius: 4,
       fill: false,
       tension: 0,
+      // Don't bridge null gaps — the line must visibly stop at the
+      // edges of the fitted range instead of extending across regions
+      // we have no data for.
+      spanGaps: false,
       order: 1,
       _meta: { neff: global.n_eff, kind: "global" },
     });
@@ -1328,30 +1340,36 @@ function renderCalibrationCurves(isotonic) {
   const hoverLabel = document.getElementById("cal-curves-hover-label");
 
   // Default reading shown both on first paint AND whenever the cursor
-  // leaves the chart. Pick the densified Global curve's last point —
-  // the highest model probability we have a fit for, which is the most
-  // useful "headline" value to show by default (mirrors how Robinhood
-  // defaults to the latest price when not hovering).
+  // leaves the chart. Pick the *last point with a non-null observed
+  // value* — i.e. the highest model probability the calibrator
+  // actually has a fit for. Earlier "last point of dense array"
+  // could land on a null tail (model_p in a range with no fit),
+  // showing a meaningless default.
   let defaultModel = null, defaultObs = null;
   if (globalIdx >= 0) {
     const arr = datasets[globalIdx].data;
     if (arr && arr.length) {
-      const last = arr[arr.length - 1];
-      defaultModel = last.x;
-      defaultObs   = last.y;
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (arr[i].y != null) {
+          defaultModel = arr[i].x;
+          defaultObs   = arr[i].y;
+          break;
+        }
+      }
     }
   }
 
   const _writeCurvesHover = (modelP, obsP) => {
     if (!hoverLabel) return;
-    // Fall back to the default reading when called with null (= cursor
-    // outside chart). The label is never blanked — there's no other
-    // surface that shows numeric values for this chart.
-    if (modelP == null) {
+    // Treat both "cursor outside chart" and "cursor in a no-fit
+    // region" identically: fall back to the default headline so the
+    // user never sees a phantom Observed % for a region we don't
+    // actually have data for.
+    if (modelP == null || obsP == null) {
       modelP = defaultModel;
       obsP   = defaultObs;
     }
-    if (modelP == null) {
+    if (modelP == null || obsP == null) {
       hoverLabel.textContent = "Hover the curve for values";
       return;
     }
