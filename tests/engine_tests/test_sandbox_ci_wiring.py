@@ -137,6 +137,18 @@ class FrontendWiringTests(unittest.TestCase):
         self.assertIn("function _bootstrapSandbox(", _APP_JS,
             "_bootstrapSandbox missing — date-range filters would lose CI")
 
+    def test_be_hint_element_exists(self):
+        self.assertIn('id="sb-prob-be-hint"', _INDEX_HTML,
+            "BE hint placeholder missing; user has no signal when min_prob is below the slip type's break-even")
+
+    def test_initSandbox_auto_snaps_prob_to_BE(self):
+        # The auto-snap on init is what fixes "the sim never produces
+        # slips on the default settings" — without it the slider sits
+        # at 54.1% but 2-Power BE is 57.74%, so every run errors.
+        for needle in ("sbSnapProbToBE", "sbCurrentBE", "sbProbIsCustom"):
+            self.assertIn(needle, _APP_JS,
+                f"Sandbox slider auto-snap helper {needle!r} missing")
+
     def test_filter_function_recomputes_ci(self):
         # _filterSandboxData must call _bootstrapSandbox so a date-range
         # toggle replaces the stale full-window CI with one matching the

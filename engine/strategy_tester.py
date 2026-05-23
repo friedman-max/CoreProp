@@ -961,7 +961,13 @@ class StrategyTester:
             df = df[df["calibrated_prob"] >= config.min_prob]
             funnel["after_min_prob"] = len(df)
             if df.empty:
-                return {"error": "No legs above the calibrated probability threshold.", "funnel": funnel}
+                return {
+                    "error": (
+                        f"No legs above Min True Prob {config.min_prob*100:.1f}%. "
+                        f"Try lowering Min True Prob or picking more leagues."
+                    ),
+                    "funnel": funnel,
+                }
 
             # 6. Build slips.
             #
@@ -1154,10 +1160,47 @@ class StrategyTester:
                 )
 
             if not sim_slips:
-                return {
-                    "error": f"Could not form any {config.slip_size}-leg slips from history.",
-                    "funnel": funnel,
-                }
+                # Diagnose the *why* using the funnel so the user sees an
+                # actionable error instead of a one-liner. The dominant
+                # failure mode in production is the BREAK_EVEN gate: legs
+                # pass the min_prob filter but every formed slip's
+                # average prob lands below the slip type's break-even
+                # (e.g. min_prob=54.1% but 2-Power BE=57.74%), so every
+                # tick is silently rejected. Without this diagnosis the
+                # user has no way to know to raise min_prob.
+                be = BREAK_EVEN.get((str(config.slip_size), config.slip_type.lower()))
+                be_pct = f"{be * 100:.2f}%" if be else "—"
+                after_min = funnel.get("after_min_prob", 0)
+                ticks_no_valid = funnel.get("ticks_no_valid_slip", 0)
+                ticks_no_pool  = funnel.get("ticks_without_pool", 0)
+                ticks_total    = funnel.get("distinct_scrape_ticks", 0)
+
+                if after_min == 0:
+                    msg = (
+                        f"No legs above Min True Prob {config.min_prob*100:.1f}%. "
+                        f"Try lowering Min True Prob."
+                    )
+                elif ticks_no_valid > 0 and ticks_total > 0 and ticks_no_valid == ticks_total:
+                    msg = (
+                        f"Built {ticks_total} candidate slip(s) but every one was "
+                        f"rejected: average leg prob fell below the {config.slip_size}-leg "
+                        f"{config.slip_type.title()} break-even ({be_pct}) or slip EV "
+                        f"was <= 0. Raise Min True Prob to at least {be_pct}, or pick "
+                        f"a slip size with a lower break-even (3-Power BE = 55.03%)."
+                    )
+                elif ticks_no_pool > 0 and ticks_total > 0 and ticks_no_pool == ticks_total:
+                    msg = (
+                        f"No tick had {config.slip_size} co-available legs. "
+                        f"Pick more leagues or wait for additional scrape data."
+                    )
+                else:
+                    msg = (
+                        f"Could not form any {config.slip_size}-leg slips from history. "
+                        f"Filters left {after_min} candidate legs across "
+                        f"{ticks_total} ticks; {ticks_no_valid} were rejected by the "
+                        f"break-even / EV gate ({be_pct})."
+                    )
+                return {"error": msg, "funnel": funnel}
 
             # Sort chronologically before any time-series rebuilding.
             def _ts(s):

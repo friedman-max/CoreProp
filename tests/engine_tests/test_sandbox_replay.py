@@ -273,5 +273,86 @@ class ReplayBreakEvenTests(unittest.TestCase):
         self.assertEqual(slips, [])
 
 
+class ReplayErrorDiagnosticsTests(unittest.TestCase):
+    """Regression: the "Could not form any 2-leg slips from history" error
+    was a one-liner with no diagnosis, even when the funnel made the cause
+    obvious. In production the dominant failure mode is the BREAK_EVEN
+    gate — user picks min_prob=54.1% expecting slips, but 2-Power
+    requires avg prob >= 57.74%, so every formed slip is silently
+    rejected. The error now names the gate and the threshold to raise to."""
+
+    def _run_at_prob(self, true_prob, min_prob, slip_size=2, slip_type="power"):
+        import os
+        from unittest.mock import patch
+        import pandas as pd
+        from engine.strategy_tester import StrategyConfig, StrategyTester
+        os.environ.setdefault("SUPABASE_URL", "http://localhost")
+        os.environ.setdefault("SUPABASE_SERVICE_KEY", "test")
+        os.environ.setdefault("SUPABASE_ANON_KEY", "test")
+        t0 = datetime(2026, 5, 22, 12, 0, 23, tzinfo=timezone.utc)
+        game = datetime(2026, 5, 22, 19, 0, tzinfo=timezone.utc)
+        rows = []
+        # 40 ticks × 6 legs each, all at the same true_prob so we can
+        # control whether the BE gate fires.
+        for i in range(40):
+            t = t0 + timedelta(hours=i)
+            for j in range(6):
+                rows.append({
+                    "result": "hit" if (i + j) % 3 != 2 else "miss",
+                    "prop": "Points", "line": 20.5,
+                    "true_prob": true_prob, "raw_true_prob": true_prob,
+                    "side": "over" if j % 2 == 0 else "under",
+                    "game_start": game.isoformat(),
+                    "game_start_dt": pd.Timestamp(game),
+                    "league": "NBA", "player": f"P{i}_{j}",
+                    "market_width": 4.0, "team": f"T{j % 4}",
+                    "first_seen_at": t.isoformat(),
+                    "last_seen_at":  (t + timedelta(minutes=3)).isoformat(),
+                })
+        df = pd.DataFrame(rows)
+        tester = StrategyTester.__new__(StrategyTester)
+        tester.db = object()
+        tester._curves = {}
+        with patch.object(StrategyTester, "_fetch_resolved_observatory",
+                          return_value=df), \
+             patch.object(tester, "_apply_current_calibration",
+                          side_effect=lambda d: d.assign(
+                              calibrated_prob=pd.to_numeric(d["true_prob"])
+                          )):
+            return tester.run_simulation(StrategyConfig(
+                leagues=["NBA"], min_prob=min_prob,
+                slip_size=slip_size, slip_type=slip_type,
+                bet_size=1.0, use_kelly=False,
+                slip_strategy="live_replay", bootstrap=False,
+            ))
+
+    def test_below_break_even_error_names_the_gate(self):
+        # min_prob 54.1% but 2-Power BE = 57.74%; legs at calibrated 0.55
+        # pass the filter, every formed slip's avg = 0.55 < 0.5774 → all rejected.
+        res = self._run_at_prob(true_prob=0.55, min_prob=0.541)
+        self.assertIn("error", res)
+        err = res["error"]
+        self.assertIn("57.74%", err,
+            f"Error must name the actual break-even threshold; got: {err}")
+        self.assertIn("Raise Min True Prob", err,
+            f"Error must suggest the user action; got: {err}")
+        self.assertIn("rejected", err.lower(),
+            f"Error must say slips were rejected (not just absent); got: {err}")
+
+    def test_at_break_even_with_qualifying_legs_recovers(self):
+        # Legs at 0.60 > BE 0.5774 → slips should actually form.
+        res = self._run_at_prob(true_prob=0.60, min_prob=0.578)
+        self.assertNotIn("error", res,
+            f"Expected slips at min_prob=0.578 with 0.60 legs; got: {res.get('error')}")
+        self.assertGreater(res["summary"]["total_slips"], 0)
+
+    def test_min_prob_above_data_returns_filter_error(self):
+        # All legs at 0.55 but min_prob 0.60 → after_min_prob = 0
+        res = self._run_at_prob(true_prob=0.55, min_prob=0.60)
+        self.assertIn("error", res)
+        self.assertIn("Min True Prob", res["error"])
+        self.assertIn("lower", res["error"].lower())
+
+
 if __name__ == "__main__":
     unittest.main()

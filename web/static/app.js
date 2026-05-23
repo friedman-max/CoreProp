@@ -3531,12 +3531,74 @@ function initSandbox() {
         });
     });
 
-    // 2. Prob range slider
+    // 2. Prob range slider.
+    // The slider's value tracks user intent. The BE hint below shows the
+    // *required* prob for the current slip type/size — slips with avg
+    // prob below this are silently rejected by the simulator's BE gate,
+    // which is the dominant "no slips formed" failure mode in production.
     const probRange = $("sb-range-prob");
     const probLabel = $("sb-val-prob");
+    const probBeHint = $("sb-prob-be-hint");
+    const selectType = $("sb-select-type");
+    const selectSize = $("sb-select-size");
+
+    // Tracks whether the user has manually moved the slider. If they
+    // haven't, we keep auto-syncing to the slip type's BE so changing
+    // slip type/size never leaves the user in a "no slips" state by
+    // default.
+    let sbProbIsCustom = false;
+
+    const sbCurrentBE = () => {
+        const sz = selectSize ? selectSize.value : "2";
+        const ty = selectType ? selectType.value : "power";
+        return SLIP_BREAK_EVEN[`${sz},${ty}`] ?? null;
+    };
+
+    const sbUpdateBEHint = () => {
+        if (!probBeHint) return;
+        const be = sbCurrentBE();
+        if (be == null) {
+            probBeHint.textContent = "";
+            return;
+        }
+        const cur = probRange ? parseFloat(probRange.value) : NaN;
+        const target = (be * 100).toFixed(2);
+        if (Number.isFinite(cur) && cur < be - 1e-6) {
+            probBeHint.innerHTML =
+                `Break-even <strong>${target}%</strong> — slips below this are rejected. ` +
+                `<a href="#" id="sb-prob-be-snap" style="color:var(--accent); text-decoration:underline;">Set to BE</a>`;
+        } else {
+            probBeHint.textContent = `Break-even ${target}% (you're at or above)`;
+        }
+    };
+
+    const sbSnapProbToBE = () => {
+        if (!probRange) return;
+        const be = sbCurrentBE();
+        if (be == null) return;
+        const v = Math.max(parseFloat(probRange.min) || 0.50,
+                           Math.min(parseFloat(probRange.max) || 0.60, be));
+        probRange.value = String(v);
+        if (probLabel) probLabel.textContent = (v * 100).toFixed(1) + "%";
+        sbProbIsCustom = false;
+        sbUpdateBEHint();
+    };
+
     if (probRange && probLabel) {
         probRange.addEventListener("input", (e) => {
+            sbProbIsCustom = true;
             probLabel.textContent = (parseFloat(e.target.value) * 100).toFixed(1) + "%";
+            sbUpdateBEHint();
+        });
+    }
+
+    // Delegate clicks on the dynamically-rendered "Set to BE" link.
+    if (probBeHint) {
+        probBeHint.addEventListener("click", (e) => {
+            const a = e.target.closest("#sb-prob-be-snap");
+            if (!a) return;
+            e.preventDefault();
+            sbSnapProbToBE();
         });
     }
 
@@ -3544,22 +3606,32 @@ function initSandbox() {
     //    - 2-leg is always selectable.
     //    - Selecting 2-leg while Flex is active auto-switches type → Power.
     //    - Switching to Flex while size=2 auto-bumps size → 3 (allow the switch).
-    const selectType = $("sb-select-type");
-    const selectSize = $("sb-select-size");
     if (selectType && selectSize) {
         const opt2 = selectSize.querySelector('option[value="2"]');
         if (opt2) opt2.disabled = false;
+        const onSlipChange = () => {
+            // Default: auto-snap the slider to the new slip type's BE so
+            // a fresh user can hit Run without the sim returning "0 slips".
+            if (!sbProbIsCustom) sbSnapProbToBE();
+            sbUpdateBEHint();
+        };
         selectType.addEventListener("change", () => {
             if (selectType.value === "flex" && selectSize.value === "2") {
                 selectSize.value = "3";
             }
+            onSlipChange();
         });
         selectSize.addEventListener("change", () => {
             if (selectSize.value === "2" && selectType.value === "flex") {
                 selectType.value = "power";
             }
+            onSlipChange();
         });
     }
+
+    // Initial paint of the BE hint + auto-snap the slider to BE so the
+    // out-of-the-box experience produces slips.
+    sbSnapProbToBE();
 
     // 4. Run button
     const btnRun = $("btn-run-sandbox");
