@@ -43,9 +43,14 @@ import pandas as pd
 import numpy as np
 
 from engine.database import get_db
-from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS, OPTIMAL_IMPLIED_DECIMAL
+from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS, OPTIMAL_IMPLIED_DECIMAL, BREAK_EVEN
 from engine.isotonic_calibration import load_isotonic_calibration, calibrate
-from engine.backtest import make_bet_key, make_game_key, make_leg_key
+from engine.backtest import (
+    make_bet_key, make_game_key, make_leg_key,
+    MIN_LEG_EV_PCT as _LIVE_MIN_LEG_EV_PCT,
+    _DEDUP_WINDOW_HOURS as _LIVE_DEDUP_WINDOW_HOURS,
+)
+from engine.ev_calculator import power_slip_ev, flex_slip_ev
 from engine.dedup import drop_duplicate_slips, check_duplicate_pairs
 
 logger = logging.getLogger(__name__)
@@ -134,6 +139,16 @@ class StrategyTester:
         # mid-day) appear as the same leg_key — which is the wrong
         # direction of strictness for leg-level dedup, even though
         # pair_key would still catch them as same-player-same-game.
+        # v4 adds first_seen_at / last_seen_at (migration_009) so the
+        # tick-based replay can reconstruct the live pool at every
+        # historical scrape moment. Pre-migration deploys fall through
+        # to v3 and the replay treats those rows as single-instant
+        # observations at game_start.
+        cols_v4 = (
+            "result, prop, line, true_prob, raw_true_prob, side, "
+            "game_start, league, player, market_width, team, "
+            "first_seen_at, last_seen_at"
+        )
         cols_v3 = (
             "result, prop, line, true_prob, raw_true_prob, side, "
             "game_start, league, player, market_width, team"
@@ -143,7 +158,7 @@ class StrategyTester:
             "game_start, league, player, market_width"
         )
         cols_v1 = "result, prop, line, true_prob, side, game_start, league, player"
-        tier_order = [cols_v3, cols_v2, cols_v1]
+        tier_order = [cols_v4, cols_v3, cols_v2, cols_v1]
 
         PAGE = 1000
         # Number of concurrent page fetches. PostgREST is happy with a few
@@ -489,6 +504,245 @@ class StrategyTester:
                                    dedup=True, used_pair=used_pair, used_leg=used_leg)
 
 
+    # ── Live auto-builder replay ────────────────────────────────────────
+
+    def _replay_live_auto_builder(
+        self, df: pd.DataFrame, config: StrategyConfig,
+    ) -> tuple[list[dict], dict]:
+        """Tick-based replay of engine/backtest.BacktestLogger.try_log_slip.
+
+        At every distinct scrape moment (first_seen_at rounded down to the
+        minute) the sandbox asks: "what slip would the live auto-builder
+        have produced given exactly the legs that were live on the board
+        at that moment, plus the 48 h dedup state from the slips it
+        would already have logged earlier in this replay?"
+
+        This is the path the user reaches via `slip_strategy='live_replay'`.
+        Mirrors the production `BacktestLogger._try_log_slip_locked`
+        exactly: EV-floor filter, EV-descending greedy pick, cross-slip
+        (player, sports_day) + exact-leg dedup, two-distinct-teams swap,
+        BREAK_EVEN avg-prob gate, slip-EV > 0 gate.
+
+        The user's `config.min_prob` filter is applied upstream in
+        `run_simulation` (the live builder doesn't have a prob floor, but
+        the sandbox exposes one so the user can test "what if I only took
+        legs above X%"). Everything else is identical to live."""
+        if df.empty:
+            return [], {}
+
+        df = df.copy()
+        # Coerce availability bounds; legacy rows pre-migration_009 lack
+        # these columns and collapse to a single-instant observation at
+        # game_start (best-available proxy — we genuinely don't know how
+        # long pre-migration legs sat on the board).
+        for col in ("first_seen_at", "last_seen_at"):
+            if col not in df.columns:
+                df[col] = pd.NaT
+        df["first_seen_dt"] = pd.to_datetime(
+            df["first_seen_at"], errors="coerce", utc=True,
+        )
+        df["last_seen_dt"] = pd.to_datetime(
+            df["last_seen_at"], errors="coerce", utc=True,
+        )
+        df["first_seen_dt"] = df["first_seen_dt"].fillna(df["game_start_dt"])
+        df["last_seen_dt"]  = df["last_seen_dt"].fillna(df["first_seen_dt"])
+        df = df[df["first_seen_dt"].notna() & df["last_seen_dt"].notna()]
+        if df.empty:
+            return [], {}
+
+        # Per-leg EV column (matches `_select_ranked`'s `_ev`).
+        df["_ev"] = df["calibrated_prob"].to_numpy() * OPTIMAL_IMPLIED_DECIMAL - 1.0
+        # Live builder's hard EV floor. Below this, the production logger
+        # refuses to include the leg at all — replay must mirror.
+        df = df[df["_ev"] >= _LIVE_MIN_LEG_EV_PCT]
+        if df.empty:
+            return [], {}
+
+        # Tick set: minute-floor of first_seen_at. Postgres NOW() is
+        # statement-time so a single batch insert lands every row at the
+        # same microsecond; the minute floor folds neighbouring batches
+        # from the same scrape cycle so we don't double-attempt slips.
+        df["_tick"] = df["first_seen_dt"].dt.floor("min")
+        ticks = np.sort(df["_tick"].unique())
+
+        # Pre-compute everything the inner loop needs as plain Python so
+        # the per-tick mask + scan stays in numpy / list-comprehension
+        # territory (DataFrame.loc is ~10x slower per row).
+        first_arr = df["first_seen_dt"].to_numpy()
+        last_arr  = df["last_seen_dt"].to_numpy()
+        rows_all  = df.to_dict("records")
+        n_rows = len(rows_all)
+
+        p_keys_all: list[tuple] = [None] * n_rows
+        l_keys_all: list[tuple] = [None] * n_rows
+        team_all:   list[str]   = [""] * n_rows
+        for i, r in enumerate(rows_all):
+            player = r.get("player", "") or ""
+            start  = r.get("game_start", "") or ""
+            p_keys_all[i] = make_bet_key(player, start)
+            l_keys_all[i] = make_leg_key(
+                player, r.get("prop", "") or "",
+                r.get("line", "") if "line" in r else "",
+                r.get("side", "") or "", start,
+            )
+            team_all[i] = self._team_key(r)
+
+        be_key = (str(config.slip_size), config.slip_type.lower())
+        slip_be = BREAK_EVEN.get(be_key)
+        is_power = config.slip_type.lower() == "power"
+        slip_ev_fn = power_slip_ev if is_power else flex_slip_ev
+        dedup_window = pd.Timedelta(hours=_LIVE_DEDUP_WINDOW_HOURS)
+
+        sim_slips: list[dict] = []
+        # Rolling 48h log of placed slips for dedup decay. Each entry:
+        # (tick_timestamp, [(p_key, l_key) per leg]).
+        placed: list[tuple] = []
+
+        funnel = {
+            "distinct_scrape_ticks": int(len(ticks)),
+            "ticks_with_slip":       0,
+            "ticks_without_pool":    0,
+            "ticks_no_valid_slip":   0,
+        }
+
+        for tick in ticks:
+            # Decay dedup window relative to *this* tick — matches live,
+            # which queries `timestamp > now() - 48h` at each attempt.
+            cutoff = tick - dedup_window
+            placed = [p for p in placed if p[0] > cutoff]
+            used_pair: set = set()
+            used_leg:  set = set()
+            for _ts, leg_keys in placed:
+                for pk, lk in leg_keys:
+                    used_pair.add(pk)
+                    used_leg.add(lk)
+
+            mask = (first_arr <= tick) & (last_arr >= tick)
+            idxs_arr = np.where(mask)[0]
+            if len(idxs_arr) < config.slip_size:
+                funnel["ticks_without_pool"] += 1
+                continue
+
+            # EV-descending sort with deterministic tie-break (same shape
+            # as `_select_ranked` so identical inputs yield identical
+            # outputs across runs).
+            idxs = sorted(
+                idxs_arr.tolist(),
+                key=lambda i: (
+                    -float(rows_all[i].get("_ev") or 0.0),
+                    f'{rows_all[i].get("player","")}|'
+                    f'{rows_all[i].get("prop","")}|'
+                    f'{rows_all[i].get("side","")}',
+                ),
+            )
+
+            # Greedy top-EV pick respecting cross-slip dedup.
+            picks: list[int] = []
+            seen_pair: set = set()
+            seen_leg:  set = set()
+            for i in idxs:
+                pk, lk = p_keys_all[i], l_keys_all[i]
+                if pk in used_pair: continue
+                if lk in used_leg:  continue
+                if pk in seen_pair: continue
+                if lk in seen_leg:  continue
+                picks.append(i)
+                seen_pair.add(pk); seen_leg.add(lk)
+                if len(picks) == config.slip_size:
+                    break
+            if len(picks) < config.slip_size:
+                funnel["ticks_no_valid_slip"] += 1
+                continue
+
+            # Two-team enforcement (PrizePicks rule): swap the lowest-EV
+            # pick for the highest-EV legal different-team alternative
+            # when the greedy first pass produced a single-team slip.
+            team_set = {team_all[i] for i in picks}
+            if len(team_set) < TWO_TEAMS_REQUIRED:
+                single_team = next(iter(team_set))
+                keep = picks[:-1]
+                kept_pair = {p_keys_all[k] for k in keep}
+                kept_leg  = {l_keys_all[k] for k in keep}
+                pick_set = set(picks)
+                replacement = -1
+                for j in idxs:
+                    if j in pick_set: continue
+                    if team_all[j] == single_team: continue
+                    if p_keys_all[j] in used_pair: continue
+                    if l_keys_all[j] in used_leg:  continue
+                    if p_keys_all[j] in kept_pair: continue
+                    if l_keys_all[j] in kept_leg:  continue
+                    replacement = j
+                    break
+                if replacement < 0:
+                    funnel["ticks_no_valid_slip"] += 1
+                    continue
+                picks = picks[:-1] + [replacement]
+
+            # BREAK_EVEN + slip EV > 0 gates. The live builder rejects the
+            # slip entirely if either fails — replay must follow suit
+            # rather than logging a -EV slip the production system never
+            # would have placed.
+            true_probs = [
+                float(rows_all[i].get("calibrated_prob") or 0.0) for i in picks
+            ]
+            if slip_be is None or (sum(true_probs) / config.slip_size) < slip_be:
+                funnel["ticks_no_valid_slip"] += 1
+                continue
+            slip_ev = slip_ev_fn(true_probs)
+            if slip_ev is None or slip_ev <= 0:
+                funnel["ticks_no_valid_slip"] += 1
+                continue
+
+            selected_legs = [rows_all[i] for i in picks]
+            results = [r.get("result", "") for r in selected_legs]
+            payout_mult, n_eff, hits_eff, n_pushed = self._payout_with_push(
+                results, config.slip_type,
+            )
+            if config.use_kelly:
+                k_frac = self._calculate_kelly_fraction(
+                    true_probs, config.slip_size, config.slip_type,
+                )
+                bet_size = max(0.0, float(config.bankroll) * k_frac)
+            else:
+                bet_size = config.bet_size
+
+            profit = (bet_size * payout_mult) - bet_size if bet_size > 0 else 0.0
+            first_leg = selected_legs[0]
+
+            sim_slips.append({
+                "timestamp": pd.Timestamp(tick).isoformat(),
+                "league":    first_leg.get("league"),
+                "hits":      hits_eff,
+                "n_eff":     n_eff,
+                "n_legs":    config.slip_size,
+                "n_pushed":  n_pushed,
+                "payout":    bet_size * payout_mult,
+                "bet_size":  bet_size,
+                "profit":    profit,
+                "legs": [
+                    {
+                        "player":     r.get("player", ""),
+                        "prop":       r.get("prop", ""),
+                        "line":       r.get("line", ""),
+                        "side":       r.get("side", ""),
+                        "game_start": r.get("game_start", ""),
+                        "true_prob":  r.get("calibrated_prob"),
+                        "result":     r.get("result", ""),
+                    }
+                    for r in selected_legs
+                ],
+            })
+
+            placed.append((
+                tick,
+                [(p_keys_all[i], l_keys_all[i]) for i in picks],
+            ))
+            funnel["ticks_with_slip"] += 1
+
+        return sim_slips, funnel
+
+
     # ── Push-aware payout ───────────────────────────────────────────────
 
     @staticmethod
@@ -688,11 +942,18 @@ class StrategyTester:
             if df.empty:
                 return {"error": "No legs above the calibrated probability threshold.", "funnel": funnel}
 
-            # 6. Group into slates by calendar day (game_start UTC).
-            df["slate_id"] = df["game_start_dt"].dt.date.astype(str)
-            slates = df.groupby("slate_id")
-            funnel["distinct_slates"] = int(df["slate_id"].nunique())
-
+            # 6. Build slips.
+            #
+            # live_replay → tick-based replay of BacktestLogger against
+            # historical scrape moments (uses first_seen_at / last_seen_at
+            # from migration_009). Produces the same slips the live
+            # auto-builder would have logged on the same data, so users
+            # can test settings (slip size, type, min_prob) without
+            # spinning up a sidecar account.
+            #
+            # top_prob / top_ev → legacy slate-based (one slot per
+            # calendar day). Preserved for backward compat; the v2
+            # sandbox UI exposes them under "advanced".
             sim_slips: list[dict] = []
             cumulative_profit = 0.0
             total_bet = 0.0
@@ -700,20 +961,41 @@ class StrategyTester:
             push_legs_used = 0
             dnp_legs_used  = 0
 
-            sorted_slate_ids = df.sort_values(
-                "game_start_dt", kind="stable",
-            )["slate_id"].unique()
-            slates_with_qualifying = 0
-            slates_without_full_slip = 0
-
-            # Global dedup sets shared across every slate in this run so
-            # the same player+game or exact leg can't be re-used in a
-            # later slate. Without these, slate boundaries could
-            # accidentally split a single game across two slates (e.g.,
-            # UTC-vs-local date edge cases) and let the same prop slip
-            # through twice.
-            run_used_pair: set = set()
-            run_used_leg:  set = set()
+            if config.slip_strategy == "live_replay":
+                replay_slips, replay_funnel = self._replay_live_auto_builder(df, config)
+                funnel.update(replay_funnel)
+                sim_slips = replay_slips
+                cumulative_profit = sum(s["profit"] for s in sim_slips)
+                total_bet = sum(s["bet_size"] for s in sim_slips)
+                push_legs_used = sum(s["n_pushed"] for s in sim_slips)
+                dnp_legs_used = sum(
+                    1 for s in sim_slips
+                    for leg in s.get("legs", [])
+                    if leg.get("result") == "dnp"
+                )
+                # Skip the slate loop and the post-build dedup pass:
+                # _replay_live_auto_builder enforces dedup tick-by-tick
+                # using the same canonical keys, so the invariant already
+                # holds at emission time.
+                slates_with_qualifying = 0
+                slates_without_full_slip = 0
+                n_dropped_post = 0
+                run_used_pair = set()
+                run_used_leg  = set()
+                # Fall through to the equity / breakdown / response build.
+                sorted_slate_ids = []
+            else:
+                df["slate_id"] = df["game_start_dt"].dt.date.astype(str)
+                slates = df.groupby("slate_id")
+                funnel["distinct_slates"] = int(df["slate_id"].nunique())
+                sorted_slate_ids = df.sort_values(
+                    "game_start_dt", kind="stable",
+                )["slate_id"].unique()
+                slates_with_qualifying = 0
+                slates_without_full_slip = 0
+                # Global dedup sets shared across every slate in this run.
+                run_used_pair: set = set()
+                run_used_leg:  set = set()
 
             for sid in sorted_slate_ids:
                 slate_df = slates.get_group(sid)

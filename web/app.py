@@ -1118,11 +1118,17 @@ def _run_pipeline_body():
                     def _strip(rows, col):
                         for r in rows:
                             r.pop(col, None)
+                    # ignore_duplicates=False so the conflict path fires an
+                    # UPDATE. The market_observatory_upsert_guard trigger
+                    # (migration_009) preserves first_seen_at + resolution
+                    # state and bumps last_seen_at to NOW(), so the sandbox
+                    # can later reconstruct which legs were live at each
+                    # historical scrape moment.
                     try:
                         obs_db.table("market_observatory").upsert(
                             rows_to_upsert,
                             on_conflict="market_key",
-                            ignore_duplicates=True
+                            ignore_duplicates=False
                         ).execute()
                         logger.info("Observatory: logged %d observations", len(rows_to_upsert))
                     except Exception as upsert_exc:
@@ -1137,7 +1143,7 @@ def _run_pipeline_body():
                                 obs_db.table("market_observatory").upsert(
                                     rows_to_upsert,
                                     on_conflict="market_key",
-                                    ignore_duplicates=True
+                                    ignore_duplicates=False
                                 ).execute()
                                 logger.info(
                                     "Observatory: logged %d observations (stripped '%s' — apply pending migration to enable)",
