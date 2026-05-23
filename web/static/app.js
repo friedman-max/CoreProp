@@ -3456,7 +3456,12 @@ function _readSandboxControls() {
         use_kelly: kellyEl ? !!kellyEl.checked : true,
         bet_size: 1.0,
         slip_strategy: "live_replay",
-        bootstrap: false,
+        // bootstrap=true so the server returns 95% bootstrap CIs on
+        // ROI / win-rate / max-drawdown alongside the point estimates.
+        // The cards display the band under each headline number so the
+        // user can immediately see whether +5% ROI is reliable (e.g.
+        // [+3%, +7%]) or noise (e.g. [-3%, +13%]).
+        bootstrap: true,
     };
 }
 
@@ -3789,6 +3794,80 @@ function _bindSbRangeSelector() {
 
 const _SB_BANKROLL_DEFAULT = 100;
 
+// ── Client-side bootstrap ──────────────────────────────────────────────
+// Mirrors `StrategyTester._bootstrap_metrics` server-side. Runs whenever
+// a date-range filter slices the slip set client-side, so the headline
+// cards (roi / win-rate / max-drawdown) always carry a 95% CI computed
+// over the actually-visible window — not the stale full-window CI the
+// server attached on the initial response.
+const _SB_BOOTSTRAP_RESAMPLES = 500;
+const _SB_BOOTSTRAP_SEED = 0xC0DE;
+
+// Mulberry32 PRNG: short, deterministic, reproducible across browsers.
+// Math.random() would make CIs drift between paints of the same data.
+function _mulberry32(seed) {
+    let s = seed >>> 0;
+    return function () {
+        s = (s + 0x6D2B79F5) >>> 0;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+function _pct(arr, q) {
+    if (!arr.length) return null;
+    const sorted = [...arr].sort((a, b) => a - b);
+    const k = Math.round(q * (sorted.length - 1));
+    return sorted[k];
+}
+
+function _bootstrapSandbox(slips, bankroll = _SB_BANKROLL_DEFAULT) {
+    const bet = slips.filter(s => (s.bet_size || 0) > 0);
+    const n = bet.length;
+    if (n < 2) return null;
+
+    // Pre-extract arrays for the hot resample loop — array lookup is
+    // ~5x faster than re-deriving from objects 500 × n times.
+    const betArr    = bet.map(s => s.bet_size || 0);
+    const profitArr = bet.map(s => s.profit || 0);
+    const winFlag   = bet.map(s => ((s.payout || 0) > (s.bet_size || 0)) ? 1 : 0);
+
+    const rand = _mulberry32(_SB_BOOTSTRAP_SEED);
+    const rois = [], wrs = [], dds = [];
+    for (let r = 0; r < _SB_BOOTSTRAP_RESAMPLES; r++) {
+        let totBet = 0, totProf = 0, totWins = 0;
+        let peak = bankroll, running = bankroll, maxDd = 0;
+        for (let i = 0; i < n; i++) {
+            const idx = Math.floor(rand() * n);
+            totBet  += betArr[idx];
+            totProf += profitArr[idx];
+            totWins += winFlag[idx];
+            running += profitArr[idx];
+            if (running > peak) peak = running;
+            const dd = peak > 0 ? ((peak - running) / peak) * 100 : 0;
+            if (dd > maxDd) maxDd = dd;
+        }
+        rois.push(totBet > 0 ? (totProf / totBet) * 100 : 0);
+        wrs.push((totWins / n) * 100);
+        dds.push(maxDd);
+    }
+    return {
+        roi_pct:          { lo: _pct(rois, 0.025), hi: _pct(rois, 0.975) },
+        win_rate_pct:     { lo: _pct(wrs, 0.025),  hi: _pct(wrs, 0.975)  },
+        max_drawdown_pct: { lo: _pct(dds, 0.025),  hi: _pct(dds, 0.975)  },
+        n_resamples:      _SB_BOOTSTRAP_RESAMPLES,
+    };
+}
+
+function _fmtCI(ci, suffix = "%") {
+    if (!ci || ci.lo == null || ci.hi == null) return "";
+    const lo = ci.lo >= 0 ? "+" + ci.lo.toFixed(1) : ci.lo.toFixed(1);
+    const hi = ci.hi >= 0 ? "+" + ci.hi.toFixed(1) : ci.hi.toFixed(1);
+    return `95% CI [${lo}${suffix}, ${hi}${suffix}]`;
+}
+
 // Filter cached server data by a chart-level date range. Recomputes
 // summary + equity curve from the in-window slips so the cards and the
 // chart can never disagree. Confidence intervals were removed from the
@@ -3837,6 +3916,12 @@ function _filterSandboxData(data, rangeKey) {
         if (ddPct > maxDdPct) maxDdPct = ddPct;
     }
 
+    // Recompute the 95% bootstrap CIs over the filtered window. Without
+    // this the cards would carry the server-computed CIs from the full
+    // dataset and a user looking at a 1W slice would see a misleading
+    // band drawn from 6 months of slips.
+    const ci = _bootstrapSandbox(slips, bankroll);
+
     return {
         summary: {
             total_slips: slips.length,
@@ -3847,6 +3932,7 @@ function _filterSandboxData(data, rangeKey) {
             win_rate_pct: Math.round(winRatePct * 100) / 100,
             max_drawdown_pct: Math.round(maxDdPct * 100) / 100,
             bankroll: bankroll,
+            ci: ci,
         },
         equity_curve: equity,
         slips: slips,
@@ -3882,6 +3968,49 @@ function renderSandboxResults(data) {
     $("sb-metric-roi").className = "bt-card-value " + (s.roi_pct >= 0 ? "positive" : "negative");
     $("sb-metric-winrate").textContent = s.win_rate_pct + "%";
     $("sb-metric-drawdown").textContent = s.max_drawdown_pct + "%";
+
+    // ── Bootstrap CI display ─────────────────────────────────────────
+    // The single highest-leverage signal the sandbox can give the user:
+    // a +5% ROI with band [+3%, +7%] is decision-grade evidence; a +5%
+    // ROI with band [-3%, +13%] is noise that shouldn't drive a deploy.
+    // CI provenance:
+    //   • server-rendered on the initial response (bootstrap:true on the
+    //     request payload), wrapping the full unfiltered slip set;
+    //   • client-recomputed by `_filterSandboxData` whenever the user
+    //     picks a date-range filter, so the band always matches the
+    //     visible window and never lags behind the cards.
+    // The bet-slips count goes under Total Slips so the user can see the
+    // sample size the ROI / win-rate are computed against (Kelly-sized
+    // $0 slips are excluded from both numerator and denominator).
+    const slipsSubEl    = $("sb-metric-slips-sub");
+    const profitSubEl   = $("sb-metric-profit-sub");
+    const roiCiEl       = $("sb-metric-roi-ci");
+    const winrateCiEl   = $("sb-metric-winrate-ci");
+    const drawdownCiEl  = $("sb-metric-drawdown-ci");
+
+    if (slipsSubEl) {
+        if (s.bet_slips != null && s.bet_slips !== s.total_slips) {
+            slipsSubEl.textContent = `${s.bet_slips} bet · ${s.total_slips - s.bet_slips} $0`;
+        } else if (s.bet_slips != null) {
+            slipsSubEl.textContent = `${s.bet_slips} bet`;
+        } else {
+            slipsSubEl.textContent = "";
+        }
+    }
+    if (profitSubEl) {
+        profitSubEl.textContent = s.total_bet != null ? `Stake $${s.total_bet.toFixed(2)}` : "";
+    }
+
+    const ci = s.ci || data.ci || null;
+    if (roiCiEl) {
+        roiCiEl.textContent = ci ? _fmtCI(ci.roi_pct, "%") : "";
+    }
+    if (winrateCiEl) {
+        winrateCiEl.textContent = ci ? _fmtCI(ci.win_rate_pct, "%") : "";
+    }
+    if (drawdownCiEl) {
+        drawdownCiEl.textContent = ci ? _fmtCI(ci.max_drawdown_pct, "%") : "";
+    }
 
     sandboxLastSlips = data.slips || [];
 
