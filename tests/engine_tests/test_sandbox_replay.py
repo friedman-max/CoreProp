@@ -210,6 +210,43 @@ class ReplayTwoTeamTests(unittest.TestCase):
         self.assertEqual(slips, [])
 
 
+class ReplayTickFloorTests(unittest.TestCase):
+    """Regression: the replay floors each tick to the minute, then asked
+    `first_seen <= tick <= last_seen`. A row whose first_seen had any
+    non-zero seconds (12:00:23) failed the comparison against its own
+    floored tick (12:00:00), leaving every tick with an empty live pool
+    and the user staring at "Could not form any N-leg slips from
+    history" no matter how much data was available."""
+
+    def test_rows_with_nonzero_seconds_are_still_available_at_their_tick(self):
+        # Pick a timestamp deliberately offset by some seconds — this is
+        # the realistic shape of Postgres NOW() timestamps stamped at
+        # scrape time (microsecond-precision, never aligned to a minute).
+        t0 = datetime(2026, 5, 22, 12, 0, 23, tzinfo=timezone.utc)
+        game = datetime(2026, 5, 22, 19, 0, tzinfo=timezone.utc)
+        rows = [
+            _row(player=f"P{i}", team=f"T{i}",
+                 first_seen=t0, last_seen=t0 + timedelta(minutes=2),
+                 game_start=game, true_prob=0.65)
+            for i in range(3)
+        ]
+        df = pd.DataFrame(rows)
+        cfg = StrategyConfig(
+            slip_size=2, slip_type="power", bet_size=1.0,
+            slip_strategy="live_replay", min_prob=0.0,
+        )
+        slips, funnel = _tester()._replay_live_auto_builder(df, cfg)
+        self.assertGreaterEqual(
+            len(slips), 1,
+            f"Replay produced 0 slips despite 3 live legs at tick — "
+            f"funnel: {funnel}",
+        )
+        self.assertEqual(
+            funnel["ticks_without_pool"], 0,
+            f"Every tick should have had legs available; funnel: {funnel}",
+        )
+
+
 class ReplayBreakEvenTests(unittest.TestCase):
     """The BREAK_EVEN gate rejects slips whose avg true_prob falls below the
     payout-implied break-even, even if every leg passed the EV-floor."""

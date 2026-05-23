@@ -583,8 +583,14 @@ class StrategyTester:
         # Pre-compute everything the inner loop needs as plain Python so
         # the per-tick mask + scan stays in numpy / list-comprehension
         # territory (DataFrame.loc is ~10x slower per row).
-        first_arr = df["first_seen_dt"].to_numpy()
-        last_arr  = df["last_seen_dt"].to_numpy()
+        # Compare against the FLOORED first_seen / last_seen so a row
+        # logged at 12:00:23 is correctly "live" at its own floored tick
+        # (12:00:00) — the raw comparison missed every row whose seconds
+        # were >0 and left every tick with an empty live pool.
+        df["_first_floor"] = df["first_seen_dt"].dt.floor("min")
+        df["_last_floor"]  = df["last_seen_dt"].dt.floor("min")
+        first_arr = df["_first_floor"].to_numpy()
+        last_arr  = df["_last_floor"].to_numpy()
         rows_all  = df.to_dict("records")
         n_rows = len(rows_all)
 
