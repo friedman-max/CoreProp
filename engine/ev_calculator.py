@@ -3,7 +3,7 @@ EV calculation engine.
 
 - Per-leg individual EV% (theoretical, using optimal 5/6-Flex break-even)
 - Slip EV% for Power (exact) and Flex (full enumeration over all leg combinations)
-- Line discrepancy directional logic
+- Correlation-aware Monte Carlo EV for same-game stacks
 """
 import statistics
 from itertools import product as itertools_product
@@ -17,8 +17,7 @@ from engine.constants import (
     POWER_PAYOUTS,
     FLEX_PAYOUTS,
 )
-from engine.devig import devig_power, devig_single_sided, prob_to_american
-from engine.matcher import MatchedProp
+from engine.devig import prob_to_american
 from engine.isotonic_calibration import (
     load_isotonic_calibration, calibrate as _apply_calibration,
 )
@@ -125,192 +124,18 @@ class BetResult:
 
 
 # ---------------------------------------------------------------------------
-# Line discrepancy logic
+# (Removed: `_evaluate_same_line`, `_get_true_prob_for_side`,
+# `compute_bet_true_prob_raw`, `evaluate_match`.)
+#
+# These were the v1 EV path that only consulted FanDuel + DraftKings, so
+# Pinnacle prices were silently ignored even though the matcher captured
+# them. The live pipeline switched to `engine.consensus.compute_true_
+# probability` (which includes Pinnacle with proper sharpness weights)
+# back in the consensus migration; the legacy functions stayed in the
+# file as dead code with stale doctrings, creating real risk that a
+# future caller would rewire them and quietly drop a third of the
+# price-discovery signal. Removed entirely.
 # ---------------------------------------------------------------------------
-
-def _evaluate_same_line(match: MatchedProp) -> list[BetResult]:
-    """Both lines match. Evaluate OVER and UNDER independently."""
-    fd = match.fd or match.dk
-    pp = match.pp
-    results = []
-
-    if fd is None:
-        return results
-
-    if fd.both_sided and fd.over_odds is not None and fd.under_odds is not None:
-        true_over, true_under = devig_power(fd.over_odds, fd.under_odds)
-        sides = [("over", true_over), ("under", true_under)]
-    elif fd.over_odds is not None:
-        true_over = devig_single_sided(fd.over_odds)
-        sides = [("over", true_over)]
-    elif fd.under_odds is not None:
-        true_under = devig_single_sided(fd.under_odds)
-        sides = [("under", true_under)]
-    else:
-        return results
-
-    for side, true_prob in sides:
-        bet_id = f"{pp.player_id}_{pp.stat_type}_{side}"
-        result = BetResult(
-            bet_id=bet_id,
-            player_name=pp.player_name,
-            league=pp.league,
-            prop_type=pp.stat_type,
-            pp_line=pp.line_score,
-            fd_line=fd.line,
-            side=side,
-            true_prob=true_prob,
-            over_odds=fd.over_odds,
-            under_odds=fd.under_odds,
-            both_sided=fd.both_sided,
-            pp_player_id=pp.player_id,
-            start_time=getattr(pp, "start_time", ""),
-        )
-        results.append(result)
-
-    return results
-
-
-def _get_true_prob_for_side(match: MatchedProp, side: str) -> Optional[float]:
-    """De-vig and return true probability for a specific side from the best available book."""
-    fd = match.fd
-    dk = match.dk
-
-    probs = []
-    for book in [fd, dk]:
-        if book is None: continue
-        if book.both_sided and book.over_odds is not None and book.under_odds is not None:
-            t_o, t_u = devig_power(book.over_odds, book.under_odds)
-            probs.append(t_o if side == "over" else t_u)
-        elif side == "over" and book.over_odds is not None:
-            probs.append(devig_single_sided(book.over_odds))
-        elif side == "under" and book.under_odds is not None:
-            probs.append(devig_single_sided(book.under_odds))
-
-    return max(probs) if probs else None
-
-
-def compute_bet_true_prob_raw(match: MatchedProp, side: str) -> Optional[float]:
-    """
-    Return the RAW (uncalibrated) true probability for a bet on (match, side),
-    using the **same methodology as `evaluate_match`** so that CLV tracking and
-    other downstream consumers produce probabilities directly comparable to the
-    one recorded at bet-log time.
-
-    - Same-line (pp.line == book.line): devig directly from the best available
-      book (FD, else DK).
-    - Diff-line: max of devigged probs across FD and DK.
-
-    Callers apply the calibration multiplier themselves, so this function
-    returns the pre-calibration value.
-    """
-    pp = match.pp
-    best_book = match.fd or match.dk
-    if pp is None or best_book is None:
-        return None
-
-    if pp.line_score == best_book.line:
-        # Same-line: devig directly from the matched book (mirrors
-        # _evaluate_same_line's selection logic).
-        if best_book.both_sided and best_book.over_odds is not None and best_book.under_odds is not None:
-            t_o, t_u = devig_power(best_book.over_odds, best_book.under_odds)
-            return t_o if side == "over" else t_u
-        if side == "over" and best_book.over_odds is not None:
-            return devig_single_sided(best_book.over_odds)
-        if side == "under" and best_book.under_odds is not None:
-            return devig_single_sided(best_book.under_odds)
-        return None
-
-    # Diff-line: same max-across-books logic the live evaluator uses.
-    return _get_true_prob_for_side(match, side)
-
-
-def evaluate_match(match: MatchedProp, min_ev_pct: float = 0.01) -> list[BetResult]:
-    """
-    Apply line discrepancy logic and return +EV BetResults.
-
-    Rules:
-      - PP line < FD line → only value on PP OVER; discard if FD favors UNDER
-      - PP line > FD line → only value on PP UNDER; discard if FD favors OVER
-      - PP line == FD line → evaluate both sides
-    """
-    # Prioritize FanDuel if available for line comparison, else use DraftKings
-    # (Since both lines are likely very similar, this works for directional checks)
-    best_book = match.fd or match.dk
-    pp = match.pp
-    results = []
-
-    if not best_book:
-        return []
-
-    if pp.line_score == best_book.line:
-        candidates = _evaluate_same_line(match)
-
-    elif pp.line_score < best_book.line:
-        # PP easier line for OVER → value exclusively on PP OVER
-        # Use available odds for the HARDER line as our probability estimate.
-        # No probability threshold — every priceable combined line is kept so
-        # the market_observatory can ingest hits and misses across the full
-        # distribution. The +EV UI filter (default 54% Min Odds %) still
-        # hides sub-break-even bets from the user.
-        true_over = _get_true_prob_for_side(match, "over")
-        if true_over is None:
-            return []
-
-        bet_id = f"{pp.player_id}_{pp.stat_type}_over"
-        result = BetResult(
-            bet_id=bet_id,
-            player_name=pp.player_name,
-            league=pp.league,
-            prop_type=pp.stat_type,
-            pp_line=pp.line_score,
-            fd_line=best_book.line,
-            side="over",
-            true_prob=true_over,
-            over_odds=best_book.over_odds,
-            under_odds=best_book.under_odds,
-            both_sided=best_book.both_sided,
-            pp_player_id=pp.player_id,
-            start_time=getattr(pp, "start_time", ""),
-        )
-        candidates = [result]
-
-    else:
-        # PP harder line for UNDER → value exclusively on PP UNDER
-        # Use available odds for the EASIER line as probability estimate.
-        # See note above the over branch — no probability floor so the full
-        # distribution reaches the observatory.
-        true_under = _get_true_prob_for_side(match, "under")
-        if true_under is None:
-            return []
-
-        bet_id = f"{pp.player_id}_{pp.stat_type}_under"
-        result = BetResult(
-            bet_id=bet_id,
-            player_name=pp.player_name,
-            league=pp.league,
-            prop_type=pp.stat_type,
-            pp_line=pp.line_score,
-            fd_line=best_book.line,
-            side="under",
-            true_prob=true_under,
-            over_odds=best_book.over_odds,
-            under_odds=best_book.under_odds,
-            both_sided=best_book.both_sided,
-            pp_player_id=pp.player_id,
-            start_time=getattr(pp, "start_time", ""),
-        )
-        candidates = [result]
-
-    # Apply minimum EV filter & side constraint
-    for r in candidates:
-        if pp.side != "both" and pp.side != r.side:
-            continue
-        if r.individual_ev_pct >= min_ev_pct:
-            results.append(r)
-
-    return results
-
 
 # ---------------------------------------------------------------------------
 # Slip EV calculations

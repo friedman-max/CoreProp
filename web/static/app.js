@@ -1848,7 +1848,6 @@ const ppState = {
 
 const ppTbody       = $("pp-tbody");
 const ppTotalBadge  = $("pp-total-badge");
-const ppStatusLabel = $("pp-status-label");
 
 function applyPPFilters() {
   const league = $("pp-filter-league").value.toUpperCase();

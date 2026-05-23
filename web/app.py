@@ -44,7 +44,7 @@ import statistics
 from web.auth import get_current_user, get_current_user_optional
 
 import config as cfg
-from engine.ev_calculator import BetResult, calculate_slip, evaluate_match
+from engine.ev_calculator import BetResult, calculate_slip
 from engine.matcher import match_props
 from engine.backtest import BacktestLogger, make_bet_key
 from engine.results_checker import ESPNResultsChecker
@@ -1087,6 +1087,11 @@ def _run_pipeline_body():
                     side   = e.get("side", "")
                     start  = e.get("start_time", "")
                     market_key = f"{player}|{league}|{prop}|{line}|{side}|{start}"
+                    # Note: `result` is deliberately omitted. The DB default
+                    # is 'pending' on insert; on conflict the migration_009
+                    # trigger preserves the existing value. Including it
+                    # here would reset already-graded rows to 'pending' on
+                    # every re-scrape if the trigger isn't deployed yet.
                     row = {
                         "market_key":     market_key,
                         "player":         player,
@@ -1097,7 +1102,6 @@ def _run_pipeline_body():
                         "true_prob":      round(tp, 4),
                         "raw_true_prob":  round(raw_tp, 4),
                         "game_start":     start if start else None,
-                        "result":         "pending",
                     }
                     if mw is not None:
                         row["market_width"] = round(mw, 4)
@@ -2341,8 +2345,13 @@ def check_pp_availability(req: PPAvailabilityRequest):
             # Stat type must match (case-insensitive)
             if pp_stat != prop:
                 continue
-            # Side must match the requested side
-            if pp_side != side:
+            # PP lines always carry side="both" (PP doesn't restrict the
+            # user's pick at scrape time). Accept any leg side against a
+            # "both" PP line; otherwise insist on an exact side match.
+            # Without this, every leg the user logged ("over"/"under")
+            # was rejected against the "both" PP catalogue and the
+            # "Place on PrizePicks" button stayed permanently disabled.
+            if pp_side and pp_side != "both" and pp_side != side:
                 continue
             # Line must be exact
             if abs(pp_line - line) > 0.01:
