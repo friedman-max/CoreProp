@@ -1,8 +1,7 @@
 """Sandbox endpoints: historical-strategy replay over market_observatory.
 
-Three endpoints:
+Two endpoints:
 
-  GET  /api/sandbox/stat-types  — distinct (league, stat_type) pairs
   POST /api/sandbox/run         — replay a strategy config; result cached
   POST /api/sandbox/optimize    — threshold sweep, returns best ROI
 
@@ -21,10 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from threading import Lock
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -56,92 +52,6 @@ class SandboxRequest(BaseModel):
     start_date:     Optional[str] = None      # YYYY-MM-DD
     end_date:       Optional[str] = None
     bootstrap:      bool      = True
-
-
-# ── Stat-types cache (module-local) ────────────────────────────────────
-# The (league, prop) set changes slowly — only when scrapers start
-# ingesting a new league or prop type, measured in days. Caching the
-# result for 5 minutes avoids 22+ paginated round-trips on every load.
-
-_stat_types_cache: dict[str, list] = {}
-_stat_types_cache_lock = Lock()
-_stat_types_cache_ts: float = 0.0
-_STAT_TYPES_TTL_SEC = 300
-
-
-@router.get("/stat-types")
-def list_sandbox_stat_types(user: dict = Depends(get_current_user)):
-    """Return distinct (league, stat_type) pairs from market_observatory.
-
-    Parallel pagination (8 concurrent page fetches) with `result != pending`
-    so the rows we walk are the same superset the simulation sees. Without
-    parallelism the 22+ sequential round-trips timed out the client.
-    """
-    global _stat_types_cache, _stat_types_cache_ts
-    from engine.database import get_db
-
-    now = time.monotonic()
-    with _stat_types_cache_lock:
-        if _stat_types_cache and (now - _stat_types_cache_ts) < _STAT_TYPES_TTL_SEC:
-            return _stat_types_cache
-
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=503, detail="Database not connected")
-
-    PAGE = 1000
-    CONCURRENCY = 8
-    MAX_OFFSET = 200_000
-
-    def _fetch_page(offset: int) -> tuple[list, bool]:
-        try:
-            res = (
-                db.table("market_observatory")
-                .select("league,prop")
-                .order("market_key", desc=False)
-                .range(offset, offset + PAGE - 1)
-                .execute()
-            )
-            rows = res.data or []
-            return rows, len(rows) >= PAGE
-        except Exception as exc:
-            logger.warning("stat-types: page fetch failed at offset %d: %s", offset, exc)
-            return [], False
-
-    grouped: dict[str, set] = {}
-    offset = 0
-    done = False
-    with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
-        while not done and offset <= MAX_OFFSET:
-            batch_offsets = [offset + i * PAGE for i in range(CONCURRENCY)
-                             if offset + i * PAGE <= MAX_OFFSET]
-            futs = {pool.submit(_fetch_page, o): o for o in batch_offsets}
-            results: dict[int, tuple[list, bool]] = {}
-            for fut in as_completed(futs):
-                o = futs[fut]
-                try:
-                    results[o] = fut.result()
-                except Exception as exc:
-                    logger.warning("stat-types: future failed at %d: %s", o, exc)
-                    results[o] = ([], False)
-                    done = True
-            for o in sorted(results):
-                rows, full = results[o]
-                for r in rows:
-                    lg = (r.get("league") or "").strip() or "Unknown"
-                    prop = (r.get("prop") or "").strip()
-                    if not prop:
-                        continue
-                    grouped.setdefault(lg, set()).add(prop)
-                if not full:
-                    done = True
-            offset += CONCURRENCY * PAGE
-
-    out = {lg: sorted(props) for lg, props in sorted(grouped.items())}
-    with _stat_types_cache_lock:
-        _stat_types_cache = out
-        _stat_types_cache_ts = time.monotonic()
-    return out
 
 
 # ── Config & cache helpers ─────────────────────────────────────────────

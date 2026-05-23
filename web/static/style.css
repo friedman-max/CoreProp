@@ -2443,48 +2443,6 @@ tr.in-backtest.selected {
   color: var(--red);
 }
 
-/* Sandbox stat-type chip list: scrollable but room-aware. Uses min() so it
-   shrinks on short viewports instead of overflowing the panel, and grows
-   on tall ones rather than capping at a hard 240px. */
-.sb-prop-chips {
-  max-height: min(360px, 45vh);
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 6px 8px;
-  background: var(--surface);
-}
-.sb-prop-chips .league-chips {
-  /* Stat-type names can be long (e.g. "3-Point Field Goals Made"); allow
-     chips to break into multiple lines instead of overflowing horizontally. */
-  flex-wrap: wrap;
-}
-.sb-prop-chips .chip {
-  white-space: normal;
-  word-break: break-word;
-  text-align: left;
-  line-height: 1.25;
-  max-width: 100%;
-}
-.sb-prop-chips-msg {
-  font-size: 0.8em;
-  opacity: 0.6;
-  padding: 8px 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
-}
-.sb-prop-chips-msg .btn-retry {
-  font-size: 11px;
-  padding: 4px 10px;
-}
-@media (max-width: 768px) {
-  .sb-prop-chips {
-    max-height: 280px;
-  }
-}
-
 .sandbox-controls input[type="range"] {
   width: 100%;
   accent-color: var(--accent);

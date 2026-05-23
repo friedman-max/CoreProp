@@ -3265,14 +3265,13 @@ function _readSandboxControls() {
     // sandbox DOM is fully wired (e.g. background preload firing while the
     // stat-type chips are still loading).
     const leagueChips = document.querySelectorAll("#sb-league-chips .chip.active");
-    const propChips   = document.querySelectorAll("#sb-prop-chips .chip.active");
     const probEl = $("sb-range-prob");
     const sizeEl = $("sb-select-size");
     const typeEl = $("sb-select-type");
     const kellyEl = $("sb-use-kelly");
     return {
         leagues: [...leagueChips].map(c => c.dataset.val),
-        included_props: [...propChips].map(c => c.dataset.val),
+        included_props: [],
         min_prob: probEl ? parseFloat(probEl.value) : 0.541,
         slip_size: sizeEl ? parseInt(sizeEl.value) : 2,
         slip_type: typeEl ? typeEl.value : "power",
@@ -3349,20 +3348,6 @@ function initSandbox() {
         });
     });
 
-    // 1b. Stat-type chips — populate dynamically from the actual DB so labels
-    // always match what's in market_observatory. Then wire toggles via
-    // event delegation (works even though chips are added asynchronously).
-    loadSandboxStatTypes();
-    const propsContainer = $("sb-prop-chips");
-    if (propsContainer) {
-        propsContainer.addEventListener("click", (e) => {
-            const chip = e.target.closest(".chip");
-            if (chip && propsContainer.contains(chip)) {
-                chip.classList.toggle("active");
-            }
-        });
-    }
-
     // 2. Prob range slider
     const probRange = $("sb-range-prob");
     const probLabel = $("sb-val-prob");
@@ -3409,74 +3394,6 @@ function initSandbox() {
     const btnExport = $("btn-sb-export");
     if (btnExport) {
         btnExport.onclick = exportSandboxCSV;
-    }
-}
-
-function _renderSandboxStatTypesMessage(text, withRetry = false) {
-    const container = $("sb-prop-chips");
-    if (!container) return;
-    const retryHtml = withRetry
-        ? `<button type="button" class="btn btn-secondary btn-retry" id="btn-sb-prop-retry">Retry</button>`
-        : "";
-    container.innerHTML = `<div class="sb-prop-chips-msg">${escapeHtml(text)}${retryHtml}</div>`;
-    if (withRetry) {
-        const btn = $("btn-sb-prop-retry");
-        if (btn) btn.addEventListener("click", () => loadSandboxStatTypes());
-    }
-}
-
-async function loadSandboxStatTypes() {
-    const container = $("sb-prop-chips");
-    if (!container) return;
-    _renderSandboxStatTypesMessage("Loading…");
-    try {
-        const res = await apiFetch("/api/sandbox/stat-types");
-        if (!res.ok) {
-            const detail = await _readErrorDetail(res);
-            _renderSandboxStatTypesMessage(`Failed to load stat types: ${detail}`, true);
-            return;
-        }
-        const text = await res.text();
-        if (!text) {
-            _renderSandboxStatTypesMessage("Failed to load stat types: empty response.", true);
-            return;
-        }
-        let groups;
-        try { groups = JSON.parse(text); }
-        catch {
-            _renderSandboxStatTypesMessage(
-                `Failed to load stat types: non-JSON response (${text.slice(0, 80)})`, true,
-            );
-            return;
-        }
-        const leagueOrder = ["NBA", "WNBA", "NCAAB", "MLB", "NHL"];
-        const sortedLeagues = Object.keys(groups).sort((a, b) => {
-            const ia = leagueOrder.indexOf(a);
-            const ib = leagueOrder.indexOf(b);
-            if (ia === -1 && ib === -1) return a.localeCompare(b);
-            if (ia === -1) return 1;
-            if (ib === -1) return -1;
-            return ia - ib;
-        });
-
-        const parts = [];
-        for (const lg of sortedLeagues) {
-            const props = groups[lg] || [];
-            if (!props.length) continue;
-            parts.push(`<div class="sb-prop-league-label" style="font-size:0.75em; font-weight:600; opacity:0.65; margin:6px 0 4px; letter-spacing:0.05em;">${escapeHtml(lg)}</div>`);
-            parts.push('<div class="league-chips">');
-            for (const p of props) {
-                parts.push(`<button class="chip" data-val="${escapeHtml(p)}" title="${escapeHtml(p)}">${escapeHtml(p)}</button>`);
-            }
-            parts.push('</div>');
-        }
-        if (parts.length === 0) {
-            _renderSandboxStatTypesMessage("No stat types found yet.", true);
-        } else {
-            container.innerHTML = parts.join('');
-        }
-    } catch (e) {
-        _renderSandboxStatTypesMessage("Network error loading stat types.", true);
     }
 }
 
@@ -3552,7 +3469,7 @@ async function _readErrorDetail(res) {
 async function optimizeSandboxThreshold() {
     const btnOpt = $("btn-optimize-prob");
     const leagues = [...document.querySelectorAll("#sb-league-chips .chip.active")].map(c => c.dataset.val);
-    const includedProps = [...document.querySelectorAll("#sb-prop-chips .chip.active")].map(c => c.dataset.val);
+    const includedProps = [];
     const slipSize = parseInt($("sb-select-size").value);
     const slipType = $("sb-select-type").value;
     const useKelly = $("sb-use-kelly") ? $("sb-use-kelly").checked : false;
