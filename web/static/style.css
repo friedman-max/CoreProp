@@ -2430,14 +2430,8 @@ tr.in-backtest.selected {
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
-.pnl-header-delta {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-.pnl-header-delta.positive { color: var(--green); }
-.pnl-header-delta.negative { color: var(--red); }
+.pnl-header-total.positive { color: var(--green); }
+.pnl-header-total.negative { color: var(--red); }
 .pnl-header-right {
   display: flex;
   align-items: flex-start;

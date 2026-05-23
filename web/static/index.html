@@ -460,7 +460,6 @@
             <div class="pnl-header-left">
               <div class="pnl-header-title">Cumulative P&amp;L (Unit Stake / Slip)</div>
               <div class="pnl-header-total" id="pnl-header-total">—</div>
-              <div class="pnl-header-delta" id="pnl-header-delta">—</div>
             </div>
             <div class="pnl-header-right">
               <div class="pnl-hover-date" id="pnl-hover-date"></div>
@@ -544,8 +543,11 @@
       <div class="analytics-row">
         <div class="analytics-panel">
           <div class="analytics-panel-header">
-            <h3>Calibration Curves</h3>
-            <span class="analytics-subtitle" id="cal-curves-subtitle">Loading…</span>
+            <div>
+              <h3 style="display:inline; margin-right:8px;">Calibration Curves</h3>
+              <span class="analytics-subtitle" id="cal-curves-subtitle">Loading…</span>
+            </div>
+            <span class="pnl-hover-date" id="cal-curves-hover-label"></span>
           </div>
           <div class="chart-wrap" style="height: 360px;"><canvas id="chart-calibration-curves"></canvas></div>
           <div id="cal-curves-empty" class="empty-msg" style="display:none; padding: 32px 16px; text-align:center;">

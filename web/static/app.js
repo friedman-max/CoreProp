@@ -1333,10 +1333,27 @@ function renderCalibrationCurves(isotonic) {
     });
   });
 
+  // Pre-compute the dataset index of the Global curve so the external
+  // tooltip can filter to it without re-scanning every call.
+  const globalIdx = datasets.findIndex(d => d._meta && d._meta.kind === "global");
+  const hoverLabel = document.getElementById("cal-curves-hover-label");
+  const _writeCurvesHover = (modelP, obsP) => {
+    if (!hoverLabel) return;
+    if (modelP == null) {
+      hoverLabel.classList.remove("visible");
+      hoverLabel.textContent = "";
+      return;
+    }
+    hoverLabel.textContent =
+      `Model ${(modelP * 100).toFixed(1)}%  ·  Observed ${(obsP * 100).toFixed(1)}%`;
+    hoverLabel.classList.add("visible");
+  };
+
   if (_charts.calibrationCurves) _charts.calibrationCurves.destroy();
   _charts.calibrationCurves = new Chart(canvas, {
     type: "line",
     data: { datasets },
+    plugins: [_crosshairPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -1358,25 +1375,28 @@ function renderCalibrationCurves(isotonic) {
             },
           },
         },
+        // On-chart tooltip suppressed. Hovered values render in the
+        // panel header (cal-curves-hover-label) Robinhood-style.
         tooltip: {
-          // Tooltip restricted to the Global curve. Per-league lines are
-          // visual reference only (different fits with different n_eff
-          // ranges that aren't directly comparable cell-by-cell).
+          enabled: false,
+          mode: "nearest",
+          intersect: false,
+          axis: "x",
           filter: (item) => {
             const ds = item.chart.data.datasets[item.datasetIndex];
             return !!(ds && ds._meta && ds._meta.kind === "global");
           },
-          callbacks: {
-            title: (items) => {
-              if (!items.length) return "";
-              return `Model ${(items[0].parsed.x * 100).toFixed(1)}%`;
-            },
-            label: (ctx) => {
-              const ds = ctx.dataset;
-              const meta = ds._meta || {};
-              const neff = meta.neff != null ? `  ·  n_eff ${Math.round(meta.neff).toLocaleString()}` : "";
-              return `${ds.label}: ${(ctx.parsed.y * 100).toFixed(1)}%${neff}`;
-            },
+          external: (ctxObj) => {
+            const tt = ctxObj.tooltip;
+            if (!tt || tt.opacity === 0 || !tt.dataPoints || !tt.dataPoints.length) {
+              _writeCurvesHover(null, null);
+              return;
+            }
+            // Only the Global dataset is allowed past the filter above,
+            // so dataPoints[0] is always Global.
+            const dp = tt.dataPoints[0];
+            if (globalIdx >= 0 && dp.datasetIndex !== globalIdx) return;
+            _writeCurvesHover(dp.parsed.x, dp.parsed.y);
           },
         },
       },
@@ -2789,9 +2809,10 @@ function _formatPnlTick(ms, rangeKey) {
 
 // Crosshair plugin: draws a thin vertical line at the active tooltip's x
 // position. Matches the Robinhood-style "scrub the chart" interaction
-// the user asked for — pairs with the header that updates on hover.
-const _pnlCrosshairPlugin = {
-  id: "pnlCrosshair",
+// the user asked for. Reused by every chart that opts in via
+// `plugins: [_crosshairPlugin]`.
+const _crosshairPlugin = {
+  id: "verticalCrosshair",
   afterDraw(chart) {
     const tt = chart.tooltip;
     if (!tt || !tt.getActiveElements || !tt.getActiveElements().length) return;
@@ -2808,6 +2829,8 @@ const _pnlCrosshairPlugin = {
     ctx.restore();
   },
 };
+// Alias kept for any older call site that still imports the old name.
+const _pnlCrosshairPlugin = _crosshairPlugin;
 
 function _fmtUnits(v) {
   const sign = v >= 0 ? "+" : "−";
@@ -2819,17 +2842,12 @@ function _writePnlHeader(endY, baselineY, hoverTs) {
   // baselineY = window's starting cumulative; delta is endY - 0 since the
   // line is rebased to start at 0 inside the window.
   const totalEl = $("pnl-header-total");
-  const deltaEl = $("pnl-header-delta");
   const dateEl  = $("pnl-hover-date");
   if (totalEl) {
     const sign = endY >= 0 ? "+" : "−";
     totalEl.textContent = `${sign}${Math.abs(endY).toFixed(2)}u`;
-  }
-  if (deltaEl) {
-    const winLabel = _pnlRange === "MAX" ? "all-time" : _pnlRange;
-    deltaEl.textContent = `${_fmtUnits(endY)}  ${winLabel}`;
-    deltaEl.classList.toggle("positive", endY >= 0);
-    deltaEl.classList.toggle("negative", endY < 0);
+    totalEl.classList.toggle("positive", endY >= 0);
+    totalEl.classList.toggle("negative", endY < 0);
   }
   if (dateEl) {
     if (hoverTs == null) {
