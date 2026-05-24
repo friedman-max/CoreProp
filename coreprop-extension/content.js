@@ -295,17 +295,118 @@ function cardNumbers(card) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Prop name aliases — CoreProp's prop_type ↔ PrizePicks card label
+//
+// PrizePicks abbreviates aggressively ("K's" instead of "Strikeouts", "Pts+Rebs"
+// instead of "Points + Rebounds"), and individual cards can use either the short
+// or long form depending on the sport / market. The matcher below uses these
+// lists with word-boundary regex so short aliases like "ks" or "hr" don't
+// false-match inside unrelated tokens (e.g., "perks" or "HRP").
+//
+// Keys are lowercased+normalized CoreProp prop names. Values are PP-side
+// strings to search for. Multiple keys can map to the same value set so
+// callers don't have to pre-canonicalize their input.
+// ---------------------------------------------------------------------------
+
+const PROP_SYNONYMS = {
+  // ─── MLB ───────────────────────────────────────────────────────────────
+  "pitcher strikeouts":     ["k's", "ks", "strikeouts", "strikeout", "pitcher strikeouts"],
+  "strikeouts":             ["k's", "ks", "strikeouts", "strikeout"],
+  "home runs":              ["home runs", "home run", "hr"],
+  "hits":                   ["hits", "hit"],
+  "runs":                   ["runs scored", "runs"],
+  "rbis":                   ["rbis", "rbi", "runs batted in"],
+  "total bases":            ["total bases", "bases"],
+  "hits+runs+rbis":         ["hits + runs + rbis", "h+r+rbi", "hits runs rbis"],
+  "walks":                  ["walks allowed", "walks"],
+  "pitching outs":          ["pitching outs", "outs recorded"],
+  "earned runs allowed":    ["earned runs allowed", "earned runs", "earned runs given up"],
+  "hits allowed":           ["hits allowed"],
+  "stolen bases":           ["stolen bases"],
+  "singles":                ["singles"],
+  "doubles":                ["doubles"],
+  "triples":                ["triples"],
+
+  // ─── NBA / WNBA ────────────────────────────────────────────────────────
+  "points":                 ["points", "pts"],
+  "rebounds":               ["rebounds", "rebs"],
+  "assists":                ["assists", "asts"],
+  "pts+rebs":               ["pts+rebs", "points + rebounds", "pts + rebs"],
+  "pts+asts":               ["pts+asts", "points + assists", "pts + asts"],
+  "rebs+asts":              ["rebs+asts", "rebounds + assists", "rebs + asts"],
+  "pts+rebs+asts":          ["pts+rebs+asts", "points + rebounds + assists", "pts + rebs + asts", "pra"],
+  "3-pointers made":        ["3-pointers", "3-pt made", "3pt made", "threes", "3 pointers"],
+  "blocks":                 ["blocks", "blks"],
+  "steals":                 ["steals", "stls"],
+  "blks+stls":              ["blks+stls", "stls+blks", "blocks + steals", "steals + blocks"],
+  "turnovers":              ["turnovers", "tos"],
+  "free throws made":       ["free throws made", "free throws", "fts made"],
+  "fantasy score":          ["fantasy score", "fantasy points"],
+
+  // ─── NHL ───────────────────────────────────────────────────────────────
+  "shots on goal":          ["shots on goal", "sog", "shots"],
+  "saves":                  ["goalie saves", "saves"],
+  "goals":                  ["goals", "goal"],
+  "power play points":      ["power play points", "ppp"],
+  // points, assists, blocks, hits already covered above
+
+  // ─── NFL ───────────────────────────────────────────────────────────────
+  "passing yards":          ["passing yards", "pass yds", "pass yards"],
+  "rushing yards":          ["rushing yards", "rush yds", "rush yards"],
+  "receiving yards":        ["receiving yards", "rec yds", "rec yards"],
+  "pass completions":       ["pass completions", "completions"],
+  "pass attempts":          ["pass attempts"],
+  "rush attempts":          ["rush attempts", "carries"],
+  "receptions":             ["receptions", "rec"],
+  "passing tds":            ["passing tds", "pass tds", "passing touchdowns"],
+  "rushing tds":            ["rushing tds", "rush tds", "rushing touchdowns"],
+  "receiving tds":          ["receiving tds", "rec tds", "receiving touchdowns"],
+  "interceptions":          ["interceptions", "ints"],
+};
+
 /**
- * Strict card match: player name fuzzy ≥ 0.65, prop word found, and the
+ * Word-boundary alias check. Returns true if `alias` appears in `text`
+ * as a standalone token (surrounded by start-of-string or non-alphanumeric
+ * chars on each side). Handles aliases containing regex specials like
+ * "K's" (apostrophe) or "P+R+A" (plus signs) safely.
+ *
+ * The boundary check is critical: without it, "ks" would match inside
+ * "perks" and "hr" would match inside "HRP", producing the wrong card.
+ */
+function aliasInText(text, alias) {
+  const a = (alias || "").toLowerCase().trim();
+  if (!a) return false;
+  const escaped = a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i");
+  return re.test(text);
+}
+
+/**
+ * Strict card match: player name fuzzy ≥ 0.65, prop alias found, and the
  * EXACT line value appears as a numeric token.
+ *
+ * Prop matching prefers the PROP_SYNONYMS dictionary (word-boundary aware,
+ * handles K's / Pts+Rebs / etc.) and falls back to the legacy word-split
+ * heuristic for props we haven't catalogued yet.
  */
 function cardMatchesLeg(card, leg) {
   const text = (card.innerText || card.textContent || "").toLowerCase();
   const propLower = normalize(leg.prop);
 
-  // Prop type word match (lenient — handles "Pts+Rebs+Asts" vs "Points")
-  const propWords = propLower.split(" ").filter(w => w.length >= 3);
-  if (!propWords.some(w => text.includes(w))) return { match: false, score: 0 };
+  // Look up aliases by the normalized prop name, then by the raw lowercased
+  // form (CoreProp prop names can have punctuation that normalize strips).
+  const aliases = PROP_SYNONYMS[propLower] || PROP_SYNONYMS[(leg.prop || "").toLowerCase().trim()];
+
+  if (aliases && aliases.length) {
+    // Catalogued prop — require word-boundary match on at least one alias.
+    if (!aliases.some(a => aliasInText(text, a))) return { match: false, score: 0 };
+  } else {
+    // Fallback for uncatalogued props — keep the legacy lenient heuristic
+    // so a brand-new market type isn't silently locked out.
+    const propWords = propLower.split(" ").filter(w => w.length >= 3);
+    if (!propWords.some(w => text.includes(w))) return { match: false, score: 0 };
+  }
 
   // EXACT line match — line must appear as a parsed numeric token
   const nums = cardNumbers(card);
@@ -359,45 +460,145 @@ async function scrollToTop() {
 }
 
 /**
- * Find a sport-tab element matching one of the candidate labels. Looks for
- * any clickable element whose visible text exactly equals the label.
+ * Find a sport-tab element matching one of the candidate labels.
+ *
+ * Tiered priority — explicit ARIA tabs and buttons first, then loose
+ * class-name matches as a fallback. This prevents a wrapping container
+ * <div class="sportTabs..."> from being selected instead of the actual
+ * clickable tab (clicking the wrapper does nothing in React, but the
+ * old loose selector would return it first because it came earlier in
+ * DOM order).
+ *
+ * Also rejects elements whose text is longer than 30 chars — a real
+ * sport tab is "NBA" or "NBA · 8", never "NBA Player Props Today..."
+ * (which is a section header, not a tab).
  */
 function findSportTab(labels) {
-  const wanted = new Set(labels.map(s => s.toUpperCase()));
-  const candidates = document.querySelectorAll(
-    'button, a, [role="tab"], [role="button"], [class*="tab" i], [class*="league" i], [class*="sport" i]'
-  );
-  for (const el of candidates) {
-    const txt = (el.innerText || el.textContent || "").trim().toUpperCase();
-    if (!txt) continue;
-    // Match if the text equals the label OR starts with it (handles "NBA · 8")
-    if (wanted.has(txt)) return el;
+  const wanted = labels.map(s => s.toUpperCase());
+  const matches = (txt) => {
+    if (!txt || txt.length > 30) return false;
     for (const w of wanted) {
-      if (txt === w || txt.startsWith(w + " ") || txt.startsWith(w + "\n")) return el;
+      if (txt === w || txt.startsWith(w + " ") || txt.startsWith(w + "\n") || txt.startsWith(w + "\t")) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // ARIA roles are most reliable on modern React UIs; class-name matches
+  // are the last resort and explicitly exclude raw <div>s (containers).
+  const tieredSelectors = [
+    '[role="tab"]',
+    'button[role="button"]',
+    'button',
+    'a[href]',
+    '[class*="tab" i]:not(div)',
+    '[class*="league" i]:not(div)',
+    '[class*="sport" i]:not(div)',
+  ];
+
+  for (const sel of tieredSelectors) {
+    const candidates = document.querySelectorAll(sel);
+    for (const el of candidates) {
+      const txt = (el.innerText || el.textContent || "").trim().toUpperCase();
+      if (matches(txt)) return el;
     }
   }
   return null;
 }
 
 /**
- * Switch PP's board to the given league. No-ops if no tab is found
- * (some boards may default to one sport without tabs).
+ * Check whether the currently-active sport tab matches `labels`. Used to
+ * (a) skip a switch when we're already on the right sport, (b) verify a
+ * click actually took effect, and (c) gate every per-leg search behind a
+ * "right sport active?" assertion.
+ *
+ * PP marks the active tab with one of several patterns depending on which
+ * React component renders it — we check every common one.
+ */
+function isCurrentLeague(labels) {
+  const wanted = labels.map(s => s.toUpperCase());
+  const matches = (txt) => {
+    if (!txt || txt.length > 30) return false;
+    for (const w of wanted) {
+      if (txt === w || txt.startsWith(w + " ") || txt.startsWith(w + "\n") || txt.startsWith(w + "\t")) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const activeSelectors = [
+    '[role="tab"][aria-selected="true"]',
+    '[role="tab"][data-state="active"]',
+    '[aria-current="page"]',
+    '[aria-current="true"]',
+    'button[class*="active" i]',
+    'button[class*="selected" i]',
+    'a[class*="active" i]',
+    'a[class*="selected" i]',
+  ];
+  for (const sel of activeSelectors) {
+    const els = document.querySelectorAll(sel);
+    for (const el of els) {
+      const txt = (el.innerText || el.textContent || "").trim().toUpperCase();
+      if (matches(txt)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Switch PP's board to the given league. Returns true on confirmed switch,
+ * false if no tab was found or the click never took effect.
+ *
+ * Retries up to 3 times. Each attempt: scroll to top → re-query the DOM
+ * (tabs can mount/unmount as PP re-renders) → scroll the tab into view
+ * (handles horizontal carousels) → click via native PointerEvent +
+ * MouseEvent → poll for up to ~2.4s for aria-selected / active-state to
+ * flip.
+ *
+ * If we're already on the right sport, no-ops immediately.
  */
 async function switchToLeague(league) {
   const labels = LEAGUE_TAB_LABELS[league] || [league];
   log(`Switching to ${league} (labels: ${labels.join(", ")})`);
 
-  await scrollToTop();
-  const tab = findSportTab(labels);
-  if (!tab) {
-    log(`No sport tab found for ${league} — proceeding without tab switch`);
-    return false;
+  // Fast path: already on this league.
+  if (isCurrentLeague(labels)) {
+    log(`Already on ${league} — no switch needed`);
+    return true;
   }
-  log(`Clicking sport tab "${tab.innerText.trim()}"`);
-  tab.scrollIntoView({ behavior: "auto", block: "center" });
-  nativeClick(tab);
-  await sleep(1200);   // give the React board time to refilter
-  return true;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await scrollToTop();
+    const tab = findSportTab(labels);
+    if (!tab) {
+      log(`[attempt ${attempt}/3] No sport tab found for ${league}`);
+      await sleep(500);
+      continue;
+    }
+
+    log(`[attempt ${attempt}/3] Clicking sport tab "${(tab.innerText || "").trim().slice(0, 30)}"`);
+    tab.scrollIntoView({ behavior: "auto", block: "center", inline: "center" });
+    await sleep(150);  // let layout settle after scroll before clicking
+    nativeClick(tab);
+
+    // Poll for confirmation that the sport actually switched. PP re-renders
+    // the board asynchronously, so we can't just sleep — we have to watch
+    // the active-tab state flip.
+    for (let waitTick = 0; waitTick < 12; waitTick++) {  // up to ~2.4s
+      await sleep(200);
+      if (isCurrentLeague(labels)) {
+        log(`Confirmed switch to ${league} (took ${(waitTick + 1) * 200}ms)`);
+        await sleep(400);  // small grace period for the cards to mount
+        return true;
+      }
+    }
+    log(`[attempt ${attempt}/3] Click did not switch to ${league} — retrying`);
+  }
+
+  log(`Failed to switch to ${league} after 3 attempts`);
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -681,6 +882,26 @@ async function tryClickMatchingCard(leg, index) {
 
 async function buildLeg(leg, index) {
   setLegStatus(index, "searching");
+
+  // ─── Sport-active safety check ────────────────────────────────────────
+  // The per-group switchToLeague() at the top of the slip-build loop can
+  // silently land on the wrong sport (e.g. NBA stays selected when WNBA
+  // was clicked). Search results on PP are scoped to the active sport
+  // tab, so typing "Anthony Edwards" while WNBA is active would either
+  // return nothing or — worse — match a different player whose name
+  // happens to collide. Verify the active league before typing; if it's
+  // not what this leg wants, re-switch. If even the retry fails, bail
+  // on this leg rather than searching on the wrong sport.
+  const legLabels = LEAGUE_TAB_LABELS[(leg.league || "").toUpperCase()] || [leg.league];
+  if (!isCurrentLeague(legLabels)) {
+    log(`Leg ${index} — active sport ≠ ${leg.league}, re-switching before search`);
+    await switchToLeague(leg.league);
+    if (!isCurrentLeague(legLabels)) {
+      log(`Leg ${index} — could not confirm switch to ${leg.league}, aborting leg`);
+      setLegStatus(index, "error", `Could not switch to ${leg.league} for this leg`);
+      return false;
+    }
+  }
 
   // Strategy 1: open PP's search bar, type the player's name, scroll the
   // filtered results to find the exact prop+line+side. This is the primary
