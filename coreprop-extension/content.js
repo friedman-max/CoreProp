@@ -209,6 +209,43 @@ async function fetchPendingSlip() {
   return { error: null, slip: data };
 }
 
+/**
+ * Poll fetchPendingSlip until we either get a slip, hit a hard error, or
+ * exhaust the budget. Single-shot fetch was racing three real situations:
+ *
+ *   1. The new PP tab loads faster than the website's POST to /api/pending-slip
+ *      lands on the backend. Extension fetches → server has nothing → done.
+ *   2. The user had a PP tab already open before clicking Place on
+ *      PrizePicks — the existing tab's extension already ran on its
+ *      initial page load, saw nothing, and never re-checked.
+ *   3. Render cold-start: localhost backend takes a beat to wake up the
+ *      Supabase client, the first GET returns {} before the in-memory
+ *      _pending_slips dict is populated by the website's POST.
+ *
+ * Backoff schedule covers ~75s of total wall time with rapid early
+ * attempts (catches the common timing race within a few seconds) and
+ * slower late attempts (catches the user-opens-PP-then-clicks case
+ * without hammering the backend).
+ */
+async function pollForPendingSlip() {
+  const waitsMs = [1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 8000, 10000, 12000, 15000];
+  let elapsed = 0;
+  for (let i = 0; i < waitsMs.length; i++) {
+    await sleep(waitsMs[i]);
+    elapsed += waitsMs[i];
+    const result = await fetchPendingSlip();
+    // Hard error (network / server unreachable) — bail immediately so the
+    // user sees "Could not reach CoreProp" rather than a long silent wait.
+    if (result.error) return result;
+    if (result.slip) return result;
+    setStatus(
+      `Waiting for slip from CoreProp… (${Math.round(elapsed / 1000)}s, retry ${i + 1}/${waitsMs.length})`,
+      "#94a3b8"
+    );
+  }
+  return { error: null, slip: null };
+}
+
 async function clearPendingSlip() {
   await sendToBackground({ type: "coreprop:clear-pending-slip" });
 }
@@ -729,12 +766,13 @@ async function buildLeg(leg, index) {
 async function run() {
   log("CoreProp content script loaded on", location.href);
   ensurePanel();
-  setStatus("Checking for pending slip…");
+  setStatus("Waiting for slip from CoreProp…");
   setFooter("");
 
-  await sleep(1000);
-
-  const { slip, error } = await fetchPendingSlip();
+  // Poll with backoff instead of a single fetch. See pollForPendingSlip
+  // for the three race conditions this covers — collectively responsible
+  // for the "No pending slip" false negative.
+  const { slip, error } = await pollForPendingSlip();
 
   if (error) {
     setStatus("Could not reach CoreProp.", "#f87171");
@@ -749,7 +787,7 @@ async function run() {
 
   if (!slip) {
     setStatus("No pending slip from CoreProp.", "#94a3b8");
-    setFooter("Click <b>Place on PrizePicks</b> in CoreProp to send a slip here.");
+    setFooter("Click <b>Place on PrizePicks</b> in CoreProp to send a slip here, then this panel will pick it up automatically.");
     setTimeout(() => panel && panel.remove(), 8000);
     return;
   }
