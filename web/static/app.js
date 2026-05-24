@@ -4122,6 +4122,16 @@ function renderSandboxResults(data) {
         xMax = Date.now();
         xMin = xMax - 86400000;
     }
+    // Single-slip case (or all slips at the exact same instant): xMin
+    // collapses onto xMax and the chart's x-axis has zero width, so the
+    // line never renders. Pad the window — half a day on each side for
+    // MAX, a quarter of the chosen range otherwise — so there's always
+    // a visible horizontal span to draw on.
+    if (xMax - xMin < 60_000) {
+        const pad = rangeMs != null ? rangeMs / 4 : 12 * 3600_000;
+        xMin = xMin - pad;
+        xMax = xMax + pad;
+    }
 
     const startY = 0;
     const endY = rawPoints.length ? rawPoints[rawPoints.length - 1].y : 0;
@@ -4253,13 +4263,34 @@ function renderSandboxResults(data) {
     // could render.
     const slipLogPanel = $("sb-slip-log");
     const slipLogBody  = $("sb-slip-log-body");
-    if (sandboxLastSlips.length && slipLogPanel && slipLogBody) {
+    // Filter out Kelly-zero slips before rendering. They contribute
+    // nothing to ROI/win-rate (already excluded from `bet_slips` in the
+    // summary) and were crowding the log with rows of "$0.00 / $0.00 /
+    // $0.00" that drove the actually-staked slips off the visible page.
+    const loggedSlips = sandboxLastSlips.filter(s => (s.bet_size || 0) > 0);
+    if (loggedSlips.length && slipLogPanel && slipLogBody) {
         slipLogPanel.style.display = "block";
         const countEl = $("sb-slip-count");
-        if (countEl) countEl.textContent = `(${sandboxLastSlips.length} slips, newest first)`;
+        if (countEl) {
+            const skipped = sandboxLastSlips.length - loggedSlips.length;
+            const tail = skipped > 0 ? ` · ${skipped} Kelly-$0 skipped` : "";
+            countEl.textContent = `(${loggedSlips.length} slips, newest first${tail})`;
+        }
         const _profitClass = (v) => (v >= 0 ? "positive" : "negative");
-        const rows = [...sandboxLastSlips].reverse().slice(0, 500).map((sl) => {
-            const dateStr = sl.timestamp ? new Date(sl.timestamp).toLocaleDateString() : "—";
+        const rows = [...loggedSlips].reverse().slice(0, 500).map((sl) => {
+            // Include time-of-day — replay ticks are minute-precise and
+            // multiple slips can land on the same calendar day; showing
+            // only the date collapses them into indistinguishable rows.
+            let dateStr = "—";
+            if (sl.timestamp) {
+                const d = new Date(sl.timestamp);
+                if (Number.isFinite(d.getTime())) {
+                    dateStr = d.toLocaleString([], {
+                        month: "short", day: "numeric",
+                        hour: "numeric", minute: "2-digit",
+                    });
+                }
+            }
             const detail = (sl.legs || []).map(l => {
                 let glyph;
                 if (l.result === "hit") glyph = "✓";

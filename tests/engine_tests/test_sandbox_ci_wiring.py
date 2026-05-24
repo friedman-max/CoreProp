@@ -59,6 +59,18 @@ class BootstrapShapeTests(unittest.TestCase):
         ci = StrategyTester._bootstrap_metrics([], n_resamples=50)
         self.assertEqual(ci, {})
 
+    def test_single_slip_returns_empty_dict(self):
+        # With only one bet slip every resample picks the same row, so
+        # the CI degenerates to a single point. The UI renders that as
+        # "+200%, +200%" — vacuous and misleading. Skip and let the UI
+        # show "—" instead.
+        ci = StrategyTester._bootstrap_metrics(
+            [_bet_slip(5)], n_resamples=200,
+        )
+        self.assertEqual(ci, {},
+            "n<2 should suppress the CI to avoid degenerate "
+            "[+x%, +x%] bands")
+
     def test_brackets_point_estimate_for_strong_signal(self):
         # 100 slips, every one wins +5u. ROI = 500%. The 95% CI from
         # bootstrap resampling MUST include the point estimate.

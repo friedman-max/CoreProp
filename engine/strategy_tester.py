@@ -850,7 +850,11 @@ class StrategyTester:
         non-bootstrapped summary metric so the CI on max_drawdown_pct
         is in the same units the user sees on the card."""
         n = len(slips)
-        if n == 0:
+        # With <2 slips every bootstrap resample picks the same single
+        # row, so the "CI" degenerates to [point, point] (e.g.
+        # "+200%, +200%") which is mathematically vacuous and visually
+        # misleading. Return empty so the UI renders "—" instead.
+        if n < 2:
             return {}
         rng = random.Random(_BOOTSTRAP_SEED)
 
