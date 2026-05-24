@@ -2488,7 +2488,14 @@ function renderBacktest() {
           }),
         });
         if (!resp.ok) throw new Error("store failed");
-        window.open("https://app.prizepicks.com/board", "_blank");
+        // Open PP with noopener,noreferrer so the new tab is indistinguishable
+        // from a manual navigation (no Referer header, no document.referrer,
+        // no window.opener handle). Programmatic window.open() from a
+        // cross-origin page is one of the cleanest signals PerimeterX uses
+        // to fingerprint automated traffic, so dropping all three of those
+        // breadcrumbs eliminates the "are you a bot" challenge that
+        // sometimes fires the moment PP loads.
+        window.open("https://app.prizepicks.com/board", "_blank", "noopener,noreferrer");
       } catch (err) {
         showToast("Could not store pending slip: " + err.message, "error");
       }
