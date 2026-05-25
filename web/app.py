@@ -1043,6 +1043,22 @@ def _run_pipeline_body():
                     from engine.backtest import BacktestLogger
                     bl = BacktestLogger(user_id=uid, db_client=db)
 
+                    # RWBC circuit-breaker filter — when USE_RWBC is on,
+                    # legs whose calibration cell has w_cell < threshold
+                    # are flagged with `calibration_halted=True` by
+                    # engine/ev_calculator.py. Skip them before
+                    # try_log_slip so we never log a slip leg with no
+                    # trustworthy probability behind it. Counted for
+                    # auditability.
+                    n_before = len(pool)
+                    pool = [b for b in pool if not b.get("calibration_halted")]
+                    n_skipped = n_before - len(pool)
+                    if n_skipped > 0:
+                        logger.info(
+                            "auto_backtest    user=%s skipped_due_to_circuit_breaker=%d remaining_pool=%d",
+                            uid, n_skipped, len(pool),
+                        )
+
                     # Pass the top ~40 candidates from the filtered pool.
                     bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
             except Exception as e:
@@ -1256,6 +1272,18 @@ def startup():
     _reschedule(_state["interval_min"])
     logger.info("Scheduler started. Auto-refresh every %d min.", _state["interval_min"])
 
+    # Warm the RWBC cell cache from calibration_cells so calibrate() works
+    # for the auto-backtester before the first hourly refit completes.
+    # Safe to call even if migration_010 hasn't been applied yet — the
+    # loader logs and returns 0.
+    try:
+        from engine import rwbc_calibration as _rwbc_boot
+        from engine.database import get_db as _get_db_boot
+        n_cells = _rwbc_boot.load_cell_cache_from_db(_get_db_boot())
+        logger.info("Startup: RWBC cell cache warmed with %d cells.", n_cells)
+    except Exception as exc:
+        logger.warning("Startup: RWBC cache warm failed (continuing): %s", exc)
+
     # ── Startup recovery: finalize any missed CLV rows from when the app was down ──
     def _startup_clv_recovery():
         try:
@@ -1266,6 +1294,124 @@ def startup():
             logger.warning("Startup CLV recovery error: %s", exc)
 
     threading.Thread(target=_startup_clv_recovery, daemon=True).start()
+
+    # ── RWBC loader + Brier-decomp helpers (used by the hourly refit) ──
+    def _load_observations_for_rwbc(db):
+        """Pull settled observatory rows, group by (league, prop, side),
+        compute global hit rate, and return everything the RWBC fit
+        + history-recording path needs in one dict.
+
+        Recency-weighting: we use a flat weight=1.0 per observation here
+        because the existing isotonic refit's recency loader (60-day
+        half-life) feeds the persistence layer that's already aged the
+        sample; RWBC fitting from market_observatory directly means we
+        get the full population. If you want recency weighting in RWBC,
+        compute weight = exp(-Δdays/H) here. Keeping it flat for v1 so
+        the empirical match with probes 06-07 is exact.
+        """
+        if db is None:
+            return None
+        try:
+            from engine import rwbc_calibration as _rwbc
+            from engine.isotonic_calibration import (
+                calibrate as _apply_iso, load_isotonic_calibration as _load_iso,
+            )
+        except Exception as exc:
+            logger.error("RWBC.load: import failure %s", exc)
+            return None
+
+        # Page through settled observations. We deliberately cap at
+        # MAX_ROWS to avoid an unbounded scan as history grows; the
+        # 60-day half-life already saturates well before this cap.
+        MAX_ROWS = 80_000
+        PAGE = 1000
+        rows: list[dict] = []
+        offset = 0
+        try:
+            while offset < MAX_ROWS:
+                res = (
+                    db.table("market_observatory")
+                      .select("league, prop, side, true_prob, result, game_start, resolved_at")
+                      .neq("result", "pending")
+                      .in_("league", ["NBA", "WNBA", "MLB", "NHL"])
+                      .order("resolved_at", desc=True)
+                      .range(offset, offset + PAGE - 1)
+                      .execute()
+                )
+                chunk = res.data or []
+                if not chunk:
+                    break
+                rows.extend(chunk)
+                if len(chunk) < PAGE:
+                    break
+                offset += PAGE
+        except Exception as exc:
+            logger.error("RWBC.load: query failure %s", exc)
+            return None
+
+        # Convert outcome strings to binary y; drop pushes/dnp.
+        def _y(r):
+            s = str(r or "").lower()
+            if s in ("hit", "won", "win"):  return 1.0
+            if s in ("miss", "lost", "loss"): return 0.0
+            return None
+
+        settled = []
+        for r in rows:
+            y = _y(r.get("result"))
+            tp = r.get("true_prob")
+            if y is None or tp is None:
+                continue
+            try:
+                tp_f = float(tp)
+            except (TypeError, ValueError):
+                continue
+            side = str(r.get("side") or "").strip().lower()
+            if side not in ("over", "under"):
+                continue
+            settled.append({
+                "league": r.get("league"),
+                "prop":   r.get("prop"),
+                "side":   side,
+                "pred":   tp_f,
+                "y":      y,
+                "weight": 1.0,
+                "prob_bucket": _rwbc.bucket_of(tp_f),
+            })
+
+        if not settled:
+            return None
+
+        global_hit_rate = sum(o["y"] for o in settled) / len(settled)
+        by_cell: dict[tuple[str, str, str], list[dict]] = {}
+        for o in settled:
+            by_cell.setdefault((o["league"], o["prop"], o["side"]), []).append(o)
+
+        # Brier comparison: current isotonic vs RWBC, in-sample on the
+        # same population. RWBC is computed AFTER fitting (we'll do that
+        # in the caller), so here we only stage the current-isotonic
+        # Brier — it's free since the curves are already loaded.
+        try:
+            curves = _load_iso()
+        except Exception:
+            curves = None
+
+        brier_current = None
+        if curves:
+            sq_err = 0.0
+            for o in settled:
+                p_iso = _apply_iso(curves, o["league"], o["prop"], o["side"], o["pred"])
+                sq_err += (p_iso - o["y"]) ** 2
+            brier_current = sq_err / len(settled)
+
+        return {
+            "by_cell":         by_cell,
+            "global_hit_rate": global_hit_rate,
+            "n_settled":       len(settled),
+            "brier_current":   brier_current,
+            "brier_rwbc":      None,   # filled by caller post-fit
+            "settled":         settled,  # for post-fit Brier recompute
+        }
 
     # ── Hourly calibration + correlation refit ──
     # Updated from daily → hourly: calibration multipliers and leg-pair
@@ -1305,6 +1451,60 @@ def startup():
                 logger.info("Hourly refit: calibration — no mature data yet")
         except Exception as exc:
             logger.error("Hourly refit: calibration error: %s", exc)
+
+        # ── RWBC refit ──────────────────────────────────────────────────
+        # Always run, regardless of USE_RWBC flag — that way calibration_cells
+        # stays warm and the Observatory monitoring panels have data even
+        # when the live calibrator is still isotonic. The flag only gates
+        # which calibrator engine/ev_calculator.py consults at scoring time.
+        try:
+            from engine import rwbc_calibration
+            from engine.database import get_db as _get_db
+            db = _get_db()
+            obs = _load_observations_for_rwbc(db)
+            if obs and obs.get("by_cell"):
+                fits = rwbc_calibration.fit_all_cells(
+                    obs["by_cell"], obs["global_hit_rate"],
+                )
+
+                # Compute RWBC Brier on the same population so the trend
+                # panel can plot side-by-side current vs RWBC.
+                if fits and obs.get("settled"):
+                    sq_err = 0.0
+                    for o in obs["settled"]:
+                        fit = fits.get((o["league"], o["prop"], o["side"]))
+                        if fit is None or fit["w_cell"] < rwbc_calibration.W_CELL_HALT_THRESHOLD:
+                            # Halted cell — fall back to raw model prob,
+                            # matching the auto-backtester's display path.
+                            p_rwbc = o["pred"]
+                        else:
+                            p_rwbc = (fit["w_cell"] * o["pred"]
+                                      + (1 - fit["w_cell"]) * fit["p_post"])
+                        sq_err += (p_rwbc - o["y"]) ** 2
+                    brier_rwbc = sq_err / len(obs["settled"])
+                else:
+                    brier_rwbc = None
+
+                pub, skip = rwbc_calibration.publish_if_delta_n_exceeded(db, fits)
+                rwbc_calibration.load_cell_cache_from_db(db)
+                rwbc_calibration.record_history(
+                    db,
+                    scope="global",
+                    brier_current=obs.get("brier_current"),
+                    brier_rwbc=brier_rwbc,
+                    n_settled=obs.get("n_settled", 0),
+                    publish_skipped=(pub == 0 and skip > 0),
+                )
+                logger.info(
+                    "Hourly refit: RWBC — %d cells fit, %d published, %d gated; "
+                    "Brier current=%.5f rwbc=%.5f",
+                    len(fits), pub, skip,
+                    obs.get("brier_current") or 0.0, brier_rwbc or 0.0,
+                )
+            else:
+                logger.info("Hourly refit: RWBC — no observations available yet")
+        except Exception as exc:
+            logger.error("Hourly refit: RWBC error: %s", exc)
 
         try:
             from engine.sharpness_calibration import update_sharpness_weights

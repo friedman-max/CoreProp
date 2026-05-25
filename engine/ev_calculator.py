@@ -19,8 +19,14 @@ from engine.constants import (
 )
 from engine.devig import prob_to_american
 from engine.isotonic_calibration import (
-    load_isotonic_calibration, calibrate as _apply_calibration,
+    load_isotonic_calibration, calibrate as _apply_isotonic_calibration,
 )
+# RWBC drop-in alternative — only consulted when config.USE_RWBC=true.
+# Returns Optional[float]: a number means "calibrated prob", None means
+# "cell untradeable" (circuit breaker fired). The wrapper below picks
+# the calibrator at import time.
+from engine import rwbc_calibration as _rwbc
+from config import USE_RWBC as _USE_RWBC
 from engine.correlation import build_correlation_matrix, legs_metadata_from_bets
 
 # Module-level calibration curves (refreshed on import or via reload_calibration).
@@ -83,18 +89,41 @@ class BetResult:
         self.market_width = market_width
         self.team = team or ""
 
-        # Hierarchical isotonic calibration with Bayesian shrinkage:
-        # global PAV curve combined with the (league, prop, side) curve via
-        # κ-shrinkage. Strictly more flexible than the Beta-Binomial bands
-        # because PAV borrows monotone signal across neighbouring raw-prob
-        # bins instead of cliffing at hard band edges. The [0.001, 0.999]
-        # window is a numerical guard for downstream log-loss / EV math;
-        # the calibrated number is allowed to push above or below raw_prob
-        # when the data warrants.
-        _raw_calibrated = _apply_calibration(
-            _calibration_curves, league, prop_type, side, true_prob,
-        )
-        calibrated_prob = max(0.001, min(0.999, _raw_calibrated))
+        # Calibration. Two code paths gated by config.USE_RWBC:
+        #
+        # USE_RWBC=false (default) — Hierarchical isotonic with Bayesian
+        #   shrinkage: global PAV curve combined with the (league, prop,
+        #   side) curve via κ-shrinkage. Strictly more flexible than the
+        #   Beta-Binomial bands because PAV borrows monotone signal across
+        #   neighbouring raw-prob bins instead of cliffing at hard band
+        #   edges. The [0.001, 0.999] window is a numerical guard for
+        #   downstream log-loss / EV math; the calibrated number is
+        #   allowed to push above or below raw_prob when the data warrants.
+        #
+        # USE_RWBC=true — Reliability-Weighted Bayesian Calibration. Per
+        #   (league, prop, side) cell with hard circuit breaker. A None
+        #   return from _rwbc.calibrate() means the cell is untradeable;
+        #   we still need to populate self.true_prob for display surfaces
+        #   (the Lines tab, +EV table tooltip), so we fall back to
+        #   raw_true_prob for display while setting calibration_halted=True
+        #   so the auto-backtester can filter the leg out of slip pools.
+        self.calibration_halted = False
+        if _USE_RWBC:
+            _rwbc_prob = _rwbc.calibrate(true_prob, league, prop_type, side)
+            if _rwbc_prob is None:
+                # Cell halted — display surfaces see raw model output but
+                # auto-backtest skips. edge/individual_ev_pct stay at the
+                # raw values; the auto-backtest worker is the gate.
+                self.calibration_halted = True
+                calibrated_prob = max(0.001, min(0.999, true_prob))
+            else:
+                calibrated_prob = _rwbc_prob
+        else:
+            _raw_calibrated = _apply_isotonic_calibration(
+                _calibration_curves, league, prop_type, side, true_prob,
+            )
+            calibrated_prob = max(0.001, min(0.999, _raw_calibrated))
+
         self.true_prob = calibrated_prob
         self.true_odds = prob_to_american(calibrated_prob)
 
@@ -121,6 +150,10 @@ class BetResult:
             "under_odds":        self.under_odds,
             "both_sided":        self.both_sided,
             "start_time":        self.start_time,
+            # RWBC circuit breaker flag. True iff the calibration cell for
+            # this bet had w_cell < W_CELL_HALT_THRESHOLD at scoring time
+            # (auto-backtest worker filters legs with this=True).
+            "calibration_halted": bool(getattr(self, "calibration_halted", False)),
         }
 
 

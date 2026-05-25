@@ -50,3 +50,18 @@ SINGLE_SIDE_VIG = 0.070
 # Server
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))
+
+# ---------------------------------------------------------------------------
+# RWBC (Reliability-Weighted Bayesian Calibration) — feature flag.
+#
+# When true, engine/ev_calculator.py routes the calibration step through
+# engine/rwbc_calibration.py instead of the hierarchical isotonic curve.
+# RWBC is per-(league, prop, side) cell with a hard circuit breaker
+# (w_cell < 0.20 → cell is untradeable, auto-backtester skips). When false
+# the existing isotonic code path is preserved verbatim.
+#
+# Refit cadence + recency half-life are unchanged: RWBC consumes the same
+# observation stream the isotonic refit already loads, so the existing
+# hourly scheduler in web/app.py drives both code paths.
+# ---------------------------------------------------------------------------
+USE_RWBC = os.getenv("USE_RWBC", "false").lower() in ("true", "1", "yes")
