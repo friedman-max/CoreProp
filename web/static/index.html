@@ -558,6 +558,65 @@
         </div>
       </div>
 
+      <!-- ── RWBC monitoring panels (Phase 2) ────────────────────── -->
+      <div class="analytics-row">
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <div>
+              <h3 style="display:inline; margin-right:8px;">RWBC Calibration (current vs proposed)</h3>
+              <span class="analytics-subtitle" id="rwbc-cal-subtitle">Loading…</span>
+            </div>
+          </div>
+          <div class="chart-wrap" style="height: 360px; width: 100%; position: relative;">
+            <canvas id="chart-rwbc-curves"></canvas>
+          </div>
+          <div id="rwbc-cal-empty" class="empty-msg" style="display:none; padding: 24px 16px; text-align:center;">
+            No RWBC cells yet. Run the hourly refit (or restart with the migration_010 tables in place).
+          </div>
+        </div>
+      </div>
+
+      <div class="analytics-row">
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <div>
+              <h3 style="display:inline; margin-right:8px;">RWBC Cell Trust Heatmap</h3>
+              <span class="analytics-subtitle">Per (league, prop, side) — green ≥ 0.5 trust, amber 0.2–0.5, red < 0.2 (circuit breaker firing). Hover for full stats.</span>
+            </div>
+          </div>
+          <div class="table-wrapper heatmap-wrapper">
+            <table id="rwbc-heatmap-table" class="heatmap-table">
+              <thead>
+                <tr>
+                  <th>League</th>
+                  <th>Prop</th>
+                  <th style="text-align:center;">Over</th>
+                  <th style="text-align:center;">Under</th>
+                </tr>
+              </thead>
+              <tbody id="rwbc-heatmap-tbody">
+                <tr><td colspan="4" class="empty-msg">Waiting for next hourly RWBC refit…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="analytics-row">
+        <div class="analytics-panel">
+          <div class="analytics-panel-header">
+            <div>
+              <h3 style="display:inline; margin-right:8px;">RWBC Brier Trend (30d)</h3>
+              <span class="analytics-subtitle" id="rwbc-trend-subtitle">Lower = better calibrated. Compares the live isotonic Brier (white) to RWBC's Brier (green) on the same population.</span>
+            </div>
+          </div>
+          <div class="chart-wrap" style="height: 220px; width: 100%; position: relative;">
+            <canvas id="chart-rwbc-trend"></canvas>
+          </div>
+        </div>
+      </div>
+      <!-- ── end RWBC panels ─────────────────────────────────────── -->
+
       <div class="analytics-row">
         <div class="analytics-panel">
           <div class="analytics-panel-header">

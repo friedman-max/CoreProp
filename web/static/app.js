@@ -1066,6 +1066,25 @@ async function refreshObservatory() {
     console.warn("Calibration curves fetch failed:", e);
   }
 
+  // ── RWBC monitoring panels (Phase 2) ──────────────────────────────────
+  try {
+    const [rwbcResp, trendResp] = await Promise.all([
+      apiFetch("/api/observatory/rwbc"),
+      apiFetch("/api/observatory/rwbc/trend?days=30"),
+    ]);
+    if (rwbcResp.ok) {
+      const rwbc = await rwbcResp.json();
+      renderRwbcCalibrationCurves(rwbc);
+      renderRwbcHeatmap(rwbc);
+    }
+    if (trendResp.ok) {
+      const trend = await trendResp.json();
+      renderRwbcBrierTrend(trend.series || []);
+    }
+  } catch (e) {
+    console.warn("RWBC fetch failed:", e);
+  }
+
   // Per-(league, prop) hit-rate heatmap.
   try {
     const heatResp = await apiFetch("/api/calibration/heatmap");
@@ -1468,6 +1487,224 @@ function renderCalibrationCurves(isotonic) {
     legendEl.innerHTML = items;
   }
 }
+
+// ──────────────────────────────────────────────────────────────────────
+//  RWBC monitoring panels (Phase 2)
+// ──────────────────────────────────────────────────────────────────────
+
+let _rwbcCalChart = null;
+let _rwbcTrendChart = null;
+
+// Cluster-robust Wilson CI per Gemini #4. ρ = 0.15 is a defensible
+// default for prop data (props in the same game share variance). Below
+// 0.05 the bands collapse to plain Wilson; above 0.25 they get wide
+// enough to swallow most miscalibration. Exposed via a const so the
+// dev console can sense-check by reassigning.
+const RWBC_INTRA_GAME_RHO = 0.15;
+function clusteredWilson(k, n, kAvg = 8, z = 1.96) {
+  // kAvg = average props per game in the bucket. The Observatory `/api/observatory/rwbc`
+  // payload doesn't ship per-bucket game counts (would require an extra join),
+  // so we use a per-league reasonable default. NBA props-per-game ≈ 10-12,
+  // MLB ≈ 8-10. 8 is a conservative middle.
+  if (n <= 0) return [NaN, NaN];
+  const deff = 1 + Math.max(0, (kAvg - 1)) * RWBC_INTRA_GAME_RHO;
+  const nEff = n / deff;
+  const p = k / n;
+  const denom = 1 + (z * z) / nEff;
+  const center = p + (z * z) / (2 * nEff);
+  const margin = z * Math.sqrt(p * (1 - p) / nEff + (z * z) / (4 * nEff * nEff));
+  return [(center - margin) / denom, (center + margin) / denom];
+}
+
+function renderRwbcCalibrationCurves(rwbc) {
+  const canvas = document.getElementById("chart-rwbc-curves");
+  const emptyEl = document.getElementById("rwbc-cal-empty");
+  const subEl = document.getElementById("rwbc-cal-subtitle");
+  if (!canvas) return;
+  const rows = rwbc?.rows || [];
+  if (!rows.length) {
+    if (emptyEl) emptyEl.style.display = "block";
+    if (subEl) subEl.textContent = "No cells fit yet — waiting for first hourly refit.";
+    if (_rwbcCalChart) { _rwbcCalChart.destroy(); _rwbcCalChart = null; }
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = "none";
+
+  // Build two scatter series:
+  //   1. mean_pred → mean_obs (the model's claim vs reality, BEFORE RWBC)
+  //   2. p_post (RWBC's calibrated prediction) vs mean_obs
+  // Each point sized by sqrt(n_eff). Halted cells get red outline.
+  const pointsCurrent = rows.map(r => ({
+    x: r.mean_pred, y: r.mean_obs,
+    r: Math.max(3, Math.min(14, Math.sqrt(r.n_eff))),
+    raw: r,
+  }));
+  const pointsRwbc = rows.map(r => ({
+    // RWBC's predicted hit at this cell's centroid is just a blend of
+    // mean_pred and p_post, weighted by w_cell. Halted cells effectively
+    // collapse to p_post (since auto-backtester wouldn't bet them).
+    x: r.halted ? r.p_post : (r.w_cell * r.mean_pred + (1 - r.w_cell) * r.p_post),
+    y: r.mean_obs,
+    r: Math.max(3, Math.min(14, Math.sqrt(r.n_eff))),
+    raw: r,
+  }));
+
+  const equalized = rows.filter(r => {
+    const [lo, hi] = clusteredWilson(Math.round(r.mean_obs * r.n_eff), r.n_eff);
+    const target = r.halted ? r.p_post : (r.w_cell * r.mean_pred + (1 - r.w_cell) * r.p_post);
+    return target >= lo && target <= hi;
+  }).length;
+  const meanGapPp = (rows.reduce((s, r) => {
+    const target = r.halted ? r.p_post : (r.w_cell * r.mean_pred + (1 - r.w_cell) * r.p_post);
+    return s + Math.abs(r.mean_obs - target);
+  }, 0) / rows.length * 100).toFixed(2);
+  if (subEl) {
+    const summary = rwbc.summary || {};
+    subEl.textContent =
+      `${equalized}/${rows.length} cells within 95% CI · mean |gap| ${meanGapPp}pp · ` +
+      `${summary.n_halted || 0}/${summary.n_cells || 0} halted by circuit breaker`;
+  }
+
+  if (_rwbcCalChart) _rwbcCalChart.destroy();
+  const ctx = canvas.getContext("2d");
+  _rwbcCalChart = new Chart(ctx, {
+    type: "scatter",
+    data: {
+      datasets: [
+        {
+          label: "Current isotonic (mean_pred → mean_obs)",
+          data: pointsCurrent,
+          backgroundColor: "rgba(255,255,255,0.45)",
+          borderColor: "rgba(255,255,255,0.85)",
+          borderWidth: 1,
+        },
+        {
+          label: "RWBC (calibrated → mean_obs)",
+          data: pointsRwbc,
+          backgroundColor: "rgba(34,197,94,0.55)",
+          borderColor: "rgba(34,197,94,0.95)",
+          borderWidth: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: "#cbd5e1", font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const r = ctx.raw.raw;
+              return [
+                `${r.league} · ${r.prop} · ${r.side.toUpperCase()}`,
+                `n_eff ${r.n_eff.toFixed(0)}  w_cell ${r.w_cell.toFixed(2)}`,
+                `pred ${ctx.parsed.x.toFixed(3)}  obs ${ctx.parsed.y.toFixed(3)}`,
+                r.halted ? "⚠ HALTED (circuit breaker)" : "",
+              ].filter(Boolean);
+            },
+          },
+        },
+      },
+      scales: {
+        x: { title: { display: true, text: "predicted hit rate", color: "#94a3b8" },
+             ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.06)" },
+             min: 0.2, max: 0.9 },
+        y: { title: { display: true, text: "observed hit rate", color: "#94a3b8" },
+             ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.06)" },
+             min: 0.2, max: 0.9 },
+      },
+    },
+  });
+}
+
+function renderRwbcHeatmap(rwbc) {
+  const tbody = document.getElementById("rwbc-heatmap-tbody");
+  if (!tbody) return;
+  const rows = rwbc?.rows || [];
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty-msg">Waiting for first RWBC refit…</td></tr>';
+    return;
+  }
+
+  // Group by (league, prop) and pivot over/under.
+  const grouped = new Map();
+  for (const r of rows) {
+    const k = `${r.league}|${r.prop}`;
+    if (!grouped.has(k)) grouped.set(k, { league: r.league, prop: r.prop, over: null, under: null });
+    grouped.get(k)[r.side] = r;
+  }
+
+  const entries = Array.from(grouped.values()).sort((a, b) =>
+    (a.league + a.prop).localeCompare(b.league + b.prop));
+
+  const cellHtml = (r) => {
+    if (!r) return '<td style="color:#475569; text-align:center;">—</td>';
+    const w = r.w_cell;
+    const bg = w >= 0.5 ? "rgba(34,197,94,0.18)"
+             : w >= 0.20 ? "rgba(251,191,36,0.18)"
+             : "rgba(239,68,68,0.18)";
+    const fg = w >= 0.5 ? "#86efac"
+             : w >= 0.20 ? "#fde68a"
+             : "#fca5a5";
+    const dot = r.halted ? ' <span title="Circuit breaker: cell untradeable" style="color:#ef4444;">●</span>' : "";
+    const tip =
+      `n_eff=${r.n_eff.toFixed(0)} · pred=${r.mean_pred.toFixed(3)} → obs=${r.mean_obs.toFixed(3)} · p_post=${r.p_post.toFixed(3)}`;
+    return `<td style="background:${bg}; color:${fg}; text-align:center; font-variant-numeric: tabular-nums;" title="${tip}">w=${w.toFixed(2)}${dot}</td>`;
+  };
+
+  tbody.innerHTML = entries.map(e => `
+    <tr>
+      <td style="color:#94a3b8;">${e.league}</td>
+      <td>${e.prop || "—"}</td>
+      ${cellHtml(e.over)}
+      ${cellHtml(e.under)}
+    </tr>
+  `).join("");
+}
+
+function renderRwbcBrierTrend(series) {
+  const canvas = document.getElementById("chart-rwbc-trend");
+  if (!canvas) return;
+  if (!series || !series.length) {
+    if (_rwbcTrendChart) { _rwbcTrendChart.destroy(); _rwbcTrendChart = null; }
+    return;
+  }
+  const labels = series.map(s => new Date(s.fit_at).toLocaleString([], {
+    month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit",
+  }));
+  const cur = series.map(s => s.brier_current != null ? Number(s.brier_current) : null);
+  const rwb = series.map(s => s.brier_rwbc != null ? Number(s.brier_rwbc) : null);
+
+  if (_rwbcTrendChart) _rwbcTrendChart.destroy();
+  const ctx = canvas.getContext("2d");
+  _rwbcTrendChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Current isotonic", data: cur, borderColor: "rgba(255,255,255,0.85)",
+          backgroundColor: "transparent", tension: 0.25, pointRadius: 0 },
+        { label: "RWBC",              data: rwb, borderColor: "rgba(34,197,94,0.95)",
+          backgroundColor: "transparent", tension: 0.25, pointRadius: 0 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: "#cbd5e1", font: { size: 11 } } },
+        tooltip: { mode: "index", intersect: false },
+      },
+      scales: {
+        x: { ticks: { color: "#94a3b8", maxRotation: 0, maxTicksLimit: 8 },
+             grid: { color: "rgba(255,255,255,0.04)" } },
+        y: { title: { display: true, text: "Brier score (lower = better)", color: "#94a3b8" },
+             ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.06)" } },
+      },
+    },
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────────
 
 function renderObservatoryMultipliers(payload) {
   const tbody = $("obs-multiplier-tbody");

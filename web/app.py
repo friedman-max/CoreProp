@@ -3190,6 +3190,78 @@ def get_calibration_map_api():
         return {"anchor": 0.60, "fitted_at": None, "rows": []}
 
 
+@app.get("/api/observatory/rwbc")
+def get_rwbc_observatory():
+    """Per-cell RWBC state for the Observatory monitoring panels.
+
+    Returns one row per (league, prop, side) cell currently in the
+    process-local cell cache, plus a small `summary` dict for the
+    headline numbers above the chart. Used by:
+      - Panel 2 (cell trust heatmap)  → rows[]
+      - Panel 1 (calibration curves)  → derived from rows[] + observatory hits
+
+    Mirrors what's persisted in calibration_cells; for fresh boots the
+    cache may be empty until the first refit completes. In that case
+    `rows` is [] and the panels render a "warming up" placeholder.
+    """
+    try:
+        from engine import rwbc_calibration as _rwbc
+        cells = _rwbc.all_cells()
+        summary = _rwbc.cache_stats()
+        rows = [{
+            "league":            c.league,
+            "prop":              c.prop,
+            "side":              c.side,
+            "w_cell":            round(c.w_cell, 4),
+            "p_post":            round(c.p_post, 4),
+            "n_eff":             round(c.n_eff, 1),
+            "resolution":        round(c.resolution, 6),
+            "reliability_error": round(c.reliability_error, 6),
+            "mean_pred":         round(c.mean_pred, 4),
+            "mean_obs":          round(c.mean_obs, 4),
+            "halted":            c.w_cell < _rwbc.W_CELL_HALT_THRESHOLD,
+            "last_fit_at":       c.last_fit_at.isoformat() if c.last_fit_at else None,
+            "last_publish_at":   c.last_publish_at.isoformat() if c.last_publish_at else None,
+        } for c in cells]
+        return {
+            "summary": summary,
+            "rows": rows,
+        }
+    except Exception as exc:
+        logger.error("API: RWBC observatory fetch error: %s", exc)
+        return {"summary": {}, "rows": []}
+
+
+@app.get("/api/observatory/rwbc/trend")
+def get_rwbc_brier_trend(days: int = 30):
+    """Brier-trend sparkline for Observatory Panel 3.
+
+    Pulls the last `days` of calibration_history rows for the 'global'
+    scope, returns aligned current-vs-RWBC Brier series. The plot is
+    a small sparkline; ~30 points (one per refit, ~hourly) is plenty.
+    """
+    try:
+        from engine.database import get_db as _get_db
+        db = _get_db()
+        if db is None:
+            return {"series": []}
+        # Bound the response — at hourly refits, 30 days is ~720 rows.
+        limit = max(50, min(days * 24 + 50, 1200))
+        res = (
+            db.table("calibration_history")
+              .select("fit_at, brier_current, brier_rwbc, n_settled, publish_skipped")
+              .eq("scope", "global")
+              .order("fit_at", desc=True)
+              .limit(limit)
+              .execute()
+        )
+        rows = list(reversed(res.data or []))  # chronological for plot
+        return {"series": rows}
+    except Exception as exc:
+        logger.error("API: RWBC trend fetch error: %s", exc)
+        return {"series": []}
+
+
 @app.get("/api/calibration/brier_monitor")
 def get_calibration_brier_monitor_api():
     """Rolling Brier-score monitor history.
