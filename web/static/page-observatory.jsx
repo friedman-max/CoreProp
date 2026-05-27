@@ -1,7 +1,23 @@
 // Observatory — calibration curves + per-prop multipliers + heatmap + market feed.
+// Wired to /api/observatory, /api/observatory/multipliers, /api/calibration/heatmap,
+// /api/calibration/curves.
 const { useState: useStateO, useMemo: useMemoO } = React;
 
-// Per-prop multipliers (illustrative, mirrors obs-multiplier-table)
+function _ago(iso) {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "—";
+  const dm = Date.now() - t;
+  const m = Math.round(dm / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return m + "m ago";
+  const h = Math.round(m / 60);
+  if (h < 24) return h + "h ago";
+  const d = Math.round(h / 24);
+  return d + "d ago";
+}
+
+// Fallback mock — used only if API returns empty (e.g. fresh deploy).
 const MULTIPLIERS = [
   { league: "NBA",  prop: "Points",       over: 1.00, overN: 412, under: 0.97, underN: 398 },
   { league: "NBA",  prop: "Rebounds",     over: 0.94, overN: 287, under: 1.05, underN: 290 },
@@ -53,6 +69,29 @@ const FEED = [
 function ObservatoryPage() {
   const [leagueChips, setLeagueChips] = useState(new Set(["NBA", "WNBA", "MLB", "NHL", "NCAAB"]));
   const [resultChips, setResultChips] = useState(new Set(["pending", "hit", "miss", "push", "dnp"]));
+  const [multData, setMultData] = useState(null);
+  const [heatData, setHeatData] = useState(null);
+  const [feedData, setFeedData] = useState(null);
+  const [curvesData, setCurvesData] = useState(null);
+  const [loadErr, setLoadErr] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const f = window.cpApi.apiFetch;
+    Promise.allSettled([
+      f("/api/observatory/multipliers"),
+      f("/api/calibration/heatmap"),
+      f("/api/observatory"),
+      f("/api/calibration/curves"),
+    ]).then(([m, h, o, c]) => {
+      if (cancelled) return;
+      if (m.status === "fulfilled") setMultData(m.value); else setLoadErr(prev => prev || ("multipliers: " + m.reason?.message));
+      if (h.status === "fulfilled") setHeatData(h.value); else setLoadErr(prev => prev || ("heatmap: " + h.reason?.message));
+      if (o.status === "fulfilled") setFeedData(o.value);  else setLoadErr(prev => prev || ("observatory: " + o.reason?.message));
+      if (c.status === "fulfilled") setCurvesData(c.value); else {/* curves are optional for the panel */}
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const togChip = (set, setter) => (v) => {
     const n = new Set(set);
@@ -60,21 +99,114 @@ function ObservatoryPage() {
     setter(n);
   };
 
-  const feed = useMemo(() =>
-    FEED.filter(f => resultChips.has(f.result)),
-    [resultChips]);
+  // Multipliers: map server rows {league, prop, over:{q,delta_pp,n_eff}, under:{...}}
+  // into the UI's flat shape {league, prop, over, overN, under, underN} where
+  // "over"/"under" represent the multiplicative factor relative to the anchor.
+  const multipliers = useMemo(() => {
+    const anchor = (multData && multData.anchor) || 0.6;
+    const rows = (multData && multData.rows) || [];
+    if (!rows.length) return MULTIPLIERS;
+    return rows.map(r => ({
+      league: r.league,
+      prop:   r.prop,
+      over:   r.over ? r.over.q / anchor : 1,
+      overN:  r.over ? Math.round(r.over.n_eff) : 0,
+      under:  r.under ? r.under.q / anchor : 1,
+      underN: r.under ? Math.round(r.under.n_eff) : 0,
+    }));
+  }, [multData]);
+
+  // Heatmap: server returns rows of {league, prop, side, n_eff, cells:[{actual,expected,n_eff}|null]}.
+  // Collapse over+under into one display row per (league, prop) using weighted average.
+  const heatRows = useMemo(() => {
+    const rows = (heatData && heatData.rows) || [];
+    if (!rows.length) return null;
+    const buckets = (heatData && heatData.buckets) || [];
+    const bands = buckets.length ? buckets.map(b => b.label) : HEATMAP_BANDS;
+    const grouped = {};
+    for (const r of rows) {
+      const key = r.league + "|" + r.prop;
+      if (!grouped[key]) grouped[key] = { league: r.league, prop: r.prop, cells: [] };
+      grouped[key].cells.push(r.cells || []);
+    }
+    const out = Object.values(grouped).map(g => {
+      const merged = bands.map((_, j) => {
+        let sw = 0, sa = 0;
+        for (const sides of g.cells) {
+          const c = sides[j];
+          if (c && c.n_eff > 0) { sw += c.n_eff; sa += c.actual * c.n_eff; }
+        }
+        return sw > 0 ? (sa / sw) * 100 : null;
+      });
+      return { league: g.league, prop: g.prop, row: merged };
+    });
+    return { bands, rows: out };
+  }, [heatData]);
+
+  const heatmapBands = heatRows ? heatRows.bands : HEATMAP_BANDS;
+  const heatmapRows  = heatRows ? heatRows.rows  : HEATMAP;
+
+  // Feed: server returns market_observatory rows directly.
+  const feedRows = useMemo(() => {
+    const raw = feedData || [];
+    if (!raw.length) return FEED.filter(f => resultChips.has(f.result));
+    return raw
+      .filter(r => leagueChips.has(r.league))
+      .filter(r => resultChips.has(r.result || "pending"))
+      .map(r => ({
+        player: r.player,
+        league: r.league,
+        prop:   `${r.prop} ${(r.side || "").toUpperCase().startsWith("O") ? "O" : "U"}${r.line}`,
+        line:   r.line,
+        pct:    (r.true_prob || 0) * 100,
+        result: r.result || "pending",
+        actual: r.stat_actual != null ? String(r.stat_actual) : "—",
+        logged: _ago(r.created_at),
+      }));
+  }, [feedData, leagueChips, resultChips]);
+
+  // Calibration curves: build from analytics-style /api/calibration/curves
+  // (hierarchical state). When unavailable, fall back to illustrative mock.
+  const curveSeries = useMemo(() => {
+    const props = curvesData?.props || curvesData?.curves?.props || null;
+    if (!props) return null;
+    // Group prop curves by prop name across leagues, weighted by n_eff.
+    // Each `props` key is "league|prop|side" → { curve: [[raw,cal],...], n_eff }
+    const byProp = {};
+    for (const [key, lvl] of Object.entries(props)) {
+      if (!lvl || !Array.isArray(lvl.curve)) continue;
+      const parts = key.split("|");
+      if (parts.length !== 3) continue;
+      const prop = parts[1];
+      if (!byProp[prop]) byProp[prop] = [];
+      byProp[prop].push(lvl);
+    }
+    const colorMap = { "Points": "#6366F1", "Rebounds": "#22C55E", "Assists": "#F59E0B" };
+    const fallbackColors = ["#3DA9F0", "#A855F7", "#EC4899", "#14B8A6"];
+    let ci = 0;
+    const series = Object.entries(byProp).slice(0, 6).map(([name, lvls]) => {
+      // Pick the level with the most data
+      lvls.sort((a, b) => (b.n_eff || 0) - (a.n_eff || 0));
+      const best = lvls[0];
+      const pts = (best.curve || []).filter(p => p[0] >= 0.5 && p[0] <= 0.8);
+      return { name, color: colorMap[name] || fallbackColors[ci++ % fallbackColors.length], pts };
+    }).filter(s => s.pts.length >= 2);
+    return series.length ? series : null;
+  }, [curvesData]);
 
   return (
     <main className="bd-page obs-page">
-      <div style={{padding:"10px 14px",margin:"0 0 14px",background:"rgba(99,102,241,.10)",border:"1px solid rgba(99,102,241,.25)",borderRadius:10,fontSize:13,color:"var(--text-2)"}}>
-        Showing sample data. Live observatory wiring is in progress.
-      </div>
+      {loadErr && (
+        <div style={{padding:"10px 14px",margin:"0 0 14px",background:"rgba(239,68,68,.10)",border:"1px solid rgba(239,68,68,.25)",borderRadius:10,fontSize:13,color:"#FCA5A5"}}>
+          Partial load: {loadErr}
+        </div>
+      )}
       <section className="an-panel">
         <div className="an-panel-h">
           <h3>Calibration Curves</h3>
           <span className="an-section-sub">Predicted vs. actual hit rate, by prop family.</span>
         </div>
-        <CalibrationCurves />
+        <CalibrationCurves series={curveSeries} />
         <div className="cal-legend">
           <span className="cal-legend-item"><i style={{background:"#6366F1"}} /> Points</span>
           <span className="cal-legend-item"><i style={{background:"#22C55E"}} /> Rebounds</span>
@@ -100,7 +232,7 @@ function ObservatoryPage() {
               </tr>
             </thead>
             <tbody>
-              {MULTIPLIERS.map((m, i) => (
+              {multipliers.map((m, i) => (
                 <tr key={i}>
                   <td><LeaguePill league={m.league} /></td>
                   <td>{m.prop}</td>
@@ -123,11 +255,11 @@ function ObservatoryPage() {
             <thead>
               <tr>
                 <th>Prop</th>
-                {HEATMAP_BANDS.map(b => <th key={b}>{b}</th>)}
+                {heatmapBands.map(b => <th key={b}>{b}</th>)}
               </tr>
             </thead>
             <tbody>
-              {HEATMAP.map((row, i) => (
+              {heatmapRows.map((row, i) => (
                 <tr key={i}>
                   <td className="obs-heat-prop">
                     <LeaguePill league={row.league} />
@@ -187,7 +319,7 @@ function ObservatoryPage() {
               <tr><th>Player</th><th>Prop</th><th>Line</th><th>Target Prob</th><th>Result</th><th>Actual</th><th>Logged</th></tr>
             </thead>
             <tbody>
-              {feed.map((f, i) => (
+              {feedRows.map((f, i) => (
                 <tr key={i}>
                   <td className="bd-player">{f.player}</td>
                   <td className="bd-muted">{f.prop}</td>
@@ -240,15 +372,16 @@ function heatColor(delta) {
 }
 
 // Calibration curves SVG
-function CalibrationCurves() {
+function CalibrationCurves({ series: passedSeries }) {
   const W = 800, H = 380, P = 50;
-  const series = [
+  const fallback = [
     { color: "#6366F1", name: "Points",   pts: [[0.5,0.51],[0.55,0.555],[0.6,0.605],[0.65,0.654],[0.7,0.715],[0.75,0.748]] },
     { color: "#22C55E", name: "Rebounds", pts: [[0.5,0.515],[0.55,0.548],[0.6,0.589],[0.65,0.642],[0.7,0.68],[0.75,0.755]] },
     { color: "#F59E0B", name: "Assists",  pts: [[0.5,0.502],[0.55,0.56],[0.6,0.605],[0.65,0.66],[0.7,0.71]] },
     { color: "#3DA9F0", name: "Combo",    pts: [[0.5,0.528],[0.55,0.575],[0.6,0.625],[0.65,0.668],[0.7,0.708]] },
     { color: "#A855F7", name: "Pitcher",  pts: [[0.5,0.515],[0.55,0.558],[0.6,0.615],[0.65,0.66]] },
   ];
+  const series = (passedSeries && passedSeries.length) ? passedSeries : fallback;
   const x = (v) => P + (v - 0.5) / 0.3 * (W - 2 * P);
   const y = (v) => H - P - (v - 0.5) / 0.3 * (H - 2 * P);
   const grids = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8];

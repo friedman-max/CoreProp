@@ -1,68 +1,121 @@
-// Analytics — Cumulative P&L chart + Brier/CLV stats. Mirrors #analytics-view.
+// Analytics — Cumulative P&L chart + Brier/CLV stats. Wired to /api/analytics.
 const { useState: useStateA, useMemo: useMemoA, useRef: useRefA, useEffect: useEffectA } = React;
 
 const RANGES = ["1D", "1W", "1M", "3M", "1Y", "MAX"];
 
-// Sample equity curve (45 days, 1u stake per slip)
-const PNL_SERIES = (() => {
-  const days = 90;
-  const arr = [];
-  let pnl = 0;
-  const start = new Date();
-  start.setDate(start.getDate() - days);
-  for (let i = 0; i <= days; i++) {
-    const d = new Date(start);
-    d.setDate(d.getDate() + i);
-    // Slight upward drift with realistic variance
-    const change = (Math.sin(i * 0.4) * 0.6 + (Math.random() - 0.42) * 2.4);
-    pnl += change;
-    arr.push({ date: d, pnl: parseFloat(pnl.toFixed(2)) });
-  }
-  return arr;
-})();
+function _windowStartMs(range, latestMs) {
+  if (range === "MAX") return -Infinity;
+  const day = 86400000;
+  const days = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365 }[range] || 30;
+  return latestMs - days * day;
+}
 
 function AnalyticsPage() {
   const [range, setRange] = useState("1M");
   const [hover, setHover] = useState(null);
-  const sampleBanner = (
-    <div style={{padding:"10px 14px",margin:"0 0 14px",background:"rgba(99,102,241,.10)",border:"1px solid rgba(99,102,241,.25)",borderRadius:10,fontSize:13,color:"var(--text-2)"}}>
-      Showing sample data. Live analytics wiring is in progress.
-    </div>
-  );
+  const [data, setData] = useState(null);
+  const [loadState, setLoadState] = useState("loading");
+  const [errMsg, setErrMsg] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await window.cpApi.apiFetch("/api/analytics");
+        if (cancelled) return;
+        setData(d);
+        setLoadState("ok");
+      } catch (ex) {
+        if (cancelled) return;
+        setErrMsg(ex.message || "Failed to load analytics.");
+        setLoadState("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Full P&L series mapped from pnl_timeline (already cumulative).
+  const fullSeries = useMemo(() => {
+    if (!data?.pnl_timeline) return [];
+    return data.pnl_timeline.map(p => ({
+      date: new Date(p.timestamp),
+      pnl: p.cum_pnl,
+    })).filter(p => !isNaN(p.date.getTime()));
+  }, [data]);
 
   const filtered = useMemo(() => {
-    const n = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365, "MAX": PNL_SERIES.length }[range];
-    return PNL_SERIES.slice(-Math.min(n, PNL_SERIES.length));
-  }, [range]);
+    if (!fullSeries.length) return [];
+    if (range === "MAX") return fullSeries;
+    const latest = fullSeries[fullSeries.length - 1].date.getTime();
+    const cutoff = _windowStartMs(range, latest);
+    return fullSeries.filter(p => p.date.getTime() >= cutoff);
+  }, [fullSeries, range]);
 
-  // Stats — derived from filtered series only
+  // Window stats: filter resolved_legs by the same window and recompute.
+  const windowLegs = useMemo(() => {
+    if (!data?.resolved_legs) return [];
+    if (range === "MAX") return data.resolved_legs;
+    if (!fullSeries.length) return data.resolved_legs;
+    const latest = fullSeries[fullSeries.length - 1].date.getTime();
+    const cutoff = _windowStartMs(range, latest);
+    return data.resolved_legs.filter(l => {
+      const t = l.timestamp ? new Date(l.timestamp).getTime() : NaN;
+      return !isNaN(t) && t >= cutoff;
+    });
+  }, [data, range, fullSeries]);
+
+  const windowClv = useMemo(() => {
+    if (!data?.clv_legs) return [];
+    if (range === "MAX") return data.clv_legs;
+    if (!fullSeries.length) return data.clv_legs;
+    const latest = fullSeries[fullSeries.length - 1].date.getTime();
+    const cutoff = _windowStartMs(range, latest);
+    return data.clv_legs.filter(l => {
+      const t = l.timestamp ? new Date(l.timestamp).getTime() : NaN;
+      return !isNaN(t) && t >= cutoff;
+    });
+  }, [data, range, fullSeries]);
+
   const totalPnL = filtered.length ? filtered[filtered.length - 1].pnl - (filtered[0]?.pnl || 0) : 0;
-  // Brier-like stats — illustrative, computed from BT_SLIPS legs
-  const allLegs = BT_SLIPS.flatMap(s => s.bets).filter(l => l.result !== "pending");
+
+  const allLegs = windowLegs;
   const brier = allLegs.length
-    ? allLegs.reduce((a, l) => a + Math.pow((l.pct / 100) - (l.result === "hit" ? 1 : 0), 2), 0) / allLegs.length
+    ? allLegs.reduce((a, l) => a + Math.pow(l.true_prob - l.outcome, 2), 0) / allLegs.length
     : 0;
   const logLoss = allLegs.length
     ? -allLegs.reduce((a, l) => {
-        const p = Math.min(0.99, Math.max(0.01, l.pct / 100));
-        const y = l.result === "hit" ? 1 : 0;
-        return a + (y * Math.log(p) + (1 - y) * Math.log(1 - p));
+        const p = Math.min(0.99, Math.max(0.01, l.true_prob));
+        return a + (l.outcome * Math.log(p) + (1 - l.outcome) * Math.log(1 - p));
       }, 0) / allLegs.length
     : 0;
-  const avgPred = allLegs.length ? allLegs.reduce((a, l) => a + l.pct, 0) / allLegs.length : 0;
-  const rawHit = allLegs.length ? (allLegs.filter(l => l.result === "hit").length / allLegs.length) * 100 : 0;
+  const avgPred = allLegs.length ? (allLegs.reduce((a, l) => a + l.true_prob, 0) / allLegs.length) * 100 : 0;
+  const rawHit = allLegs.length ? (allLegs.filter(l => l.outcome === 1).length / allLegs.length) * 100 : 0;
   const delta = rawHit - avgPred;
 
-  // CLV (illustrative)
-  const clvCount = 142;
-  const clvPos = 64.1;
-  const clvAvg = 2.3;
+  const clvCount = windowClv.length;
+  const clvPos = clvCount ? (windowClv.filter(l => l.clv_pct > 0).length / clvCount) * 100 : 0;
+  const clvAvg = clvCount ? windowClv.reduce((a, l) => a + l.clv_pct, 0) / clvCount : 0;
 
   const hovered = hover ?? filtered[filtered.length - 1];
 
+  if (loadState === "loading") {
+    return <main className="bd-page an-page"><div style={{padding:"32px",color:"var(--text-3)"}}>Loading analytics…</div></main>;
+  }
+  if (loadState === "error") {
+    return <main className="bd-page an-page"><div style={{padding:"32px",color:"#FCA5A5"}}>Error: {errMsg}</div></main>;
+  }
+  if (!fullSeries.length) {
+    return (
+      <main className="bd-page an-page">
+        <div className="an-panel" style={{padding:"32px",textAlign:"center",color:"var(--text-2)"}}>
+          No resolved slips yet. Once your logged slips settle, your equity curve and calibration stats appear here.
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="bd-page an-page">
-      {sampleBanner}
       <div className="an-panel">
         <div className="pnl-header">
           <div>
@@ -86,7 +139,7 @@ function AnalyticsPage() {
         <div className="bt-summary">
           <StatCard label="Brier Score" value={brier.toFixed(4)} tone={brier < 0.25 ? "good" : "neutral"} />
           <StatCard label="Log Loss" value={logLoss.toFixed(4)} />
-          <StatCard label="Resolved Legs" value={allLegs.length.toString()} />
+          <StatCard label="Resolved Legs" value={String(allLegs.length)} />
           <StatCard label="Raw Hit Rate" value={rawHit.toFixed(1) + "%"} tone={rawHit >= 54.08 ? "good" : "bad"} />
           <StatCard label="Avg Predicted Prob" value={avgPred.toFixed(1) + "%"} />
           <StatCard label="Hit Rate Delta" value={(delta >= 0 ? "+" : "") + delta.toFixed(1) + "%"} tone={delta >= 0 ? "good" : "bad"} />
@@ -94,9 +147,9 @@ function AnalyticsPage() {
 
         <div className="an-section-h">Closing Line Value <span className="an-section-sub">if CLV+ {`>`} 50% &amp; Avg CLV% {`>`} 0, you're beating the market</span></div>
         <div className="bt-summary">
-          <StatCard label="Tracked" value={clvCount.toString()} />
-          <StatCard label="CLV+ Rate" value={clvPos.toFixed(1) + "%"} tone="good" />
-          <StatCard label="Avg CLV%" value={"+" + clvAvg.toFixed(1) + "%"} tone="good" />
+          <StatCard label="Tracked" value={String(clvCount)} />
+          <StatCard label="CLV+ Rate" value={clvCount ? clvPos.toFixed(1) + "%" : "—"} tone={clvPos >= 50 ? "good" : "bad"} />
+          <StatCard label="Avg CLV%" value={clvCount ? (clvAvg >= 0 ? "+" : "") + clvAvg.toFixed(1) + "%" : "—"} tone={clvAvg >= 0 ? "good" : "bad"} />
         </div>
       </div>
     </main>
