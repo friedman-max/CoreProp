@@ -810,30 +810,59 @@ body::before{
 .sb-log-count{font-weight:400;color:var(--text-3);font-size:12px;margin-left:6px;font-family:"JetBrains Mono",monospace}
 .sb-log-wrap{max-height:380px;overflow:auto}
 
-/* ─────────── density overrides: tighten dead space ─────────── */
-.lp-hero{padding:36px 22px 48px}
-.lp-hero-inner{max-width:1320px;gap:48px;align-items:center}
+/* ─────────── density overrides: tighten dead space, fill standard screens ─────────── */
+/* Strategy: scale containers with viewport. Landing sections use fluid widths
+ * with a generous cap; app pages (bd-page, ev, pp) fill all but a small gutter.
+ * Result: a 1920px monitor shows full-bleed content; a 1440px screen shows the
+ * same proportional layout with no center-pinned dead bands. */
+.lp-hero{padding:36px clamp(22px,3vw,56px) 48px}
+.lp-hero-inner{max-width:min(1640px,calc(100vw - 48px));gap:64px;align-items:center}
 .lp-card-stack{min-height:0}
 .lp-card{margin:0 auto}
 .lp-mini-1{top:-6px;right:-6px}
 .lp-mini-2{bottom:-10px;left:-12px}
-.lp-stats{padding:48px 22px;max-width:1280px}
-.lp-features{padding:48px 22px;max-width:1320px}
+.lp-stats{padding:48px clamp(22px,3vw,56px);max-width:min(1640px,calc(100vw - 48px))}
+.lp-features{padding:48px clamp(22px,3vw,56px);max-width:min(1640px,calc(100vw - 48px))}
 .lp-feature{min-height:300px;padding:24px}
 .lp-section-hd{margin:0 auto 28px}
-.lp-how{padding:56px 22px;max-width:1200px}
-.lp-demo{padding:48px 22px;max-width:1320px}
-.lp-demo-frame{max-width:1200px;margin:28px auto 0}
-.lp-yw{padding:56px 22px 48px}
-.lp-yw-inner{max-width:1320px}
-.lp-testimonials{padding:48px 22px;max-width:1280px}
-.lp-cta{padding:24px 22px 56px;max-width:1200px}
+.lp-how{padding:56px clamp(22px,3vw,56px);max-width:min(1480px,calc(100vw - 48px))}
+.lp-demo{padding:48px clamp(22px,3vw,56px);max-width:min(1640px,calc(100vw - 48px))}
+.lp-demo-frame{max-width:min(1440px,calc(100vw - 96px));margin:28px auto 0}
+.lp-yw{padding:56px clamp(22px,3vw,56px) 48px}
+.lp-yw-inner{max-width:min(1640px,calc(100vw - 48px))}
+.lp-testimonials{padding:48px clamp(22px,3vw,56px);max-width:min(1640px,calc(100vw - 48px))}
+.lp-cta{padding:24px clamp(22px,3vw,56px) 56px;max-width:min(1480px,calc(100vw - 48px))}
 .lp-cta-card{padding:48px 32px}
-.lp-foot{max-width:1320px;padding:36px 22px 28px}
-@media (min-width:1600px){
-  .lp-hero-inner,.lp-features,.lp-demo,.lp-yw-inner,.lp-foot{max-width:1480px}
-  .lp-stats,.lp-testimonials{max-width:1400px}
+.lp-foot{max-width:min(1640px,calc(100vw - 48px));padding:36px clamp(22px,3vw,56px) 28px}
+
+/* App pages: full-bleed within a small gutter; tables get their full screen. */
+.bd-page{max-width:min(1820px,calc(100vw - 48px));padding:20px clamp(22px,2.5vw,40px) 60px}
+.ev{grid-template-columns:1fr 360px}
+.ev-main{padding:22px clamp(22px,2.5vw,40px) 80px}
+.ev-slip{padding:22px 20px}
+.pp{max-width:min(1480px,calc(100vw - 48px));padding:48px clamp(22px,3vw,56px) 80px}
+
+/* Pricing page two-column on wider screens (was single centered card). */
+@media (min-width:1100px){
+  .pp{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:32px;align-items:start}
+  .pp-hd,.pp-back,.pp-foot-trust,.pp-respo,.pp-faq{grid-column:1/-1}
+  .pp-card-wrap{max-width:none}
 }
+
+/* Topnav: spread tabs across the full width on wide screens. */
+.cp-nav{padding:12px clamp(22px,2.5vw,40px);grid-template-columns:auto 1fr auto;gap:24px}
+.cp-nav-c{gap:6px}
+.cp-tab{padding:9px 18px}
+
+/* Filter bars in app pages: keep them visually grouped at any width. */
+.ev-filters{padding:18px clamp(22px,2.5vw,28px)}
+.bd-filters{padding:14px clamp(16px,2vw,22px)}
+
+/* Tables: take full container width with sensible per-cell padding. */
+.bd-tbl thead th{padding:12px clamp(14px,1.4vw,20px)}
+.bd-tbl tbody td{padding:11px clamp(14px,1.4vw,20px)}
+.ev-row{padding:13px clamp(18px,2vw,24px)}
+.ev-row-hd{padding:14px clamp(18px,2vw,24px)}
 </style>
 </head>
 <body>

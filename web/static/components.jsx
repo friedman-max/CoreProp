@@ -5,14 +5,16 @@ const { useState, useEffect, useRef, useMemo } = React;
 // ───────── Logo ─────────
 function Logo({ size = 32, animated = true }) {
   // The PNG already includes the wordmark, so we just render it.
+  // Absolute path so it works regardless of which route serves index.html.
   const h = size;
   return (
     <div className="cp-logo">
       <img
-        src="logo-transparent.png"
+        src="/static/logo-transparent.png"
         alt="CoreProp"
         className={"cp-mark-img " + (animated ? "is-spin" : "")}
         style={{ height: h + "px", width: "auto" }}
+        onError={(e) => { e.currentTarget.src = "/static/logo.png"; }}
       />
     </div>
   );
@@ -22,10 +24,24 @@ function Logo({ size = 32, animated = true }) {
 const NAV_TABS = ["+EV Bets", "Combined Lines", "PrizePicks Lines", "Sportsbooks", "Backtest", "Analytics", "Observatory", "Sandbox"];
 
 function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" }) {
+  // Logo destination: signed-in users land on +EV Bets; signed-out goes to
+  // the marketing landing page regardless of which tab they were viewing.
+  const logoDest = loggedIn ? "+EV Bets" : "landing";
+  const [busy, setBusy] = useState(false);
+  const user = (window.cpApi && window.cpApi.getUser && window.cpApi.getUser()) || null;
+  const initial = (user && (user.email || user.user_metadata?.username) || "?").trim().charAt(0).toUpperCase();
+
+  const handleLogout = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await (onLogout && onLogout()); }
+    finally { setBusy(false); }
+  };
+
   return (
     <header className={"cp-nav " + (variant === "landing" ? "is-landing" : "")}>
       <div className="cp-nav-l">
-        <button className="cp-logo-btn" onClick={() => onTab && onTab(variant === "landing" ? "landing" : "+EV Bets")}>
+        <button className="cp-logo-btn" onClick={() => onTab && onTab(logoDest)} aria-label="Home">
           <Logo />
         </button>
       </div>
@@ -41,8 +57,8 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
       <div className="cp-nav-r">
         {loggedIn ? (
           <div className="cp-user">
-            <div className="cp-avatar">M</div>
-            <button className="cp-link" onClick={onLogout}>Log Out</button>
+            <div className="cp-avatar" title={user?.email || ""}>{initial}</div>
+            <button className="cp-link" onClick={handleLogout} disabled={busy}>{busy ? "…" : "Log Out"}</button>
           </div>
         ) : (
           <button className="cp-btn cp-btn-primary cp-btn-sm" onClick={onLogin}>Log In</button>

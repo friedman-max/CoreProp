@@ -63,9 +63,33 @@
 
   async function signOut() {
     const sb = init();
-    await sb.auth.signOut();
+    try {
+      // scope: 'global' invalidates the JWT everywhere (including any other
+      // tabs / devices for this account). Critical for users who share a
+      // machine with someone else — without it, the old refresh token can
+      // be used to silently restore the session after they "logged out".
+      await sb.auth.signOut({ scope: "global" });
+    } catch (e) {
+      // Network error: fall through to local cleanup. Better to log the
+      // user out client-side than to leave them stuck on the previous
+      // session because Supabase happened to be slow.
+      console.warn("[cpApi] signOut network error, clearing locally:", e);
+    }
     currentSession = null;
+    // Belt-and-suspenders: clear any Supabase keys the SDK may have left
+    // behind (storage key differs by version/config). Then hard-reload so
+    // every component re-initializes against a clean store.
+    try {
+      const keysToScrub = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith("sb-") || k.startsWith("supabase."))) keysToScrub.push(k);
+      }
+      keysToScrub.forEach(k => localStorage.removeItem(k));
+    } catch (e) {}
     notify();
+    // Hard reload to landing so no stale per-user component state survives.
+    window.location.assign("/");
   }
 
   async function apiFetch(url, opts = {}) {
