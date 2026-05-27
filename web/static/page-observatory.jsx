@@ -66,6 +66,9 @@ function ObservatoryPage() {
 
   return (
     <main className="bd-page obs-page">
+      <div style={{padding:"10px 14px",margin:"0 0 14px",background:"rgba(99,102,241,.10)",border:"1px solid rgba(99,102,241,.25)",borderRadius:10,fontSize:13,color:"var(--text-2)"}}>
+        Showing sample data. Live observatory wiring is in progress.
+      </div>
       <section className="an-panel">
         <div className="an-panel-h">
           <h3>Calibration Curves</h3>

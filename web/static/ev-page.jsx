@@ -1,5 +1,12 @@
-// +EV Bets page — polished version of the screenshot.
+// +EV Bets page — wired to /api/bootstrap/core.
 const { useState: useStateE, useMemo: useMemoE } = React;
+
+function fmtGameTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString([], { month: "numeric", day: "numeric" }) +
+    " " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
 
 function EVPage() {
   const [league, setLeague] = useState("All");
@@ -10,20 +17,60 @@ function EVPage() {
   const [legs, setLegs] = useState(6);
   const [selected, setSelected] = useState([]);
   const [hovered, setHovered] = useState(null);
+  const [allBets, setAllBets] = useState([]);
+  const [loadState, setLoadState] = useState("loading"); // loading | ok | error
+  const [errMsg, setErrMsg] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await window.cpApi.apiFetch("/api/bootstrap/core");
+        if (cancelled) return;
+        const ui = (data.bets || []).map(window.cpApi.betToUi);
+        setAllBets(ui);
+        setLoadState("ok");
+      } catch (ex) {
+        if (cancelled) return;
+        setErrMsg(ex.message || "Failed to load bets.");
+        setLoadState("error");
+      }
+    };
+    load();
+    const id = setInterval(load, 30000); // refresh every 30s
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   const bets = useMemoE(() => {
-    return EV_BETS.filter(b => {
+    return allBets.filter(b => {
       if (league !== "All" && b.league !== league) return false;
-      if (propQ && !b.prop.toLowerCase().includes(propQ.toLowerCase())) return false;
+      if (propQ && !(b.prop || "").toLowerCase().includes(propQ.toLowerCase())) return false;
       if (side !== "Both" && b.side !== side.toUpperCase()) return false;
-      if (b.truePct < minOdds) return false;
+      if ((b.truePct || 0) < minOdds) return false;
       return true;
-    });
-  }, [league, propQ, minOdds, side]);
+    }).sort((a, b) => (b.truePct || 0) - (a.truePct || 0));
+  }, [allBets, league, propQ, minOdds, side]);
 
   const toggleBet = (b) => {
-    const key = b.player + b.prop + b.line;
+    const key = b.id || (b.player + b.prop + b.line);
     setSelected(prev => prev.find(p => p.key === key) ? prev.filter(p => p.key !== key) : [...prev, { ...b, key }]);
+  };
+
+  const saveSlip = async () => {
+    if (selected.length < 2 || selected.length > 6) return;
+    setSaving(true);
+    try {
+      await window.cpApi.apiFetch("/api/slip", {
+        method: "POST",
+        body: { bet_ids: selected.map(s => s.id).filter(Boolean), bankroll: 100 },
+      });
+      setSelected([]);
+    } catch (ex) {
+      alert("Save failed: " + (ex.message || ex));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const slipBE = useMemoE(() => {
@@ -71,8 +118,12 @@ function EVPage() {
         <div className="ev-meta">
           <span><b>{bets.length}</b> bets</span>
           <span className="ev-meta-dot">·</span>
-          <span>Updated <em className="ev-pulse">live</em></span>
-          <span className="ev-meta-pag">P. 1 / 1</span>
+          <span>
+            {loadState === "loading" && "Loading…"}
+            {loadState === "ok" && <>Updated <em className="ev-pulse">live</em></>}
+            {loadState === "error" && <span style={{color:"#FCA5A5"}}>Error: {errMsg}</span>}
+          </span>
+          <span className="ev-meta-pag">{bets.length} of {allBets.length}</span>
         </div>
 
         {/* Table */}
@@ -89,7 +140,7 @@ function EVPage() {
             <span></span>
           </div>
           {bets.map((b, i) => {
-            const key = b.player + b.prop + b.line;
+            const key = b.id || (b.player + b.prop + b.line);
             const isSel = selected.find(p => p.key === key);
             return (
               <div
@@ -102,7 +153,7 @@ function EVPage() {
               >
                 <span className="ev-player">
                   <span className="ev-player-n">{b.player}</span>
-                  <span className="ev-logged">LOGGED</span>
+                  {b.inBacktest && <span className="ev-logged">LOGGED</span>}
                 </span>
                 <span><LeaguePill league={b.league} /></span>
                 <span className="ev-prop">{b.prop}</span>
@@ -112,7 +163,7 @@ function EVPage() {
                 <span className="ev-books">
                   {b.books.map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}
                 </span>
-                <span className="ev-time">{b.time}</span>
+                <span className="ev-time">{fmtGameTime(b.startTime)}</span>
                 <span className="ev-add">
                   <span className={"ev-add-btn " + (isSel ? "is-sel" : "")}>{isSel ? "✓" : "+"}</span>
                 </span>
@@ -192,8 +243,12 @@ function EVPage() {
           </div>
         )}
 
-        <button className={"cp-btn cp-btn-save " + (selected.length === 0 ? "is-dis" : "")} disabled={selected.length === 0}>
-          Save slip
+        <button
+          className={"cp-btn cp-btn-save " + (selected.length < 2 || selected.length > 6 || saving ? "is-dis" : "")}
+          disabled={selected.length < 2 || selected.length > 6 || saving}
+          onClick={saveSlip}
+        >
+          {saving ? "Saving…" : (selected.length < 2 ? "Add 2+ legs" : selected.length > 6 ? "Max 6 legs" : "Save slip")}
         </button>
       </aside>
     </main>

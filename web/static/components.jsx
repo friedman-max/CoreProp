@@ -57,7 +57,36 @@ function AuthModal({ open, onClose, onSubmit }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
   if (!open) return null;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setErr("");
+    if (!email || !pw) { setErr("Email and password are required."); return; }
+    if (mode === "signup" && pw !== pw2) { setErr("Passwords do not match."); return; }
+    setBusy(true);
+    try {
+      if (mode === "login") {
+        await window.cpApi.signIn(email, pw);
+      } else {
+        const res = await window.cpApi.signUp(email, pw);
+        if (!res.session) {
+          setErr("Check your email to confirm your account, then log in.");
+          setBusy(false);
+          return;
+        }
+      }
+      onSubmit && onSubmit({ mode, email });
+    } catch (ex) {
+      setErr(ex.message || "Authentication failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="cp-modal-back" onClick={onClose}>
       <div className="cp-modal" onClick={e => e.stopPropagation()}>
@@ -66,15 +95,17 @@ function AuthModal({ open, onClose, onSubmit }) {
           <Logo size={56} withWord />
         </div>
         <div className="cp-seg">
-          <button className={"cp-seg-btn " + (mode === "login" ? "is-active" : "")} onClick={() => setMode("login")}>Log In</button>
-          <button className={"cp-seg-btn " + (mode === "signup" ? "is-active" : "")} onClick={() => setMode("signup")}>Sign Up</button>
+          <button type="button" className={"cp-seg-btn " + (mode === "login" ? "is-active" : "")} onClick={() => { setMode("login"); setErr(""); }}>Log In</button>
+          <button type="button" className={"cp-seg-btn " + (mode === "signup" ? "is-active" : "")} onClick={() => { setMode("signup"); setErr(""); }}>Sign Up</button>
         </div>
-        <form className="cp-form" onSubmit={e => { e.preventDefault(); onSubmit && onSubmit({ mode, email, pw }); }}>
-          <input className="cp-input" placeholder="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} />
-          <input className="cp-input" placeholder="Password" type="password" value={pw} onChange={e => setPw(e.target.value)} />
-          {mode === "signup" && <input className="cp-input" placeholder="Confirm password" type="password" />}
-          <button className="cp-btn cp-btn-primary cp-btn-lg" type="submit">{mode === "login" ? "Log In" : "Create Account"}</button>
-          {mode === "login" && <button type="button" className="cp-link cp-center">Forgot password?</button>}
+        <form className="cp-form" onSubmit={submit}>
+          <input className="cp-input" placeholder="Email" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} disabled={busy} />
+          <input className="cp-input" placeholder="Password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={pw} onChange={e => setPw(e.target.value)} disabled={busy} />
+          {mode === "signup" && <input className="cp-input" placeholder="Confirm password" type="password" autoComplete="new-password" value={pw2} onChange={e => setPw2(e.target.value)} disabled={busy} />}
+          {err && <div style={{color:"#FCA5A5", fontSize:13, padding:"2px 4px"}}>{err}</div>}
+          <button className="cp-btn cp-btn-primary cp-btn-lg" type="submit" disabled={busy}>
+            {busy ? "…" : (mode === "login" ? "Log In" : "Create Account")}
+          </button>
         </form>
       </div>
     </div>

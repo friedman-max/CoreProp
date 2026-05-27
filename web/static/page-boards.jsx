@@ -42,9 +42,18 @@ const BOARD_LINES = [
   { player: "Tyler O'Neil",      league: "NCAAB", prop: "Points",        line: 13.5, side: "UNDER", truePct: 55.2, fd: -120, dk: -118, pin:  null, time: "5/27 9:00 PM" },
 ];
 
-// True odds derived from true probability
+// True odds derived from true probability (fallback when server doesn't include it)
 function withTrueOdds(row) {
+  if (row.trueOdds != null) return row;
+  if (row.truePct == null) return row;
   return { ...row, trueOdds: probToAmerican(row.truePct / 100) };
+}
+
+function fmtGameTimeB(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString([], { month: "numeric", day: "numeric" }) +
+    " " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function bestOdds(row) {
@@ -84,19 +93,24 @@ function CombinedLinesPage() {
   const [sort, setSort] = useState({ col: "truePct", dir: "desc" });
   const PER = 25;
 
+  const { rows: data, state: loadState, error } = window.cpApi.useBoardLines("/api/matched", "matches");
+
   const filtered = useMemo(() => {
-    let r = BOARD_LINES.filter(x =>
+    let r = data.filter(x =>
       (!league || x.league === league) &&
-      (!propQ || x.prop.toLowerCase().includes(propQ.toLowerCase())) &&
-      (!player || x.player.toLowerCase().includes(player.toLowerCase()))
+      (!propQ || (x.prop || "").toLowerCase().includes(propQ.toLowerCase())) &&
+      (!player || (x.player || "").toLowerCase().includes(player.toLowerCase()))
     ).map(withTrueOdds);
     r.sort((a, b) => {
       const A = a[sort.col], B = b[sort.col];
+      if (A == null && B == null) return 0;
+      if (A == null) return 1;
+      if (B == null) return -1;
       if (typeof A === "string") return sort.dir === "asc" ? A.localeCompare(B) : B.localeCompare(A);
       return sort.dir === "asc" ? A - B : B - A;
     });
     return r;
-  }, [league, propQ, player, sort]);
+  }, [data, league, propQ, player, sort]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER));
   const rows = filtered.slice((page - 1) * PER, page * PER);
@@ -154,7 +168,7 @@ function CombinedLinesPage() {
                   <td><OddsCell value={r.fd} best={bestBook === "FD"} /></td>
                   <td><OddsCell value={r.dk} best={bestBook === "DK"} /></td>
                   <td><OddsCell value={r.pin} best={bestBook === "PIN"} /></td>
-                  <td className="bd-time mono">{r.time}</td>
+                  <td className="bd-time mono">{fmtGameTimeB(r.startTime)}</td>
                 </tr>
               );
             })}
@@ -172,13 +186,14 @@ function PrizePicksPage() {
   const [player, setPlayer] = useState("");
   const [page, setPage] = useState(1);
   const PER = 30;
+  const { rows: data } = window.cpApi.useBoardLines("/api/prizepicks", "lines");
 
   const filtered = useMemo(() =>
-    BOARD_LINES.filter(x =>
+    data.filter(x =>
       (!league || x.league === league) &&
-      (!propQ || x.prop.toLowerCase().includes(propQ.toLowerCase())) &&
-      (!player || x.player.toLowerCase().includes(player.toLowerCase()))
-    ), [league, propQ, player]);
+      (!propQ || (x.prop || "").toLowerCase().includes(propQ.toLowerCase())) &&
+      (!player || (x.player || "").toLowerCase().includes(player.toLowerCase()))
+    ), [data, league, propQ, player]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER));
   const rows = filtered.slice((page - 1) * PER, page * PER);
@@ -234,17 +249,19 @@ function SportsbooksPage() {
   const [player, setPlayer] = useState("");
   const [page, setPage] = useState(1);
   const PER = 25;
+  const bookEndpoint = { fd: "/api/fanduel", dk: "/api/draftkings", pin: "/api/pinnacle" }[book];
+  const { rows: data } = window.cpApi.useBoardLines(bookEndpoint, "lines");
 
   const filtered = useMemo(() =>
-    BOARD_LINES
+    data
       .filter(x => x[book] != null)
       .filter(x =>
         (!league || x.league === league) &&
-        (!propQ || x.prop.toLowerCase().includes(propQ.toLowerCase())) &&
-        (!player || x.player.toLowerCase().includes(player.toLowerCase()))
+        (!propQ || (x.prop || "").toLowerCase().includes(propQ.toLowerCase())) &&
+        (!player || (x.player || "").toLowerCase().includes(player.toLowerCase()))
       )
       .map(withTrueOdds),
-    [book, league, propQ, player]
+    [data, book, league, propQ, player]
   );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER));
@@ -306,7 +323,7 @@ function SportsbooksPage() {
                   <td className="mono bd-true-odds">{r.trueOdds > 0 ? "+" + r.trueOdds : r.trueOdds}</td>
                   <td><OddsCell value={bookOdds} best={edge} /></td>
                   <td className={"bd-edge-cell " + (edge ? "is-edge" : "")}>{edge ? "+EV" : "—"}</td>
-                  <td className="bd-time mono">{r.time}</td>
+                  <td className="bd-time mono">{fmtGameTimeB(r.startTime)}</td>
                 </tr>
               );
             })}

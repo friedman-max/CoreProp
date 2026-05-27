@@ -24,6 +24,11 @@ const PNL_SERIES = (() => {
 function AnalyticsPage() {
   const [range, setRange] = useState("1M");
   const [hover, setHover] = useState(null);
+  const sampleBanner = (
+    <div style={{padding:"10px 14px",margin:"0 0 14px",background:"rgba(99,102,241,.10)",border:"1px solid rgba(99,102,241,.25)",borderRadius:10,fontSize:13,color:"var(--text-2)"}}>
+      Showing sample data. Live analytics wiring is in progress.
+    </div>
+  );
 
   const filtered = useMemo(() => {
     const n = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365, "MAX": PNL_SERIES.length }[range];
@@ -57,6 +62,7 @@ function AnalyticsPage() {
 
   return (
     <main className="bd-page an-page">
+      {sampleBanner}
       <div className="an-panel">
         <div className="pnl-header">
           <div>

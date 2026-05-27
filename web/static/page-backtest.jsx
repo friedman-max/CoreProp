@@ -83,35 +83,95 @@ const BT_SLIPS = [
     ] },
 ];
 
+function btResultFromSlip(s) {
+  if (!s.completed) return "pending";
+  const legs = s.legs || [];
+  const eff = legs.filter(l => l.result !== "push" && l.result !== "dnp");
+  if (eff.length === 0) return "push";
+  return (s.payout || 0) > (s.stake || 0) ? "hit" : "miss";
+}
+
+function btMapSlip(s) {
+  const legs = (s.legs || []).map(l => ({
+    player: l.player_name || l.player || "—",
+    prop: [l.prop_type || l.stat_type || "", (l.side || "").toUpperCase().startsWith("O") ? "O" : "U", l.line ?? l.pp_line ?? ""].join(" ").trim(),
+    pct: l.true_prob != null ? l.true_prob * 100 : 0,
+    result: l.result || "pending",
+    actual: l.actual_value != null ? String(l.actual_value) : (l.result === "pending" ? "—" : "—"),
+  }));
+  const result = btResultFromSlip(s);
+  const ts = s.timestamp ? new Date(s.timestamp).toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+  // Pick a representative league (most common across legs) — or MIXED.
+  const leagueCounts = {};
+  for (const l of (s.legs || [])) { const k = l.league || "MIXED"; leagueCounts[k] = (leagueCounts[k] || 0) + 1; }
+  const leagueKeys = Object.keys(leagueCounts);
+  const league = leagueKeys.length === 1 ? leagueKeys[0] : "MIXED";
+  return {
+    id: s.id || s.slip_id,
+    ts,
+    type: ((s.slip_type || "power").charAt(0).toUpperCase() + (s.slip_type || "power").slice(1)),
+    legs: s.n_legs || legs.length,
+    league,
+    stake: s.stake || 0,
+    payout: s.payout,
+    result,
+    hits: s.hits || 0,
+    bets: legs,
+  };
+}
+
 function BacktestPage() {
   const [resultFilter, setResultFilter] = useState("");
   const [leagueFilter, setLeagueFilter] = useState("");
   const [page, setPage] = useState(1);
+  const [slips, setSlips] = useState([]);
+  const [loadState, setLoadState] = useState("loading");
+  const [errMsg, setErrMsg] = useState("");
   const PER = 8;
 
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await window.cpApi.apiFetch("/api/backtest/slips");
+        if (cancelled) return;
+        setSlips((data.slips || []).map(btMapSlip));
+        setLoadState("ok");
+      } catch (ex) {
+        if (cancelled) return;
+        setErrMsg(ex.message || "Failed to load slips.");
+        setLoadState("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const filtered = useMemo(() =>
-    BT_SLIPS.filter(s =>
+    slips.filter(s =>
       (!resultFilter || s.result === resultFilter) &&
       (!leagueFilter || s.league === leagueFilter || (s.league === "MIXED" && leagueFilter === ""))
-    ), [resultFilter, leagueFilter]);
+    ), [slips, resultFilter, leagueFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER));
   const slipsView = filtered.slice((page - 1) * PER, page * PER);
 
-  // Summary stats — slip grid shows 10 sample slips; headline metrics reflect
-  // realistic "Recent 300" performance for a properly-calibrated +EV model.
-  // We DERIVE only the observable counts; rates and ROI use plausible baselines
-  // so we never display misleading magnitudes from a tiny sample.
-  const done = BT_SLIPS.filter(s => s.result !== "pending");
-  const allLegs = BT_SLIPS.flatMap(s => s.bets);
+  // Summary stats — derived from the slips returned by /api/backtest/slips.
+  const done = slips.filter(s => s.result !== "pending");
+  const allLegs = slips.flatMap(s => s.bets || []);
   const doneLegs = allLegs.filter(l => l.result !== "pending");
+  const legHits = doneLegs.filter(l => l.result === "hit").length;
+  const slipHits = done.filter(s => s.result === "hit").length;
+  const totalStake = done.reduce((a, s) => a + (s.stake || 0), 0);
+  const totalPayout = done.reduce((a, s) => a + (s.payout || 0), 0);
 
-  const slipsDone = 287, slipsTotal = 300;       // baseline
-  const legsDone = 1632, legsTotal = 1800;
-  const slipHitRate = 13.2;                       // typical for power plays
-  const legHitRate = 56.4;                        // above 54.08% BE
-  const expLegHitRate = 55.9;
-  const roi = 8.7;
+  const slipsDone = done.length;
+  const slipsTotal = slips.length;
+  const legsDone = doneLegs.length;
+  const legsTotal = allLegs.length;
+  const slipHitRate = slipsDone ? (slipHits / slipsDone) * 100 : 0;
+  const legHitRate = legsDone ? (legHits / legsDone) * 100 : 0;
+  const expLegHitRate = doneLegs.length ? doneLegs.reduce((a, l) => a + (l.pct || 0), 0) / doneLegs.length : 0;
+  const roi = totalStake > 0 ? ((totalPayout - totalStake) / totalStake) * 100 : 0;
 
   const fmt = (v, d = 1, suf = "%") => v.toFixed(d) + suf;
 
@@ -141,6 +201,12 @@ function BacktestPage() {
         <StatCard label="Exp. Leg Hit Rate" value={fmt(expLegHitRate)} />
         <StatCard label="Actual ROI" value={"+" + fmt(roi)} tone="good" />
       </div>
+
+      {loadState === "loading" && <div style={{padding:"20px", color:"var(--text-3)"}}>Loading slips…</div>}
+      {loadState === "error" && <div style={{padding:"20px", color:"#FCA5A5"}}>Error: {errMsg}</div>}
+      {loadState === "ok" && slipsView.length === 0 && (
+        <div style={{padding:"32px", color:"var(--text-3)", textAlign:"center"}}>No logged slips yet. Save a slip from the +EV Bets tab to start tracking your backtest.</div>
+      )}
 
       {/* Slip grid */}
       <div className="bt-slips-grid">

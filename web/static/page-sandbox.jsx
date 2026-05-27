@@ -98,6 +98,9 @@ function SandboxPage() {
 
   return (
     <main className="bd-page sb-page">
+      <div style={{padding:"10px 14px",margin:"0 0 14px",background:"rgba(99,102,241,.10)",border:"1px solid rgba(99,102,241,.25)",borderRadius:10,fontSize:13,color:"var(--text-2)"}}>
+        Showing simulated results. Live sandbox wiring is in progress.
+      </div>
       {results && (
         <div className="bt-summary">
           <StatCard label="Total Slips" value={results.slips.toString()} />

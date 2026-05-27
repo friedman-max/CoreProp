@@ -843,6 +843,8 @@ body::before{
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="/static/api.jsx"></script>
 
 <script type="text/babel" src="/static/tweaks-panel.jsx"></script>
 <script type="text/babel" src="/static/data.jsx"></script>
@@ -869,7 +871,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 function App() {
   const [view, setView] = useState("landing");   // landing | pricing | ev
   const [authOpen, setAuthOpen] = useState(false);
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(() => !!(window.cpApi && window.cpApi.isLoggedIn()));
   const [active, setActive] = useState("+EV Bets");
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
@@ -878,6 +880,21 @@ function App() {
     document.documentElement.style.setProperty("--primary", t.accent);
     document.documentElement.style.setProperty("--primary-hi", t.accent + "33");
   }, [t.accent]);
+
+  // Subscribe to Supabase session changes.
+  useEffect(() => {
+    if (!window.cpApi) return;
+    setLoggedIn(window.cpApi.isLoggedIn());
+    return window.cpApi.subscribe((session) => {
+      const next = !!session?.user;
+      setLoggedIn(next);
+      if (next && view === "landing") {
+        setView("ev");
+      } else if (!next && view === "ev") {
+        setView("landing");
+      }
+    });
+  }, []);
 
   const onLogin = () => setAuthOpen(true);
   const onStart = () => { setView("pricing"); window.scrollTo({ top: 0 }); };
@@ -899,7 +916,7 @@ function App() {
         onTab={onTab}
         onLogin={onLogin}
         loggedIn={loggedIn}
-        onLogout={() => { setLoggedIn(false); setView("landing"); }}
+        onLogout={async () => { try { await window.cpApi.signOut(); } catch (e) {} setLoggedIn(false); setView("landing"); }}
         variant={view === "landing" ? "landing" : "app"}
       />
       {view === "landing" && <Landing onLogin={onLogin} onStart={onStart} onTab={onTab} />}
