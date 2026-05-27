@@ -863,6 +863,68 @@ body::before{
 .bd-tbl tbody td{padding:11px clamp(14px,1.4vw,20px)}
 .ev-row{padding:13px clamp(18px,2vw,24px)}
 .ev-row-hd{padding:14px clamp(18px,2vw,24px)}
+
+/* ─────────── Backtest cards: compact 5-up grid ─────────── */
+.bt-slips-grid{
+  display:grid;
+  grid-template-columns:repeat(5,minmax(0,1fr));
+  gap:10px;
+}
+@media (max-width:1400px){.bt-slips-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:1080px){.bt-slips-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:760px){.bt-slips-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:520px){.bt-slips-grid{grid-template-columns:1fr}}
+
+.bt-slip-compact{
+  padding:10px 12px;
+  gap:6px;
+  border-radius:10px;
+}
+.bt-slip-compact.is-win    {border-color:rgba(34,197,94,.35);  background:linear-gradient(180deg,rgba(34,197,94,.06),rgba(34,197,94,.02))}
+.bt-slip-compact.is-loss   {border-color:rgba(239,68,68,.35);  background:linear-gradient(180deg,rgba(239,68,68,.06),rgba(239,68,68,.02))}
+.bt-slip-compact.is-pending{border-color:rgba(251,191,36,.35); background:linear-gradient(180deg,rgba(251,191,36,.06),rgba(251,191,36,.02))}
+.bt-slip-compact.is-push   {border-color:rgba(251,191,36,.30); background:linear-gradient(180deg,rgba(251,191,36,.04),transparent)}
+
+/* Header strip — denser */
+.bt-slip-compact .bt-slip-hd{align-items:center}
+.bt-slip-compact .bt-slip-type{font-size:11.5px;font-weight:700;letter-spacing:.02em}
+.bt-slip-compact .bt-slip-ts{font-size:10.5px}
+.bt-slip-compact .bt-slip-badge{font-size:9px;padding:2px 6px;letter-spacing:.08em}
+
+/* Leg rows: player prominent, propName + side+line on second line, actual pill right */
+.bt-slip-compact .bt-slip-legs{gap:2px}
+.bt-slip-compact .bt-slip-leg{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:8px;
+  align-items:center;
+  padding:4px 0;
+  border-bottom:1px solid rgba(255,255,255,.04);
+}
+.bt-slip-compact .bt-slip-leg:last-child{border-bottom:0}
+.bt-leg-name{font-size:12.5px;font-weight:700;letter-spacing:-.005em;color:var(--text);line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-leg-prop{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--text-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-leg-league{font-weight:700;letter-spacing:.04em;color:var(--text-2)}
+.bt-leg-prop-name{color:var(--text-2)}
+.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:12.5px;padding:1px 5px;border-radius:4px;margin-left:auto}
+.bt-leg-side-over{color:#86EFAC;background:rgba(34,197,94,.10)}
+.bt-leg-side-under{color:#93C5FD;background:rgba(96,165,250,.10)}
+
+/* Result pill: never empty — always shows actual stat, DNP, P, ✓/✕, or — */
+.bt-slip-compact .bt-leg-actual{
+  min-width:30px;
+  padding:3px 8px;
+  border-radius:5px;
+  font-size:12px;
+  font-weight:800;
+  text-align:center;
+  font-family:"JetBrains Mono",monospace;
+}
+.bt-slip-compact .bt-leg-actual.leg-hit    {background:rgba(34,197,94,.20);  color:#86EFAC}
+.bt-slip-compact .bt-leg-actual.leg-miss   {background:rgba(239,68,68,.20);  color:#FCA5A5}
+.bt-slip-compact .bt-leg-actual.leg-push   {background:rgba(251,191,36,.20); color:#FDE68A}
+.bt-slip-compact .bt-leg-actual.leg-dnp    {background:rgba(156,163,175,.20);color:#D1D5DB}
+.bt-slip-compact .bt-leg-actual.leg-pending{background:rgba(251,191,36,.18); color:#FDE68A}
 </style>
 </head>
 <body>

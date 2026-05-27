@@ -92,13 +92,25 @@ function btResultFromSlip(s) {
 }
 
 function btMapSlip(s) {
-  const legs = (s.legs || []).map(l => ({
-    player: l.player_name || l.player || "—",
-    prop: [l.prop_type || l.stat_type || "", (l.side || "").toUpperCase().startsWith("O") ? "O" : "U", l.line ?? l.pp_line ?? ""].join(" ").trim(),
-    pct: l.true_prob != null ? l.true_prob * 100 : 0,
-    result: l.result || "pending",
-    actual: l.actual_value != null ? String(l.actual_value) : (l.result === "pending" ? "—" : "—"),
-  }));
+  const legs = (s.legs || []).map(l => {
+    const sideShort = (l.side || "").toUpperCase().startsWith("O") ? "O" : "U";
+    const line = l.line ?? l.pp_line ?? "";
+    const propName = l.prop_type || l.prop || l.stat_type || "";
+    const actual = (l.stat_actual !== null && l.stat_actual !== undefined && l.stat_actual !== "")
+      ? String(l.stat_actual)
+      : (l.actual_value !== null && l.actual_value !== undefined && l.actual_value !== "" ? String(l.actual_value) : null);
+    return {
+      player: l.player || l.player_name || "—",
+      league: l.league || "",
+      propName,
+      side: sideShort,
+      line,
+      prop: [propName, sideShort, line].filter(Boolean).join(" ").trim(),
+      pct: l.true_prob != null ? l.true_prob * 100 : 0,
+      result: l.result || "pending",
+      actual,
+    };
+  });
   const result = btResultFromSlip(s);
   const ts = s.timestamp ? new Date(s.timestamp).toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
   // Pick a representative league (most common across legs) — or MIXED.
@@ -127,7 +139,7 @@ function BacktestPage() {
   const [slips, setSlips] = useState([]);
   const [loadState, setLoadState] = useState("loading");
   const [errMsg, setErrMsg] = useState("");
-  const PER = 8;
+  const PER = 50;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -192,14 +204,21 @@ function BacktestPage() {
         </label>
       </FiltersBar>
 
-      {/* Summary cards */}
+      {/* Summary cards.
+       * Tone rule (per user): a hit-rate card is green only when it is at or
+       * above its break-even threshold; red below.
+       *   - Leg Hit Rate BE  = 54.08% (geometric BE for Power 6).
+       *   - Slip Hit Rate has no single BE (depends on slip mix), so we
+       *     use ROI as the proxy: positive ROI ⇒ the realized slip rate is
+       *     above the implicit weighted BE, regardless of leg count mix.
+       *   - ROI itself: positive ⇒ green, negative ⇒ red. */}
       <div className="bt-summary">
         <StatCard label="Slips (Done / Total)" sub="Recent 300" value={`${slipsDone} / ${slipsTotal}`} />
-        <StatCard label="Slip Hit Rate" sub="Recent 300" value={fmt(slipHitRate)} tone="good" />
+        <StatCard label="Slip Hit Rate" sub="vs ROI" value={fmt(slipHitRate)} tone={slipsDone === 0 ? "neutral" : (roi >= 0 ? "good" : "bad")} />
         <StatCard label="Legs (Done / Total)" sub="Recent 300" value={`${legsDone} / ${legsTotal}`} />
-        <StatCard label="Leg Hit Rate" sub="BE 54.08%" value={fmt(legHitRate)} tone="good" />
+        <StatCard label="Leg Hit Rate" sub="BE 54.08%" value={fmt(legHitRate)} tone={legsDone === 0 ? "neutral" : (legHitRate >= 54.08 ? "good" : "bad")} />
         <StatCard label="Exp. Leg Hit Rate" value={fmt(expLegHitRate)} />
-        <StatCard label="Actual ROI" value={"+" + fmt(roi)} tone="good" />
+        <StatCard label="Actual ROI" value={(roi >= 0 ? "+" : "") + fmt(roi)} tone={done.length === 0 ? "neutral" : (roi >= 0 ? "good" : "bad")} />
       </div>
 
       {loadState === "loading" && <div style={{padding:"20px", color:"var(--text-3)"}}>Loading slips…</div>}
@@ -229,54 +248,54 @@ function StatCard({ label, sub, value, tone }) {
 }
 
 function SlipCard({ slip }) {
+  // Status drives the entire card border + badge color:
+  //   pending → yellow, hit → green, miss/loss → red, push/dnp → muted yellow
   const resultLabel = {
-    hit: { t: "WIN",     cls: "is-win" },
-    miss: { t: "LOSS",   cls: "is-loss" },
-    push: { t: "PUSH",   cls: "is-push" },
-    dnp: { t: "DNP",     cls: "is-push" },
+    hit:     { t: "WIN",     cls: "is-win" },
+    miss:    { t: "LOSS",    cls: "is-loss" },
+    push:    { t: "PUSH",    cls: "is-push" },
+    dnp:     { t: "DNP",     cls: "is-push" },
     pending: { t: "PENDING", cls: "is-pending" },
   }[slip.result];
-  const pl = slip.result === "pending" ? null : (slip.payout || 0) - slip.stake;
   return (
-    <article className={"bt-slip " + resultLabel.cls}>
+    <article className={"bt-slip bt-slip-compact " + resultLabel.cls}>
       <header className="bt-slip-hd">
         <div className="bt-slip-hd-l">
-          <span className="bt-slip-type">{slip.type} · {slip.legs} Leg</span>
+          <span className="bt-slip-type">{slip.type} · {slip.legs}L</span>
           <span className="bt-slip-ts">{slip.ts}</span>
         </div>
         <span className={"bt-slip-badge " + resultLabel.cls}>{resultLabel.t}</span>
       </header>
 
       <ul className="bt-slip-legs">
-        {slip.bets.map((b, i) => (
-          <li key={i} className={"bt-slip-leg leg-" + b.result}>
-            <span className="bt-leg-i mono">{i + 1}</span>
-            <div className="bt-leg-body">
-              <div className="bt-leg-name">{b.player}</div>
-              <div className="bt-leg-prop">{b.prop}</div>
-            </div>
-            <span className="bt-leg-pct mono">{b.pct.toFixed(1)}%</span>
-            <span className={"bt-leg-actual mono leg-" + b.result}>{b.actual}</span>
-          </li>
-        ))}
+        {slip.bets.map((b, i) => {
+          // Decide what to display in the actual-value pill:
+          //   - pending → "—" (no result yet)
+          //   - dnp     → "DNP"
+          //   - push    → "P"
+          //   - hit/miss → actual stat number when present, else fall back to
+          //     a glyph so the box never renders empty.
+          let actualDisplay;
+          if (b.result === "pending") actualDisplay = "—";
+          else if (b.result === "dnp") actualDisplay = "DNP";
+          else if (b.result === "push") actualDisplay = "P";
+          else if (b.actual != null && b.actual !== "" && b.actual !== "—") actualDisplay = b.actual;
+          else actualDisplay = b.result === "hit" ? "✓" : "✕";
+          return (
+            <li key={i} className={"bt-slip-leg leg-" + b.result}>
+              <div className="bt-leg-body">
+                <div className="bt-leg-name">{b.player}</div>
+                <div className="bt-leg-prop">
+                  {b.league && <span className="bt-leg-league">{b.league}</span>}
+                  <span className="bt-leg-prop-name">{b.propName}</span>
+                  <span className={"bt-leg-side bt-leg-side-" + (b.side === "O" ? "over" : "under")}>{b.side}{b.line}</span>
+                </div>
+              </div>
+              <span className={"bt-leg-actual mono leg-" + b.result}>{actualDisplay}</span>
+            </li>
+          );
+        })}
       </ul>
-
-      <footer className="bt-slip-foot">
-        <div className="bt-slip-foot-c">
-          <span className="bt-slip-foot-k">Stake</span>
-          <span className="bt-slip-foot-v mono">${slip.stake}</span>
-        </div>
-        <div className="bt-slip-foot-c">
-          <span className="bt-slip-foot-k">Payout</span>
-          <span className="bt-slip-foot-v mono">{slip.payout == null ? "—" : "$" + slip.payout}</span>
-        </div>
-        <div className="bt-slip-foot-c">
-          <span className="bt-slip-foot-k">P/L</span>
-          <span className={"bt-slip-foot-v mono " + (pl > 0 ? "tone-good" : pl < 0 ? "tone-bad" : "")}>
-            {pl == null ? "—" : (pl >= 0 ? "+" : "") + "$" + pl}
-          </span>
-        </div>
-      </footer>
     </article>
   );
 }
