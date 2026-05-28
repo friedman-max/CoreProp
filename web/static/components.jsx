@@ -4,17 +4,23 @@ const { useState, useEffect, useRef, useMemo } = React;
 
 // ───────── Logo ─────────
 function Logo({ size = 32, animated = true }) {
-  // The PNG already includes the wordmark, so we just render it.
-  // Absolute path so it works regardless of which route serves index.html.
+  // Use the real brand wordmark (logo_full.png) — the design-handoff
+  // logo-transparent.png had near-invisible white-outline text against our
+  // dark nav. Fall back to logo.png (mark only) if the wordmark fails.
   const h = size;
   return (
     <div className="cp-logo">
       <img
-        src="/static/logo-transparent.png"
+        src="/static/logo_full.png"
         alt="CoreProp"
         className={"cp-mark-img " + (animated ? "is-spin" : "")}
         style={{ height: h + "px", width: "auto" }}
-        onError={(e) => { e.currentTarget.src = "/static/logo.png"; }}
+        onError={(e) => {
+          if (!e.currentTarget.dataset.fallback) {
+            e.currentTarget.dataset.fallback = "1";
+            e.currentTarget.src = "/static/logo.png";
+          }
+        }}
       />
     </div>
   );

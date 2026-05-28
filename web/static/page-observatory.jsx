@@ -99,58 +99,56 @@ function ObservatoryPage() {
     setter(n);
   };
 
-  // Multipliers: map server rows {league, prop, over:{q,delta_pp,n_eff}, under:{...}}
-  // into the UI's flat shape {league, prop, over, overN, under, underN} where
-  // "over"/"under" represent the multiplicative factor relative to the anchor.
+  // Multipliers: map server rows to {league, prop, over, overN, under, underN}.
+  // We NEVER substitute mock values — if the API is empty, the panel shows an
+  // empty state. Showing fake numbers in a calibration table would be worse
+  // than showing nothing.
   const multipliers = useMemo(() => {
-    const anchor = (multData && multData.anchor) || 0.6;
-    const rows = (multData && multData.rows) || [];
-    if (!rows.length) return MULTIPLIERS;
+    if (!multData) return null;          // still loading
+    const anchor = multData.anchor || 0.6;
+    const rows = multData.rows || [];
     return rows.map(r => ({
       league: r.league,
       prop:   r.prop,
-      over:   r.over ? r.over.q / anchor : 1,
+      over:   r.over ? r.over.q / anchor : null,
       overN:  r.over ? Math.round(r.over.n_eff) : 0,
-      under:  r.under ? r.under.q / anchor : 1,
+      under:  r.under ? r.under.q / anchor : null,
       underN: r.under ? Math.round(r.under.n_eff) : 0,
     }));
   }, [multData]);
 
-  // Heatmap: server returns rows of {league, prop, side, n_eff, cells:[{actual,expected,n_eff}|null]}.
-  // Collapse over+under into one display row per (league, prop) using weighted average.
+  // Heatmap: render every (league, prop, side) row the API returns. No
+  // collapsing — over and under are separate calibration buckets and the
+  // user wants to see both. No mock fallback.
   const heatRows = useMemo(() => {
-    const rows = (heatData && heatData.rows) || [];
-    if (!rows.length) return null;
-    const buckets = (heatData && heatData.buckets) || [];
-    const bands = buckets.length ? buckets.map(b => b.label) : HEATMAP_BANDS;
-    const grouped = {};
-    for (const r of rows) {
-      const key = r.league + "|" + r.prop;
-      if (!grouped[key]) grouped[key] = { league: r.league, prop: r.prop, cells: [] };
-      grouped[key].cells.push(r.cells || []);
-    }
-    const out = Object.values(grouped).map(g => {
-      const merged = bands.map((_, j) => {
-        let sw = 0, sa = 0;
-        for (const sides of g.cells) {
-          const c = sides[j];
-          if (c && c.n_eff > 0) { sw += c.n_eff; sa += c.actual * c.n_eff; }
-        }
-        return sw > 0 ? (sa / sw) * 100 : null;
-      });
-      return { league: g.league, prop: g.prop, row: merged };
-    });
-    return { bands, rows: out };
+    if (!heatData) return null;           // still loading
+    const buckets = heatData.buckets || [];
+    const bands = buckets.length
+      ? buckets.map(b => b.label)
+      : ["50-55%", "55-60%", "60-65%", "65-70%", "70-75%", "75-80%"];
+    const bandCenters = buckets.length
+      ? buckets.map(b => ((b.lo + b.hi) / 2) * 100)
+      : [52.5, 57.5, 62.5, 67.5, 72.5, 77.5];
+    const rows = (heatData.rows || []).map(r => ({
+      league: r.league,
+      prop:   r.prop,
+      side:   r.side,                     // "over" | "under"
+      n_eff:  r.n_eff,
+      row:    (r.cells || []).map(c => c ? c.actual * 100 : null),
+    }));
+    // Sort by league → prop → side so over/under rows sit next to each other.
+    rows.sort((a, b) =>
+      a.league.localeCompare(b.league) ||
+      a.prop.localeCompare(b.prop) ||
+      a.side.localeCompare(b.side)
+    );
+    return { bands, bandCenters, rows };
   }, [heatData]);
 
-  const heatmapBands = heatRows ? heatRows.bands : HEATMAP_BANDS;
-  const heatmapRows  = heatRows ? heatRows.rows  : HEATMAP;
-
-  // Feed: server returns market_observatory rows directly.
+  // Feed: server returns market_observatory rows directly. No mock fallback.
   const feedRows = useMemo(() => {
-    const raw = feedData || [];
-    if (!raw.length) return FEED.filter(f => resultChips.has(f.result));
-    return raw
+    if (!feedData) return null;           // still loading
+    return (feedData || [])
       .filter(r => leagueChips.has(r.league))
       .filter(r => resultChips.has(r.result || "pending"))
       .map(r => ({
@@ -165,8 +163,9 @@ function ObservatoryPage() {
       }));
   }, [feedData, leagueChips, resultChips]);
 
-  // Calibration curves: build from analytics-style /api/calibration/curves
-  // (hierarchical state). When unavailable, fall back to illustrative mock.
+  // Calibration curves: build from /api/calibration/curves (hierarchical state).
+  // No fallback to illustrative data — if the API hasn't returned anything yet,
+  // we render the chart frame with a "no calibration fitted" placeholder.
   const curveSeries = useMemo(() => {
     const props = curvesData?.props || curvesData?.curves?.props || null;
     if (!props) return null;
@@ -181,16 +180,19 @@ function ObservatoryPage() {
       if (!byProp[prop]) byProp[prop] = [];
       byProp[prop].push(lvl);
     }
-    const colorMap = { "Points": "#6366F1", "Rebounds": "#22C55E", "Assists": "#F59E0B" };
-    const fallbackColors = ["#3DA9F0", "#A855F7", "#EC4899", "#14B8A6"];
+    // Stable palette: distinct, high-contrast colors that read well on dark.
+    const palette = ["#818cf8", "#22C55E", "#F59E0B", "#3DA9F0", "#A855F7", "#EC4899", "#14B8A6", "#FB7185", "#FBBF24", "#60A5FA"];
     let ci = 0;
-    const series = Object.entries(byProp).slice(0, 6).map(([name, lvls]) => {
-      // Pick the level with the most data
+    const series = Object.entries(byProp).map(([name, lvls]) => {
       lvls.sort((a, b) => (b.n_eff || 0) - (a.n_eff || 0));
       const best = lvls[0];
-      const pts = (best.curve || []).filter(p => p[0] >= 0.5 && p[0] <= 0.8);
-      return { name, color: colorMap[name] || fallbackColors[ci++ % fallbackColors.length], pts };
-    }).filter(s => s.pts.length >= 2);
+      const pts = (best.curve || []).map(p => [Number(p[0]), Number(p[1])]).filter(p =>
+        !isNaN(p[0]) && !isNaN(p[1]) && p[0] >= 0.4 && p[0] <= 0.85
+      );
+      return { name, color: palette[ci++ % palette.length], pts, n_eff: Math.round(best.n_eff || 0) };
+    }).filter(s => s.pts.length >= 2)
+      .sort((a, b) => b.n_eff - a.n_eff)
+      .slice(0, 8);
     return series.length ? series : null;
   }, [curvesData]);
 
@@ -204,17 +206,25 @@ function ObservatoryPage() {
       <section className="an-panel">
         <div className="an-panel-h">
           <h3>Calibration Curves</h3>
-          <span className="an-section-sub">Predicted vs. actual hit rate, by prop family.</span>
+          <span className="an-section-sub">Predicted vs. actual hit rate, by prop family. Closer to the diagonal = better calibrated.</span>
         </div>
-        <CalibrationCurves series={curveSeries} />
-        <div className="cal-legend">
-          <span className="cal-legend-item"><i style={{background:"#6366F1"}} /> Points</span>
-          <span className="cal-legend-item"><i style={{background:"#22C55E"}} /> Rebounds</span>
-          <span className="cal-legend-item"><i style={{background:"#F59E0B"}} /> Assists</span>
-          <span className="cal-legend-item"><i style={{background:"#3DA9F0"}} /> Combo (P+R, R+A)</span>
-          <span className="cal-legend-item"><i style={{background:"#A855F7"}} /> Pitcher props</span>
-          <span className="cal-legend-item"><i className="cal-legend-dashed" /> Perfect calibration</span>
-        </div>
+        {curvesData == null ? (
+          <ObsPlaceholder>Loading calibration state…</ObsPlaceholder>
+        ) : !curveSeries ? (
+          <ObsPlaceholder>No fitted calibration curves yet — once your model has enough resolved props in any (league, prop, side) bucket, the curves appear here.</ObsPlaceholder>
+        ) : (
+          <>
+            <CalibrationCurves series={curveSeries} />
+            <div className="cal-legend">
+              {curveSeries.map(s => (
+                <span key={s.name} className="cal-legend-item">
+                  <i style={{background:s.color}} /> {s.name} <em style={{color:"var(--text-3)",fontStyle:"normal",marginLeft:4}}>n={s.n_eff}</em>
+                </span>
+              ))}
+              <span className="cal-legend-item"><i className="cal-legend-dashed" /> Perfect calibration</span>
+            </div>
+          </>
+        )}
       </section>
 
       <section className="an-panel">
@@ -222,64 +232,79 @@ function ObservatoryPage() {
           <h3>Per-Prop Calibration</h3>
           <span className="an-section-sub">Boost / nerf applied to each (league, prop, side) bucket at p=0.60. 1.00x = no adjustment. n = effective sample.</span>
         </div>
-        <div className="obs-mult-wrap">
-          <table className="obs-mult">
-            <thead>
-              <tr>
-                <th>League</th><th>Prop</th>
-                <th className="obs-th-c">Over</th>
-                <th className="obs-th-c">Under</th>
-              </tr>
-            </thead>
-            <tbody>
-              {multipliers.map((m, i) => (
-                <tr key={i}>
-                  <td><LeaguePill league={m.league} /></td>
-                  <td>{m.prop}</td>
-                  <td><MultCell mult={m.over} n={m.overN} /></td>
-                  <td><MultCell mult={m.under} n={m.underN} /></td>
+        {multipliers == null ? (
+          <ObsPlaceholder>Loading calibration multipliers…</ObsPlaceholder>
+        ) : multipliers.length === 0 ? (
+          <ObsPlaceholder>No fitted multipliers yet for any (league, prop, side) bucket.</ObsPlaceholder>
+        ) : (
+          <div className="obs-mult-wrap">
+            <table className="obs-mult">
+              <thead>
+                <tr>
+                  <th>League</th><th>Prop</th>
+                  <th className="obs-th-c">Over</th>
+                  <th className="obs-th-c">Under</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {multipliers.map((m, i) => (
+                  <tr key={i}>
+                    <td><LeaguePill league={m.league} /></td>
+                    <td>{m.prop}</td>
+                    <td>{m.over != null ? <MultCell mult={m.over} n={m.overN} /> : <span className="obs-heat-cell is-empty">—</span>}</td>
+                    <td>{m.under != null ? <MultCell mult={m.under} n={m.underN} /> : <span className="obs-heat-cell is-empty">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="an-panel">
         <div className="an-panel-h">
           <h3>Prop Hit Rate by Expected Probability</h3>
-          <span className="an-section-sub">Rows: prop type (grouped by league). Cols: expected hit rate in 5% bands. Cells: actual recency-weighted hit rate.</span>
+          <span className="an-section-sub">One row per (league, prop, side). Columns: expected hit rate bands. Cells: actual recency-weighted hit rate from resolved observations.</span>
         </div>
-        <div className="obs-heat-wrap">
-          <table className="obs-heat">
-            <thead>
-              <tr>
-                <th>Prop</th>
-                {heatmapBands.map(b => <th key={b}>{b}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {heatmapRows.map((row, i) => (
-                <tr key={i}>
-                  <td className="obs-heat-prop">
-                    <LeaguePill league={row.league} />
-                    <span>{row.prop}</span>
-                  </td>
-                  {row.row.map((v, j) => {
-                    const expected = 52.5 + j * 5; // band center
-                    if (v == null) return <td key={j} className="obs-heat-cell is-empty">—</td>;
-                    const delta = v - expected;
-                    return (
-                      <td key={j} className="obs-heat-cell" style={{ background: heatColor(delta) }}>
-                        <span className="obs-heat-v mono">{v.toFixed(1)}%</span>
-                      </td>
-                    );
-                  })}
+        {heatRows == null ? (
+          <ObsPlaceholder>Loading heatmap…</ObsPlaceholder>
+        ) : heatRows.rows.length === 0 ? (
+          <ObsPlaceholder>No resolved props per bucket meet the minimum effective sample yet.</ObsPlaceholder>
+        ) : (
+          <div className="obs-heat-wrap">
+            <table className="obs-heat">
+              <thead>
+                <tr>
+                  <th>League · Prop · Side</th>
+                  {heatRows.bands.map(b => <th key={b} className="obs-th-c">{b}</th>)}
+                  <th className="obs-th-c">n</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {heatRows.rows.map((row, i) => (
+                  <tr key={i}>
+                    <td className="obs-heat-prop">
+                      <LeaguePill league={row.league} />
+                      <span>{row.prop}</span>
+                      <span className={"bt-leg-side bt-leg-side-" + row.side}>{row.side === "over" ? "O" : "U"}</span>
+                    </td>
+                    {row.row.map((v, j) => {
+                      const expected = heatRows.bandCenters[j];
+                      if (v == null) return <td key={j} className="obs-heat-cell is-empty">—</td>;
+                      const delta = v - expected;
+                      return (
+                        <td key={j} className="obs-heat-cell" style={{ background: heatColor(delta) }}>
+                          <span className="obs-heat-v mono">{v.toFixed(1)}%</span>
+                        </td>
+                      );
+                    })}
+                    <td className="obs-heat-cell mono" style={{color:"var(--text-3)"}}>{Math.round(row.n_eff)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="an-panel">
@@ -313,15 +338,21 @@ function ObservatoryPage() {
             </div>
           </div>
         </div>
+        {feedRows == null ? (
+          <ObsPlaceholder>Loading market feed…</ObsPlaceholder>
+        ) : feedRows.length === 0 ? (
+          <ObsPlaceholder>No observations match the current league / result filters.</ObsPlaceholder>
+        ) : (
         <div className="bd-tbl-wrap">
           <table className="bd-tbl">
             <thead>
-              <tr><th>Player</th><th>Prop</th><th>Line</th><th>Target Prob</th><th>Result</th><th>Actual</th><th>Logged</th></tr>
+              <tr><th>Player</th><th>League</th><th>Prop</th><th>Line</th><th>Target Prob</th><th>Result</th><th>Actual</th><th>Logged</th></tr>
             </thead>
             <tbody>
               {feedRows.map((f, i) => (
                 <tr key={i}>
                   <td className="bd-player">{f.player}</td>
+                  <td><LeaguePill league={f.league} /></td>
                   <td className="bd-muted">{f.prop}</td>
                   <td className="mono">{f.line}</td>
                   <td className="mono"><TruePct value={f.pct} /></td>
@@ -335,6 +366,21 @@ function ObservatoryPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function ObsPlaceholder({ children }) {
+  return (
+    <div style={{
+      padding: "32px 18px",
+      textAlign: "center",
+      color: "var(--text-3)",
+      fontSize: 13.5,
+      lineHeight: 1.55,
+      background: "rgba(255,255,255,.015)",
+      border: "1px dashed var(--hair)",
+      borderRadius: 10,
+    }}>{children}</div>
   );
 }
 
@@ -371,50 +417,114 @@ function heatColor(delta) {
   return `rgba(239,68,68,${0.05 + Math.abs(t) * 0.18})`;
 }
 
-// Calibration curves SVG
-function CalibrationCurves({ series: passedSeries }) {
-  const W = 800, H = 380, P = 50;
-  const fallback = [
-    { color: "#6366F1", name: "Points",   pts: [[0.5,0.51],[0.55,0.555],[0.6,0.605],[0.65,0.654],[0.7,0.715],[0.75,0.748]] },
-    { color: "#22C55E", name: "Rebounds", pts: [[0.5,0.515],[0.55,0.548],[0.6,0.589],[0.65,0.642],[0.7,0.68],[0.75,0.755]] },
-    { color: "#F59E0B", name: "Assists",  pts: [[0.5,0.502],[0.55,0.56],[0.6,0.605],[0.65,0.66],[0.7,0.71]] },
-    { color: "#3DA9F0", name: "Combo",    pts: [[0.5,0.528],[0.55,0.575],[0.6,0.625],[0.65,0.668],[0.7,0.708]] },
-    { color: "#A855F7", name: "Pitcher",  pts: [[0.5,0.515],[0.55,0.558],[0.6,0.615],[0.65,0.66]] },
-  ];
-  const series = (passedSeries && passedSeries.length) ? passedSeries : fallback;
-  const x = (v) => P + (v - 0.5) / 0.3 * (W - 2 * P);
-  const y = (v) => H - P - (v - 0.5) / 0.3 * (H - 2 * P);
-  const grids = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8];
+// Calibration curves SVG — responsive, fills its container.
+// Axis is data-driven: the visible window auto-fits to the min/max of every
+// curve so sparse early-season data isn't squeezed into a 30-50% corner.
+function CalibrationCurves({ series }) {
+  const containerRef = useRef(null);
+  const [width, setWidth] = useState(960);
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver(es => {
+      const w = Math.max(560, Math.round(es[0].contentRect.width));
+      setWidth(w);
+    });
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  // Compute axis range from data, clamped to a sensible window.
+  let lo = 0.4, hi = 0.85;
+  if (series && series.length) {
+    let minV = 1, maxV = 0;
+    for (const s of series) {
+      for (const [a, b] of s.pts) {
+        if (a < minV) minV = a;
+        if (b < minV) minV = b;
+        if (a > maxV) maxV = a;
+        if (b > maxV) maxV = b;
+      }
+    }
+    // Pad ±2 percentage points, snap to nearest 5%, clamp to [0.30, 0.95].
+    lo = Math.max(0.30, Math.floor((minV - 0.02) * 20) / 20);
+    hi = Math.min(0.95, Math.ceil((maxV + 0.02) * 20) / 20);
+    if (hi - lo < 0.15) hi = Math.min(0.95, lo + 0.15);
+  }
+
+  const W = Math.max(560, width);
+  const H = Math.round(Math.min(520, Math.max(360, W * 0.46)));
+  const padL = 72, padR = 28, padT = 28, padB = 56;
+  const x = (v) => padL + ((v - lo) / (hi - lo)) * (W - padL - padR);
+  const y = (v) => H - padB - ((v - lo) / (hi - lo)) * (H - padT - padB);
+
+  // Grid: tick every 5 percentage points across the visible window.
+  const ticks = [];
+  for (let v = Math.round(lo * 20) / 20; v <= hi + 1e-9; v += 0.05) {
+    ticks.push(Number(v.toFixed(2)));
+  }
 
   return (
-    <div className="cal-curves">
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="380">
-        {/* Grid */}
-        {grids.map(g => (
+    <div className="cal-curves" ref={containerRef}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none"
+           style={{ display: "block", fontFamily: "Inter,system-ui,sans-serif" }}>
+        <defs>
+          <linearGradient id="cal-plot-bg" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#0a0a12" stopOpacity="0.0" />
+            <stop offset="100%" stopColor="#0a0a12" stopOpacity="0.6" />
+          </linearGradient>
+        </defs>
+
+        {/* Plot frame */}
+        <rect x={padL} y={padT} width={W - padL - padR} height={H - padT - padB}
+              fill="url(#cal-plot-bg)" stroke="rgba(255,255,255,.06)" strokeWidth="1" rx="6" />
+
+        {/* Grid + tick labels */}
+        {ticks.map(g => (
           <g key={g}>
-            <line x1={x(g)} x2={x(g)} y1={P} y2={H - P} stroke="rgba(255,255,255,.05)" />
-            <line x1={P} x2={W - P} y1={y(g)} y2={y(g)} stroke="rgba(255,255,255,.05)" />
-            <text x={x(g)} y={H - P + 18} fill="#7a7a8b" fontSize="11" textAnchor="middle" fontFamily="JetBrains Mono">{(g * 100).toFixed(0)}%</text>
-            <text x={P - 10} y={y(g) + 4} fill="#7a7a8b" fontSize="11" textAnchor="end" fontFamily="JetBrains Mono">{(g * 100).toFixed(0)}%</text>
+            <line x1={x(g)} x2={x(g)} y1={padT} y2={H - padB}
+                  stroke="rgba(255,255,255,.05)" strokeWidth="1" />
+            <line x1={padL} x2={W - padR} y1={y(g)} y2={y(g)}
+                  stroke="rgba(255,255,255,.05)" strokeWidth="1" />
+            <text x={x(g)} y={H - padB + 20} fill="#9ca3af" fontSize="11.5"
+                  fontFamily="JetBrains Mono,ui-monospace,monospace"
+                  textAnchor="middle">{Math.round(g * 100)}%</text>
+            <text x={padL - 12} y={y(g) + 4} fill="#9ca3af" fontSize="11.5"
+                  fontFamily="JetBrains Mono,ui-monospace,monospace"
+                  textAnchor="end">{Math.round(g * 100)}%</text>
           </g>
         ))}
-        {/* Perfect-cal diagonal */}
-        <line x1={x(0.5)} y1={y(0.5)} x2={x(0.8)} y2={y(0.8)} stroke="rgba(255,255,255,.3)" strokeDasharray="4,4" strokeWidth="1.5" />
-        {/* Curves */}
-        {series.map(s => {
-          const d = s.pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+
+        {/* Perfect-calibration diagonal */}
+        <line x1={x(lo)} y1={y(lo)} x2={x(hi)} y2={y(hi)}
+              stroke="rgba(255,255,255,.28)" strokeDasharray="6,5" strokeWidth="1.5" />
+        <text x={x(hi) - 6} y={y(hi) - 8} fill="rgba(255,255,255,.45)"
+              fontSize="10.5" textAnchor="end" fontStyle="italic">y = x</text>
+
+        {/* Curves: smoothed paths + endpoint dots */}
+        {series && series.map(s => {
+          const pts = s.pts.slice().sort((a, b) => a[0] - b[0]);
+          const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
           return (
             <g key={s.name}>
-              <path d={d} fill="none" stroke={s.color} strokeWidth="2.5" />
-              {s.pts.map((p, i) => (
-                <circle key={i} cx={x(p[0])} cy={y(p[1])} r="3.5" fill={s.color} stroke="#0a0a0d" strokeWidth="1.5" />
+              <path d={d} fill="none" stroke={s.color} strokeWidth="2.5"
+                    strokeLinejoin="round" strokeLinecap="round"
+                    style={{ filter: `drop-shadow(0 0 6px ${s.color}55)` }} />
+              {pts.map((p, i) => (
+                <circle key={i} cx={x(p[0])} cy={y(p[1])} r="3.5"
+                        fill={s.color} stroke="#0a0a0d" strokeWidth="1.5" />
               ))}
             </g>
           );
         })}
+
         {/* Axis titles */}
-        <text x={W / 2} y={H - 8} fill="#7a7a8b" fontSize="12" textAnchor="middle">Predicted hit rate</text>
-        <text x={14} y={H / 2} fill="#7a7a8b" fontSize="12" textAnchor="middle" transform={`rotate(-90 14 ${H / 2})`}>Actual hit rate</text>
+        <text x={padL + (W - padL - padR) / 2} y={H - 12} fill="#cbd5e1"
+              fontSize="12.5" fontWeight="600" textAnchor="middle"
+              letterSpacing=".02em">Predicted hit rate</text>
+        <text x={18} y={padT + (H - padT - padB) / 2} fill="#cbd5e1"
+              fontSize="12.5" fontWeight="600" textAnchor="middle"
+              letterSpacing=".02em"
+              transform={`rotate(-90 18 ${padT + (H - padT - padB) / 2})`}>Actual hit rate</text>
       </svg>
     </div>
   );
