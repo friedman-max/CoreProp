@@ -863,70 +863,128 @@ body::before{
 /* Tables: take full container width with sensible per-cell padding. */
 .bd-tbl thead th{padding:12px clamp(14px,1.4vw,20px)}
 .bd-tbl tbody td{padding:11px clamp(14px,1.4vw,20px)}
-.ev-row{padding:13px clamp(18px,2vw,24px)}
+.ev-row{padding:13px clamp(18px,2vw,24px);grid-template-columns:1.6fr .6fr 1fr .55fr .6fr .7fr 1.6fr 1fr 130px}
 .ev-row-hd{padding:14px clamp(18px,2vw,24px)}
 
-/* ─────────── Backtest cards: compact 5-up grid ─────────── */
+/* +EV row: Place-on-PP + Add actions cluster */
+.ev-actions{display:inline-flex;align-items:center;gap:8px;justify-content:flex-end}
+.ev-place-btn{
+  background:linear-gradient(180deg,#7176f4,#5057eb);
+  color:white;border:0;border-radius:6px;
+  padding:6px 10px;font-size:11.5px;font-weight:700;letter-spacing:.02em;
+  cursor:pointer;white-space:nowrap;
+  box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 4px 10px -4px rgba(99,102,241,.55);
+  transition:transform .08s ease, box-shadow .15s ease, background .2s ease;
+}
+.ev-place-btn:hover{transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.25) inset, 0 8px 14px -4px rgba(99,102,241,.7)}
+.ev-place-btn:active{transform:translateY(0)}
+.ev-place-btn:disabled{opacity:.7;cursor:default}
+.ev-place-queued{background:linear-gradient(180deg,#16a34a,#15803d)}
+.ev-place-error{background:linear-gradient(180deg,#dc2626,#b91c1c)}
+
+/* ─────────── Backtest cards: 3-up grid, bigger, more legible ─────────── */
 .bt-slips-grid{
   display:grid;
-  grid-template-columns:repeat(5,minmax(0,1fr));
-  gap:10px;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:16px;
 }
-@media (max-width:1400px){.bt-slips-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@media (max-width:1080px){.bt-slips-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (max-width:760px){.bt-slips-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:520px){.bt-slips-grid{grid-template-columns:1fr}}
+@media (max-width:1080px){.bt-slips-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:680px){.bt-slips-grid{grid-template-columns:1fr}}
 
 .bt-slip-compact{
-  padding:10px 12px;
-  gap:6px;
-  border-radius:10px;
+  padding:16px 18px;
+  gap:10px;
+  border-radius:12px;
+  border-width:2px;
 }
-.bt-slip-compact.is-win    {border-color:rgba(34,197,94,.35);  background:linear-gradient(180deg,rgba(34,197,94,.06),rgba(34,197,94,.02))}
-.bt-slip-compact.is-loss   {border-color:rgba(239,68,68,.35);  background:linear-gradient(180deg,rgba(239,68,68,.06),rgba(239,68,68,.02))}
-.bt-slip-compact.is-pending{border-color:rgba(251,191,36,.35); background:linear-gradient(180deg,rgba(251,191,36,.06),rgba(251,191,36,.02))}
-.bt-slip-compact.is-push   {border-color:rgba(251,191,36,.30); background:linear-gradient(180deg,rgba(251,191,36,.04),transparent)}
+/* Stronger color treatment so a losing card reads as "RED" at a glance. */
+.bt-slip-compact.is-win    {
+  border-color:rgba(34,197,94,.65);
+  background:linear-gradient(180deg,rgba(34,197,94,.16),rgba(34,197,94,.06));
+  box-shadow:inset 4px 0 0 var(--green), 0 6px 20px -10px rgba(34,197,94,.4);
+}
+.bt-slip-compact.is-loss   {
+  border-color:rgba(239,68,68,.75);
+  background:linear-gradient(180deg,rgba(239,68,68,.22),rgba(239,68,68,.08));
+  box-shadow:inset 4px 0 0 var(--red), 0 6px 20px -10px rgba(239,68,68,.5);
+}
+.bt-slip-compact.is-pending{
+  border-color:rgba(251,191,36,.60);
+  background:linear-gradient(180deg,rgba(251,191,36,.14),rgba(251,191,36,.04));
+  box-shadow:inset 4px 0 0 #FBBF24, 0 6px 20px -10px rgba(251,191,36,.35);
+}
+.bt-slip-compact.is-push   {
+  border-color:rgba(251,191,36,.40);
+  background:linear-gradient(180deg,rgba(251,191,36,.08),transparent);
+  box-shadow:inset 4px 0 0 rgba(251,191,36,.6);
+}
 
-/* Header strip — denser */
-.bt-slip-compact .bt-slip-hd{align-items:center}
-.bt-slip-compact .bt-slip-type{font-size:11.5px;font-weight:700;letter-spacing:.02em}
-.bt-slip-compact .bt-slip-ts{font-size:10.5px}
-.bt-slip-compact .bt-slip-badge{font-size:9px;padding:2px 6px;letter-spacing:.08em}
+/* Header strip */
+.bt-slip-compact .bt-slip-hd{align-items:center;margin-bottom:4px}
+.bt-slip-compact .bt-slip-type{font-size:14px;font-weight:800;letter-spacing:.02em;color:var(--text)}
+.bt-slip-compact .bt-slip-ts{font-size:12px;color:var(--text-3)}
+.bt-slip-compact .bt-slip-badge{font-size:10.5px;padding:4px 10px;letter-spacing:.10em;font-weight:800}
 
-/* Leg rows: player prominent, propName + side+line on second line, actual pill right */
-.bt-slip-compact .bt-slip-legs{gap:2px}
+/* Leg rows */
+.bt-slip-compact .bt-slip-legs{gap:4px}
 .bt-slip-compact .bt-slip-leg{
   display:grid;
   grid-template-columns:1fr auto;
-  gap:8px;
+  gap:12px;
   align-items:center;
-  padding:4px 0;
-  border-bottom:1px solid rgba(255,255,255,.04);
+  padding:8px 4px;
+  border-bottom:1px solid rgba(255,255,255,.06);
 }
 .bt-slip-compact .bt-slip-leg:last-child{border-bottom:0}
-.bt-leg-name{font-size:12.5px;font-weight:700;letter-spacing:-.005em;color:var(--text);line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bt-leg-prop{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--text-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bt-leg-league{font-weight:700;letter-spacing:.04em;color:var(--text-2)}
-.bt-leg-prop-name{color:var(--text-2)}
-.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:12.5px;padding:1px 5px;border-radius:4px;margin-left:auto}
-.bt-leg-side-over{color:#86EFAC;background:rgba(34,197,94,.10)}
-.bt-leg-side-under{color:#93C5FD;background:rgba(96,165,250,.10)}
 
-/* Result pill: never empty — always shows actual stat, DNP, P, ✓/✕, or — */
+/* Player name — very prominent */
+.bt-leg-name{
+  font-size:15.5px;
+  font-weight:800;
+  letter-spacing:-.005em;
+  color:var(--text);
+  line-height:1.2;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+/* Prop type + league + side+line — clearly readable, not muted into invisibility */
+.bt-leg-prop{
+  display:flex;align-items:center;gap:8px;
+  font-size:12.5px;
+  color:var(--text-2);
+  margin-top:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.bt-leg-league{
+  font-weight:800;letter-spacing:.05em;
+  color:var(--text);
+  font-size:11px;
+  background:rgba(255,255,255,.06);
+  padding:2px 7px;border-radius:4px;
+}
+.bt-leg-prop-name{color:var(--text);font-weight:600}
+.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:13px;padding:3px 8px;border-radius:5px;margin-left:auto}
+.bt-leg-side-over{color:#86EFAC;background:rgba(34,197,94,.16)}
+.bt-leg-side-under{color:#93C5FD;background:rgba(96,165,250,.16)}
+
+/* Result pill — never empty; shows actual stat number, DNP, P, ✓/✕, or — */
 .bt-slip-compact .bt-leg-actual{
-  min-width:30px;
-  padding:3px 8px;
-  border-radius:5px;
-  font-size:12px;
+  min-width:44px;
+  padding:6px 12px;
+  border-radius:7px;
+  font-size:15px;
   font-weight:800;
   text-align:center;
   font-family:"JetBrains Mono",monospace;
+  border:1px solid transparent;
 }
-.bt-slip-compact .bt-leg-actual.leg-hit    {background:rgba(34,197,94,.20);  color:#86EFAC}
-.bt-slip-compact .bt-leg-actual.leg-miss   {background:rgba(239,68,68,.20);  color:#FCA5A5}
-.bt-slip-compact .bt-leg-actual.leg-push   {background:rgba(251,191,36,.20); color:#FDE68A}
-.bt-slip-compact .bt-leg-actual.leg-dnp    {background:rgba(156,163,175,.20);color:#D1D5DB}
-.bt-slip-compact .bt-leg-actual.leg-pending{background:rgba(251,191,36,.18); color:#FDE68A}
+.bt-slip-compact .bt-leg-actual.leg-hit    {background:rgba(34,197,94,.28);  color:#86EFAC; border-color:rgba(34,197,94,.45)}
+.bt-slip-compact .bt-leg-actual.leg-miss   {background:rgba(239,68,68,.34);  color:#FECACA; border-color:rgba(239,68,68,.65)}
+.bt-slip-compact .bt-leg-actual.leg-push   {background:rgba(251,191,36,.26); color:#FDE68A; border-color:rgba(251,191,36,.45)}
+.bt-slip-compact .bt-leg-actual.leg-dnp    {background:rgba(156,163,175,.22);color:#D1D5DB; border-color:rgba(156,163,175,.4)}
+.bt-slip-compact .bt-leg-actual.leg-pending{background:rgba(251,191,36,.22); color:#FDE68A; border-color:rgba(251,191,36,.4)}
 </style>
 </head>
 <body>
