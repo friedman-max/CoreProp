@@ -170,17 +170,14 @@ function ObservatoryPage() {
       }));
   }, [feedData, leagueChips, resultChips]);
 
-  // Calibration curves: one curve per LEAGUE (sport), built from the
-  // per-league level of /api/calibration/curves. The endpoint nests the
-  // hierarchical state under `isotonic`. We render the per-league curve
-  // directly when present, and otherwise aggregate the per-(league,prop,side)
-  // entries by league weighted by n_eff so the user still sees a league
-  // line even when only prop-level state has been fitted.
+  // Calibration curves: one line per LEAGUE (sport). We read ONLY the
+  // per-league level of /api/calibration/curves (isotonic.leagues) — no
+  // per-prop or per-(league, prop, side) fallback so the chart can never
+  // silently revert to prop-family curves.
   const curveSeries = useMemo(() => {
     const iso = curvesData?.isotonic || curvesData || null;
     if (!iso) return null;
     const leagueLevels = iso.leagues || {};
-    const propLevels   = iso.props   || {};
 
     // Stable per-league colors — match LeaguePill where possible.
     const leagueColor = {
@@ -194,85 +191,21 @@ function ObservatoryPage() {
     };
     const fallback = ["#818cf8", "#22C55E", "#F59E0B", "#3DA9F0", "#A855F7", "#EC4899", "#14B8A6", "#FB7185"];
 
-    // Helper: average multiple curves on a fixed raw-prob grid, weighted by n_eff.
-    const avgOnGrid = (curves, weights) => {
-      const grid = [];
-      for (let v = 0.40; v <= 0.851; v += 0.025) grid.push(Number(v.toFixed(3)));
-      const interp = (curve, x) => {
-        if (!curve || !curve.length) return null;
-        // curve is [[raw, cal], ...] sorted by raw
-        const sorted = curve.slice().sort((a, b) => a[0] - b[0]);
-        if (x <= sorted[0][0]) return sorted[0][1];
-        if (x >= sorted[sorted.length - 1][0]) return sorted[sorted.length - 1][1];
-        for (let i = 1; i < sorted.length; i++) {
-          if (sorted[i][0] >= x) {
-            const [x0, y0] = sorted[i - 1];
-            const [x1, y1] = sorted[i];
-            const t = (x - x0) / (x1 - x0);
-            return y0 + (y1 - y0) * t;
-          }
-        }
-        return null;
-      };
-      const out = [];
-      for (const x of grid) {
-        let num = 0, den = 0;
-        for (let i = 0; i < curves.length; i++) {
-          const y = interp(curves[i], x);
-          if (y == null) continue;
-          const w = weights[i] || 0;
-          if (w <= 0) continue;
-          num += y * w;
-          den += w;
-        }
-        if (den > 0) out.push([x, num / den]);
-      }
-      return out;
-    };
-
-    // Build one entry per league we have any data for.
-    const leagues = new Set();
-    Object.keys(leagueLevels).forEach(l => leagues.add(l));
-    Object.keys(propLevels).forEach(k => {
-      const lg = k.split("|")[0];
-      if (lg) leagues.add(lg);
-    });
-
     let ci = 0;
     const series = [];
-    for (const lg of leagues) {
-      const direct = leagueLevels[lg];
-      let pts = null;
-      let nEff = 0;
-      if (direct && Array.isArray(direct.curve) && direct.curve.length >= 2) {
-        pts = direct.curve.map(p => [Number(p[0]), Number(p[1])]).filter(p =>
-          !isNaN(p[0]) && !isNaN(p[1]) && p[0] >= 0.30 && p[0] <= 0.95
-        );
-        nEff = Math.round(direct.n_eff || 0);
-      } else {
-        // Aggregate from prop-level entries for this league.
-        const curves = [];
-        const weights = [];
-        for (const [key, lvl] of Object.entries(propLevels)) {
-          if (!lvl || !Array.isArray(lvl.curve)) continue;
-          const parts = key.split("|");
-          if (parts.length !== 3) continue;
-          if (parts[0] !== lg) continue;
-          curves.push(lvl.curve);
-          weights.push(lvl.n_eff || 0);
-          nEff += Math.round(lvl.n_eff || 0);
-        }
-        if (curves.length) pts = avgOnGrid(curves, weights);
-      }
-      if (!pts || pts.length < 2) continue;
+    for (const [lg, lvl] of Object.entries(leagueLevels)) {
+      if (!lvl || !Array.isArray(lvl.curve) || lvl.curve.length < 2) continue;
+      const pts = lvl.curve
+        .map(p => [Number(p[0]), Number(p[1])])
+        .filter(p => !isNaN(p[0]) && !isNaN(p[1]) && p[0] >= 0.30 && p[0] <= 0.95);
+      if (pts.length < 2) continue;
       series.push({
         name:  lg,
         color: leagueColor[lg] || fallback[ci++ % fallback.length],
         pts,
-        n_eff: nEff,
+        n_eff: Math.round(lvl.n_eff || 0),
       });
     }
-
     series.sort((a, b) => b.n_eff - a.n_eff);
     return series.length ? series : null;
   }, [curvesData]);
@@ -345,7 +278,7 @@ function ObservatoryPage() {
       <section className="an-panel">
         <div className="an-panel-h">
           <h3>Prop Hit Rate by Expected Probability</h3>
-          <span className="an-section-sub">One row per (league, prop, side). Columns: expected hit rate bands. Cells: actual recency-weighted hit rate from resolved observations.</span>
+          <span className="an-section-sub">One row per (league, prop, side). Columns: expected hit rate bands. Cells: actual recency-weighted hit rate from resolved observations — greener as the hit rate climbs above 56%.</span>
         </div>
         {heatRows == null ? (
           <ObsPlaceholder>Loading heatmap…</ObsPlaceholder>
@@ -370,11 +303,18 @@ function ObservatoryPage() {
                       <span className={"bt-leg-side bt-leg-side-" + row.side}>{row.side === "over" ? "O" : "U"}</span>
                     </td>
                     {row.row.map((cell, j) => {
-                      const expected = heatRows.bandCenters[j];
-                      if (cell == null) return <td key={j} className="obs-heat-cell is-empty">—</td>;
-                      const delta = cell.actual - expected;
+                      // Every cell shows n=… even when empty, so the user can
+                      // see exactly which buckets have no data.
+                      if (cell == null) {
+                        return (
+                          <td key={j} className="obs-heat-cell is-empty">
+                            <span className="obs-heat-v mono">—</span>
+                            <span className="obs-heat-n mono">n=0</span>
+                          </td>
+                        );
+                      }
                       return (
-                        <td key={j} className="obs-heat-cell" style={{ background: heatColor(delta) }}>
+                        <td key={j} className="obs-heat-cell" style={{ background: heatColor(cell.actual) }}>
                           <span className="obs-heat-v mono">{cell.actual.toFixed(1)}%</span>
                           <span className="obs-heat-n mono">n={cell.n}</span>
                         </td>
@@ -507,11 +447,20 @@ function ResultPill({ result }) {
   return <span className="obs-pill" style={{ color: m.c, background: m.bg }}>{m.l}</span>;
 }
 
-function heatColor(delta) {
-  // -8 → red, 0 → neutral, +8 → green
-  const t = Math.max(-1, Math.min(1, delta / 8));
-  if (t > 0) return `rgba(34,197,94,${0.05 + t * 0.20})`;
-  return `rgba(239,68,68,${0.05 + Math.abs(t) * 0.18})`;
+function heatColor(actualPct) {
+  // Color scales with the ABSOLUTE bucket hit rate, not delta-vs-expected.
+  // Pivot is 56% (slightly above the Power-6 leg break-even of 54.08%):
+  //   - 56% = neutral / no tint
+  //   - climbs to fully-saturated green by 80%+
+  //   - drops to fully-saturated red by 32% or lower
+  const PIVOT = 56, GREEN_FULL = 80, RED_FULL = 32;
+  if (actualPct == null || isNaN(actualPct)) return "transparent";
+  if (actualPct >= PIVOT) {
+    const t = Math.min(1, (actualPct - PIVOT) / (GREEN_FULL - PIVOT));
+    return `rgba(34,197,94,${0.06 + t * 0.32})`;
+  }
+  const t = Math.min(1, (PIVOT - actualPct) / (PIVOT - RED_FULL));
+  return `rgba(239,68,68,${0.06 + t * 0.30})`;
 }
 
 // Calibration curves SVG — responsive, fills its container.
