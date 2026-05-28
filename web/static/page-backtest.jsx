@@ -173,8 +173,42 @@ function BacktestPage() {
   const doneLegs = allLegs.filter(l => l.result !== "pending");
   const legHits = doneLegs.filter(l => l.result === "hit").length;
   const slipHits = done.filter(s => s.result === "hit").length;
-  const totalStake = done.reduce((a, s) => a + (s.stake || 0), 0);
-  const totalPayout = done.reduce((a, s) => a + (s.payout || 0), 0);
+
+  // PrizePicks payout tables (must mirror engine/constants.py).
+  // For Power, payout when all hit. For Flex, payout when all hit.
+  const POWER_PAY = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 40.0 };
+  const FLEX_MAX_PAY = { 3: 3.0, 4: 6.0, 5: 10.0, 6: 25.0 };
+
+  // Per-slip break-even hit rate. For each slip a "win" means payout > stake,
+  // and the slip needs the corresponding payout multiple to break even on an
+  // expected-value basis. We use the max payout per (type, legs) as the
+  // reference, which is conservative for Flex (treating it as Power-equivalent)
+  // and exact for Power.
+  const _slipBE = (s) => {
+    const t = (s.type || "").toLowerCase();
+    const n = s.legs || (s.bets || []).length;
+    const tbl = t === "flex" ? FLEX_MAX_PAY : POWER_PAY;
+    const pay = tbl[n];
+    return pay && pay > 1 ? 1 / pay : null;
+  };
+
+  // Weighted slip-mix BE: average BE across the actual resolved slips. The
+  // user wanted "16.67% for 3 legs"-style thresholds — this gives that exact
+  // number for an all-Power-3 dataset and the right blended threshold for
+  // mixed leg counts.
+  let _beSum = 0, _beCount = 0;
+  for (const s of done) {
+    const be = _slipBE(s);
+    if (be != null) { _beSum += be; _beCount += 1; }
+  }
+  const slipBeWeighted = _beCount > 0 ? (_beSum / _beCount) * 100 : null;
+
+  // Real ROI: 1-unit stake per resolved slip (matches the backend's
+  // pnl_timeline math in engine/calibration.evaluate_analytics). Profit per
+  // slip = payout - 1 (stake), ROI = total profit / total stake.
+  const totalStakeUnits = done.length;
+  const totalPayoutUnits = done.reduce((a, s) => a + (typeof s.payout === "number" ? s.payout : 0), 0);
+  const totalProfitUnits = totalPayoutUnits - totalStakeUnits;
 
   const slipsDone = done.length;
   const slipsTotal = slips.length;
@@ -183,7 +217,7 @@ function BacktestPage() {
   const slipHitRate = slipsDone ? (slipHits / slipsDone) * 100 : 0;
   const legHitRate = legsDone ? (legHits / legsDone) * 100 : 0;
   const expLegHitRate = doneLegs.length ? doneLegs.reduce((a, l) => a + (l.pct || 0), 0) / doneLegs.length : 0;
-  const roi = totalStake > 0 ? ((totalPayout - totalStake) / totalStake) * 100 : 0;
+  const roi = totalStakeUnits > 0 ? (totalProfitUnits / totalStakeUnits) * 100 : 0;
 
   const fmt = (v, d = 1, suf = "%") => v.toFixed(d) + suf;
 
@@ -206,19 +240,34 @@ function BacktestPage() {
 
       {/* Summary cards.
        * Tone rule (per user): a hit-rate card is green only when it is at or
-       * above its break-even threshold; red below.
-       *   - Leg Hit Rate BE  = 54.08% (geometric BE for Power 6).
-       *   - Slip Hit Rate has no single BE (depends on slip mix), so we
-       *     use ROI as the proxy: positive ROI ⇒ the realized slip rate is
-       *     above the implicit weighted BE, regardless of leg count mix.
-       *   - ROI itself: positive ⇒ green, negative ⇒ red. */}
+       * above the break-even threshold for the actual slip mix; red below.
+       *
+       *   - Slip Hit Rate BE: weighted average of 1/payout across resolved
+       *     slips. For a pure Power-3 dataset this collapses to 16.67%; for
+       *     Power 4 it's 10%, Power 6 it's 2.5%, and so on. Mixed slip logs
+       *     get the correct blended threshold.
+       *   - Leg Hit Rate BE = 54.08% (geometric BE for Power 6 — the
+       *     standard reference point for individual-leg quality).
+       *   - ROI: positive ⇒ green, negative ⇒ red. Computed as
+       *     (sum_payouts - n_resolved) / n_resolved using 1-unit stake per
+       *     slip, matching the backend's pnl_timeline math. */}
       <div className="bt-summary">
         <StatCard label="Slips (Done / Total)" sub="Recent 300" value={`${slipsDone} / ${slipsTotal}`} />
-        <StatCard label="Slip Hit Rate" sub="vs ROI" value={fmt(slipHitRate)} tone={slipsDone === 0 ? "neutral" : (roi >= 0 ? "good" : "bad")} />
+        <StatCard
+          label="Slip Hit Rate"
+          sub={slipBeWeighted != null ? `BE ${slipBeWeighted.toFixed(2)}%` : "BE —"}
+          value={fmt(slipHitRate)}
+          tone={slipsDone === 0 || slipBeWeighted == null ? "neutral" : (slipHitRate >= slipBeWeighted ? "good" : "bad")}
+        />
         <StatCard label="Legs (Done / Total)" sub="Recent 300" value={`${legsDone} / ${legsTotal}`} />
         <StatCard label="Leg Hit Rate" sub="BE 54.08%" value={fmt(legHitRate)} tone={legsDone === 0 ? "neutral" : (legHitRate >= 54.08 ? "good" : "bad")} />
         <StatCard label="Exp. Leg Hit Rate" value={fmt(expLegHitRate)} />
-        <StatCard label="Actual ROI" value={(roi >= 0 ? "+" : "") + fmt(roi)} tone={done.length === 0 ? "neutral" : (roi >= 0 ? "good" : "bad")} />
+        <StatCard
+          label="Actual ROI"
+          sub={done.length > 0 ? `${totalProfitUnits >= 0 ? "+" : ""}${totalProfitUnits.toFixed(2)}u / ${totalStakeUnits}u` : null}
+          value={(roi >= 0 ? "+" : "") + fmt(roi)}
+          tone={done.length === 0 ? "neutral" : (roi >= 0 ? "good" : "bad")}
+        />
       </div>
 
       {loadState === "loading" && <div style={{padding:"20px", color:"var(--text-3)"}}>Loading slips…</div>}
