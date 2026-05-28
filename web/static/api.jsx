@@ -128,7 +128,11 @@
       truePct:  (b.true_prob || 0) * 100,
       books,
       startTime: b.start_time,
-      inBacktest: !!b.in_backtest,
+      // bet_key is "player|YYYY-MM-DD" — the same key /api/backtest/keys
+      // returns, so the +EV page can join logged bets locally without a
+      // server round-trip per row.
+      betKey:   b.bet_key || null,
+      inBacktest: !!b.in_backtest, // may be false until joined client-side
       raw: b,
     };
   }

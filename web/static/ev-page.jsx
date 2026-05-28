@@ -39,9 +39,27 @@ function EVPage() {
     let cancelled = false;
     const load = async () => {
       try {
-        const data = await window.cpApi.apiFetch("/api/bootstrap/core");
+        // Bets and the user's logged-bet-key list are fetched in parallel.
+        // /api/backtest/keys returns { keys: ["player|YYYY-MM-DD", ...] };
+        // we join each bet locally by its bet_key. /api/backtest/keys
+        // requires auth — if the user is signed out we skip it and no
+        // rows get the LOGGED treatment.
+        const isAuthed = window.cpApi && window.cpApi.isLoggedIn();
+        const [coreRes, keysRes] = await Promise.allSettled([
+          window.cpApi.apiFetch("/api/bootstrap/core"),
+          isAuthed ? window.cpApi.apiFetch("/api/backtest/keys") : Promise.resolve({ keys: [] }),
+        ]);
         if (cancelled) return;
-        const ui = (data.bets || []).map(window.cpApi.betToUi);
+        if (coreRes.status !== "fulfilled") throw coreRes.reason;
+        const data = coreRes.value;
+        const loggedKeys = new Set(
+          (keysRes.status === "fulfilled" ? (keysRes.value.keys || []) : [])
+        );
+        const ui = (data.bets || []).map(b => {
+          const row = window.cpApi.betToUi(b);
+          if (row.betKey && loggedKeys.has(row.betKey)) row.inBacktest = true;
+          return row;
+        });
         setAllBets(ui);
         setLoadState("ok");
       } catch (ex) {
