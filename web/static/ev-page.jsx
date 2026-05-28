@@ -25,9 +25,9 @@ function EVPage() {
   // User-overridable minimum True % per leg. `null` means "use computed BE
   // for the current (slipType, legs) combo"; a number overrides.
   const [minLegOverride, setMinLegOverride] = useState(null);
-  // Per-bet state for the Place-on-PrizePicks button:
-  //   "idle" | "sending" | "queued" | "error"
-  const [placeState, setPlaceState] = useState({});
+  // Slip-prefs save state — "idle" | "saving" | "saved" | "error"
+  // for the explicit Save button next to Min Leg %.
+  const [prefsSaveState, setPrefsSaveState] = useState("idle");
 
   React.useEffect(() => {
     let cancelled = false;
@@ -49,26 +49,8 @@ function EVPage() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // Persist slip prefs (slipType, legs, min leg %) so Auto-Backtest's slip
-  // construction on the server uses what the user picked. Debounced so a
-  // user dragging a number input doesn't fire a request per keystroke.
-  React.useEffect(() => {
-    if (!window.cpApi || !window.cpApi.isLoggedIn()) return;
-    const handle = setTimeout(() => {
-      const minPct = (typeof minLegOverride === "number") ? minLegOverride : slipBE;
-      window.cpApi.apiFetch("/api/user/slip-prefs", {
-        method: "POST",
-        body: {
-          auto_slip_type: slipType,
-          auto_slip_legs: legs,
-          auto_slip_min_prob: Math.max(0.01, Math.min(0.99, minPct / 100)),
-        },
-      }).catch(err => console.warn("slip-prefs save failed:", err.message));
-    }, 600);
-    return () => clearTimeout(handle);
-  }, [slipType, legs, minLegOverride]);
-
-  // Persist auto-backtest toggle.
+  // Persist auto-backtest toggle whenever the checkbox flips. This is a
+  // single boolean so an explicit Save button would be overkill.
   React.useEffect(() => {
     if (!window.cpApi || !window.cpApi.isLoggedIn()) return;
     window.cpApi.apiFetch("/api/user/auto-backtest", {
@@ -76,6 +58,35 @@ function EVPage() {
       body: { auto_backtest: autoBacktest },
     }).catch(err => console.warn("auto-backtest save failed:", err.message));
   }, [autoBacktest]);
+
+  // Whenever slipType / legs / minLegOverride changes, mark prefs as
+  // unsaved so the Save button surfaces "Save" again. The user must
+  // explicitly click Save to persist — no debounced auto-save.
+  React.useEffect(() => {
+    setPrefsSaveState("idle");
+  }, [slipType, legs, minLegOverride]);
+
+  const saveSlipPrefs = async () => {
+    if (!window.cpApi || !window.cpApi.isLoggedIn()) return;
+    setPrefsSaveState("saving");
+    try {
+      const minPct = (typeof minLegOverride === "number") ? minLegOverride : slipBE;
+      await window.cpApi.apiFetch("/api/user/slip-prefs", {
+        method: "POST",
+        body: {
+          auto_slip_type: slipType,
+          auto_slip_legs: legs,
+          auto_slip_min_prob: Math.max(0.01, Math.min(0.99, minPct / 100)),
+        },
+      });
+      setPrefsSaveState("saved");
+      setTimeout(() => setPrefsSaveState(s => s === "saved" ? "idle" : s), 2500);
+    } catch (ex) {
+      console.warn("slip-prefs save failed:", ex.message);
+      setPrefsSaveState("error");
+      setTimeout(() => setPrefsSaveState(s => s === "error" ? "idle" : s), 3000);
+    }
+  };
 
   const bets = useMemoE(() => {
     return allBets.filter(b => {
@@ -90,48 +101,6 @@ function EVPage() {
   const toggleBet = (b) => {
     const key = b.id || (b.player + b.prop + b.line);
     setSelected(prev => prev.find(p => p.key === key) ? prev.filter(p => p.key !== key) : [...prev, { ...b, key }]);
-  };
-
-  const placeOnPrizePicks = async (b) => {
-    const key = b.id || (b.player + b.prop + b.line);
-    setPlaceState(prev => ({ ...prev, [key]: "sending" }));
-    try {
-      // The browser extension polls /api/pending-slip and picks up whatever
-      // is queued for this user. We send a single-leg slip so users can fire
-      // a one-tap bet straight from the table.
-      await window.cpApi.apiFetch("/api/pending-slip", {
-        method: "POST",
-        body: {
-          legs: [{
-            player: b.player,
-            league: b.league,
-            prop:   b.prop,
-            line:   b.line,
-            side:   (b.side || "").toLowerCase(),
-          }],
-          slip_type: slipType,
-          n_legs:    1,
-        },
-      });
-      setPlaceState(prev => ({ ...prev, [key]: "queued" }));
-      // Auto-clear the success state after a few seconds so the row goes
-      // back to its default look.
-      setTimeout(() => {
-        setPlaceState(prev => {
-          if (prev[key] !== "queued") return prev;
-          const n = { ...prev }; delete n[key]; return n;
-        });
-      }, 4000);
-    } catch (ex) {
-      console.error("place failed:", ex);
-      setPlaceState(prev => ({ ...prev, [key]: "error" }));
-      setTimeout(() => {
-        setPlaceState(prev => {
-          if (prev[key] !== "error") return prev;
-          const n = { ...prev }; delete n[key]; return n;
-        });
-      }, 3000);
-    }
   };
 
   const saveSlip = async () => {
@@ -241,19 +210,8 @@ function EVPage() {
                   {b.books.map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}
                 </span>
                 <span className="ev-time">{fmtGameTime(b.startTime)}</span>
-                <span className="ev-actions" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    className={"ev-place-btn ev-place-" + (placeState[key] || "idle")}
-                    title="Send this bet to the PrizePicks browser extension"
-                    onClick={() => placeOnPrizePicks(b)}
-                    disabled={placeState[key] === "sending"}
-                  >
-                    {placeState[key] === "sending" ? "…"
-                     : placeState[key] === "queued" ? "Queued ✓"
-                     : placeState[key] === "error" ? "Retry"
-                     : "Place on PP"}
-                  </button>
-                  <span className={"ev-add-btn " + (isSel ? "is-sel" : "")} onClick={() => toggleBet(b)}>{isSel ? "✓" : "+"}</span>
+                <span className="ev-add">
+                  <span className={"ev-add-btn " + (isSel ? "is-sel" : "")}>{isSel ? "✓" : "+"}</span>
                 </span>
               </div>
             );
@@ -318,6 +276,17 @@ function EVPage() {
               disabled={minLegOverride == null}
             >Reset</button>
           </div>
+          <button
+            type="button"
+            className={"ev-prefs-save ev-prefs-save-" + prefsSaveState}
+            onClick={saveSlipPrefs}
+            disabled={prefsSaveState === "saving"}
+          >
+            {prefsSaveState === "saving" ? "Saving…"
+              : prefsSaveState === "saved" ? "Saved ✓"
+              : prefsSaveState === "error" ? "Retry save"
+              : "Save preferences"}
+          </button>
         </div>
 
         <div className="ev-slip-legs">

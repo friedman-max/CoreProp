@@ -371,6 +371,39 @@ function SlipCard({ slip }) {
     dnp:     { t: "DNP",     cls: "is-push" },
     pending: { t: "PENDING", cls: "is-pending" },
   }[slip.result];
+  const [placeState, setPlaceState] = React.useState("idle");
+
+  // Re-fire this slip's legs to the Chrome extension's queue
+  // (POST /api/pending-slip). Same shape the old vanilla-JS UI used.
+  const placeOnPP = async () => {
+    if (placeState === "sending") return;
+    setPlaceState("sending");
+    try {
+      const legs = (slip.bets || []).map(b => ({
+        player: b.player,
+        league: b.league,
+        prop:   b.propName || b.prop,
+        line:   b.line,
+        side:   b.side === "O" ? "over" : "under",
+      }));
+      if (!legs.length) throw new Error("slip has no legs");
+      await window.cpApi.apiFetch("/api/pending-slip", {
+        method: "POST",
+        body: {
+          legs,
+          slip_type: slip.type || "Power",
+          n_legs:    legs.length,
+        },
+      });
+      setPlaceState("queued");
+      setTimeout(() => setPlaceState(s => s === "queued" ? "idle" : s), 4000);
+    } catch (ex) {
+      console.error("place failed:", ex);
+      setPlaceState("error");
+      setTimeout(() => setPlaceState(s => s === "error" ? "idle" : s), 3000);
+    }
+  };
+
   return (
     <article className={"bt-slip bt-slip-compact " + resultLabel.cls}>
       <header className="bt-slip-hd">
@@ -410,6 +443,19 @@ function SlipCard({ slip }) {
           );
         })}
       </ul>
+
+      <button
+        type="button"
+        className={"bt-slip-place bt-slip-place-" + placeState}
+        onClick={placeOnPP}
+        disabled={placeState === "sending"}
+        title="Send this slip's legs to the PrizePicks Chrome extension"
+      >
+        {placeState === "sending" ? "Sending to extension…"
+          : placeState === "queued" ? "Queued for extension ✓"
+          : placeState === "error" ? "Retry"
+          : "Place on PrizePicks"}
+      </button>
     </article>
   );
 }
