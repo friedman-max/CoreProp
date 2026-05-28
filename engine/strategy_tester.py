@@ -36,7 +36,6 @@ import logging
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, Iterable, Tuple
-from datetime import datetime, timezone, date
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -49,12 +48,12 @@ from engine.constants import (
 )
 from engine.isotonic_calibration import load_isotonic_calibration, calibrate
 from engine.backtest import (
-    make_bet_key, make_game_key, make_leg_key,
+    make_bet_key, make_leg_key,
     MIN_LEG_EV_PCT as _LIVE_MIN_LEG_EV_PCT,
     _DEDUP_WINDOW_HOURS as _LIVE_DEDUP_WINDOW_HOURS,
 )
 from engine.ev_calculator import power_slip_ev, flex_slip_ev
-from engine.dedup import drop_duplicate_slips, check_duplicate_pairs
+from engine.dedup import drop_duplicate_slips
 
 logger = logging.getLogger(__name__)
 
@@ -527,16 +526,26 @@ class StrategyTester:
         """Tick-based replay of engine/backtest.BacktestLogger.try_log_slip.
 
         At every distinct scrape moment (first_seen_at rounded down to the
-        minute) the sandbox asks: "what slip would the live auto-builder
-        have produced given exactly the legs that were live on the board
-        at that moment, plus the 48 h dedup state from the slips it
-        would already have logged earlier in this replay?"
+        minute) the sandbox asks: "which slips could the strategy have
+        produced given exactly the legs that were live on the board at
+        that moment, plus the 48 h dedup state from the slips it would
+        already have logged earlier in this replay?"
+
+        Unlike the live auto-builder — which places a single best slip per
+        scrape because you can only stake one bet at a time — the sandbox
+        is an analytics surface and reports the *complete* opportunity
+        set: every disjoint valid slip the live pool supported at the
+        tick, partitioned greedily in EV-descending order (no leg reused
+        across slips). This is what makes the equity curve, breakdowns,
+        and bootstrap CIs reflect the strategy's full historical edge
+        rather than a thin one-slip-per-tick sample.
 
         This is the path the user reaches via `slip_strategy='live_replay'`.
-        Mirrors the production `BacktestLogger._try_log_slip_locked`
-        exactly: EV-floor filter, EV-descending greedy pick, cross-slip
-        (player, sports_day) + exact-leg dedup, two-distinct-teams swap,
-        BREAK_EVEN avg-prob gate, slip-EV > 0 gate.
+        Each individual slip mirrors the production
+        `BacktestLogger._try_log_slip_locked` gates exactly: EV-floor
+        filter, EV-descending greedy pick, cross-slip (player, sports_day)
+        + exact-leg dedup, two-distinct-teams swap, BREAK_EVEN avg-prob
+        gate, slip-EV > 0 gate.
 
         The user's `config.min_prob` filter is applied upstream in
         `run_simulation` (the live builder doesn't have a prob floor, but
@@ -657,109 +666,132 @@ class StrategyTester:
                 ),
             )
 
-            # Greedy top-EV pick respecting cross-slip dedup.
-            picks: list[int] = []
+            # Form EVERY disjoint valid slip available at this tick, not
+            # just the single best one. The live auto-builder logs one
+            # slip per scrape (you can only place one bet at a time), but
+            # the sandbox is an *analytics* surface: the user wants to see
+            # the full opportunity set the strategy exposed over the
+            # window. So we keep greedily partitioning the live pool —
+            # highest-EV legs first — into non-overlapping slips until no
+            # further full, valid slip can be built. Each leg is consumed
+            # by at most one slip per tick (the "no prop in two slips"
+            # contract), tracked in the tick-local sets below; cross-tick
+            # dedup still flows through `placed` / `used_pair` / `used_leg`.
+            # Reduce the live pool to legs that survive cross-tick dedup
+            # and (player, leg) de-duplication, preserving EV-descending
+            # order. These are the candidates to partition into slips.
+            avail: list[int] = []
             seen_pair: set = set()
             seen_leg:  set = set()
             for i in idxs:
                 pk, lk = p_keys_all[i], l_keys_all[i]
-                if pk in used_pair: continue
-                if lk in used_leg:  continue
-                if pk in seen_pair: continue
-                if lk in seen_leg:  continue
-                picks.append(i)
-                seen_pair.add(pk); seen_leg.add(lk)
-                if len(picks) == config.slip_size:
-                    break
-            if len(picks) < config.slip_size:
-                funnel["ticks_no_valid_slip"] += 1
-                continue
-
-            # Two-team enforcement (PrizePicks rule): swap the lowest-EV
-            # pick for the highest-EV legal different-team alternative
-            # when the greedy first pass produced a single-team slip.
-            team_set = {team_all[i] for i in picks}
-            if len(team_set) < TWO_TEAMS_REQUIRED:
-                single_team = next(iter(team_set))
-                keep = picks[:-1]
-                kept_pair = {p_keys_all[k] for k in keep}
-                kept_leg  = {l_keys_all[k] for k in keep}
-                pick_set = set(picks)
-                replacement = -1
-                for j in idxs:
-                    if j in pick_set: continue
-                    if team_all[j] == single_team: continue
-                    if p_keys_all[j] in used_pair: continue
-                    if l_keys_all[j] in used_leg:  continue
-                    if p_keys_all[j] in kept_pair: continue
-                    if l_keys_all[j] in kept_leg:  continue
-                    replacement = j
-                    break
-                if replacement < 0:
-                    funnel["ticks_no_valid_slip"] += 1
+                if pk in used_pair or lk in used_leg:   # cross-tick dedup
                     continue
-                picks = picks[:-1] + [replacement]
+                if pk in seen_pair or lk in seen_leg:   # intra-pool dedup
+                    continue
+                avail.append(i)
+                seen_pair.add(pk); seen_leg.add(lk)
 
-            # BREAK_EVEN + slip EV > 0 gates. The live builder rejects the
-            # slip entirely if either fails — replay must follow suit
-            # rather than logging a -EV slip the production system never
-            # would have placed.
-            true_probs = [
-                float(rows_all[i].get("calibrated_prob") or 0.0) for i in picks
-            ]
-            if slip_be is None or (sum(true_probs) / config.slip_size) < slip_be:
-                funnel["ticks_no_valid_slip"] += 1
-                continue
-            slip_ev = slip_ev_fn(true_probs)
-            if slip_ev is None or slip_ev <= 0:
-                funnel["ticks_no_valid_slip"] += 1
-                continue
+            # Partition the pool into as MANY disjoint valid slips as it
+            # supports — not just the single best one. A live scrape logs
+            # one bet (you place one slip at a time), but the sandbox is an
+            # analytics surface: it should surface the whole opportunity
+            # set the strategy exposed over the window.
+            #
+            # The BREAK_EVEN gate is on the slip *average*, so greedily
+            # stacking the highest-prob legs into the first slip makes that
+            # slip clear BE by a wide margin while every later slip falls
+            # below it — the user sees ONE slip. Instead we (1) pick the
+            # largest group count whose top legs still average above BE,
+            # then (2) round-robin the legs across that many buckets so
+            # each pairs strong legs with marginal ones, lifting the most
+            # slips over the break-even line. Buckets are disjoint by
+            # construction, so no leg is reused within the tick.
+            slips_this_tick = 0
+            n = config.slip_size
+            g_max = len(avail) // n
+            if g_max >= 1 and slip_be is not None:
+                probs_avail = [
+                    float(rows_all[i].get("calibrated_prob") or 0.0) for i in avail
+                ]
+                # Prefix means are non-increasing (avail is prob/EV-desc),
+                # so the largest feasible group count maximises slips.
+                ng = 0
+                run_sum = 0.0
+                for cand in range(1, g_max + 1):
+                    run_sum = sum(probs_avail[: cand * n])
+                    if (run_sum / (cand * n)) >= slip_be:
+                        ng = cand
+                if ng >= 1:
+                    chosen = avail[: ng * n]
+                    # Round-robin: bucket b gets positions b, b+ng, b+2ng…
+                    buckets = [chosen[b::ng] for b in range(ng)]
+                    for picks in buckets:
+                        true_probs = [
+                            float(rows_all[i].get("calibrated_prob") or 0.0)
+                            for i in picks
+                        ]
+                        # Per-bucket gates: a bucket can still land below BE
+                        # even when the global top-(ng*n) average cleared it.
+                        if (sum(true_probs) / n) < slip_be:
+                            continue
+                        slip_ev = slip_ev_fn(true_probs)
+                        if slip_ev is None or slip_ev <= 0:
+                            continue
+                        # Two-distinct-teams rule (PrizePicks): drop a slip
+                        # that the partition left single-team.
+                        if len({team_all[i] for i in picks}) < TWO_TEAMS_REQUIRED:
+                            continue
 
-            selected_legs = [rows_all[i] for i in picks]
-            results = [r.get("result", "") for r in selected_legs]
-            payout_mult, n_eff, hits_eff, n_pushed = self._payout_with_push(
-                results, config.slip_type,
-            )
-            if config.use_kelly:
-                k_frac = self._calculate_kelly_fraction(
-                    true_probs, config.slip_size, config.slip_type,
-                )
-                bet_size = max(0.0, float(config.bankroll) * k_frac)
+                        selected_legs = [rows_all[i] for i in picks]
+                        results = [r.get("result", "") for r in selected_legs]
+                        payout_mult, n_eff, hits_eff, n_pushed = self._payout_with_push(
+                            results, config.slip_type,
+                        )
+                        if config.use_kelly:
+                            k_frac = self._calculate_kelly_fraction(
+                                true_probs, config.slip_size, config.slip_type,
+                            )
+                            bet_size = max(0.0, float(config.bankroll) * k_frac)
+                        else:
+                            bet_size = config.bet_size
+
+                        profit = (bet_size * payout_mult) - bet_size if bet_size > 0 else 0.0
+                        first_leg = selected_legs[0]
+
+                        sim_slips.append({
+                            "timestamp": pd.Timestamp(tick).isoformat(),
+                            "league":    first_leg.get("league"),
+                            "hits":      hits_eff,
+                            "n_eff":     n_eff,
+                            "n_legs":    config.slip_size,
+                            "n_pushed":  n_pushed,
+                            "payout":    bet_size * payout_mult,
+                            "bet_size":  bet_size,
+                            "profit":    profit,
+                            "legs": [
+                                {
+                                    "player":     r.get("player", ""),
+                                    "prop":       r.get("prop", ""),
+                                    "line":       r.get("line", ""),
+                                    "side":       r.get("side", ""),
+                                    "game_start": r.get("game_start", ""),
+                                    "true_prob":  r.get("calibrated_prob"),
+                                    "result":     r.get("result", ""),
+                                }
+                                for r in selected_legs
+                            ],
+                        })
+                        placed.append((
+                            tick,
+                            [(p_keys_all[i], l_keys_all[i]) for i in picks],
+                        ))
+                        slips_this_tick += 1
+
+            if slips_this_tick:
+                funnel["ticks_with_slip"] += 1
             else:
-                bet_size = config.bet_size
-
-            profit = (bet_size * payout_mult) - bet_size if bet_size > 0 else 0.0
-            first_leg = selected_legs[0]
-
-            sim_slips.append({
-                "timestamp": pd.Timestamp(tick).isoformat(),
-                "league":    first_leg.get("league"),
-                "hits":      hits_eff,
-                "n_eff":     n_eff,
-                "n_legs":    config.slip_size,
-                "n_pushed":  n_pushed,
-                "payout":    bet_size * payout_mult,
-                "bet_size":  bet_size,
-                "profit":    profit,
-                "legs": [
-                    {
-                        "player":     r.get("player", ""),
-                        "prop":       r.get("prop", ""),
-                        "line":       r.get("line", ""),
-                        "side":       r.get("side", ""),
-                        "game_start": r.get("game_start", ""),
-                        "true_prob":  r.get("calibrated_prob"),
-                        "result":     r.get("result", ""),
-                    }
-                    for r in selected_legs
-                ],
-            })
-
-            placed.append((
-                tick,
-                [(p_keys_all[i], l_keys_all[i]) for i in picks],
-            ))
-            funnel["ticks_with_slip"] += 1
+                funnel["ticks_no_valid_slip"] += 1
 
         return sim_slips, funnel
 

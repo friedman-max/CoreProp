@@ -210,6 +210,39 @@ class ReplayTwoTeamTests(unittest.TestCase):
         self.assertEqual(slips, [])
 
 
+class ReplayBalancedPartitionTests(unittest.TestCase):
+    """Regression for the "only one slip" bug. The break-even gate is on the
+    slip *average*, so greedily stacking the best legs makes the first slip
+    clear BE while every later slip falls below it — the user saw 1 slip.
+    The builder must instead spread strong and marginal legs across slips so
+    more of them clear break-even."""
+
+    def test_marginal_pool_yields_multiple_balanced_slips(self):
+        t0 = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+        game = datetime(2026, 5, 1, 19, 0, tzinfo=timezone.utc)
+        # 2-Power BE = 57.74%. Four co-available legs, all distinct teams:
+        #   greedy:   [.65,.62]=.635 ✓ then [.58,.56]=.570 ✗ → 1 slip.
+        #   balanced: [.65,.58]=.615 ✓ and [.62,.56]=.590 ✓  → 2 slips.
+        probs = [0.65, 0.62, 0.58, 0.56]
+        rows = [
+            _row(player=f"P{i}", team=f"T{i}",
+                 first_seen=t0, last_seen=t0 + timedelta(minutes=5),
+                 game_start=game, true_prob=p)
+            for i, p in enumerate(probs)
+        ]
+        df = pd.DataFrame(rows)
+        cfg = StrategyConfig(
+            slip_size=2, slip_type="power", bet_size=1.0,
+            slip_strategy="live_replay", min_prob=0.0,
+        )
+        slips, _ = _tester()._replay_live_auto_builder(df, cfg)
+        self.assertEqual(len(slips), 2,
+            "balanced partition must lift the marginal pair over break-even")
+        # No leg is reused across the two slips.
+        players = [l["player"] for s in slips for l in s["legs"]]
+        self.assertEqual(len(players), len(set(players)))
+
+
 class ReplayTickFloorTests(unittest.TestCase):
     """Regression: the replay floors each tick to the minute, then asked
     `first_seen <= tick <= last_seen`. A row whose first_seen had any
