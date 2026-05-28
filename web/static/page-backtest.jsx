@@ -94,6 +94,48 @@ const BT_FLEX_PAYOUTS = {
   6: { 4: 0.4, 5: 2.0, 6: 25.0 },
 };
 
+// Slip-level expected value % using the per-leg true probabilities.
+// EV per unit stake = sum_outcomes( P(outcome) * payout(outcome) ) − 1.
+// For Power: P(all hit) × table_payout. For Flex: sum over k hits using
+// the Poisson-binomial expansion of the leg-prob vector.
+function btSlipEvPct(slipTypeRaw, legs) {
+  const probs = (legs || []).map(l => Math.max(0, Math.min(1, (l.pct || 0) / 100)));
+  const n = probs.length;
+  if (n < 2) return null;
+  const slipType = String(slipTypeRaw || "power").toLowerCase();
+
+  if (slipType === "power") {
+    const pAll = probs.reduce((a, p) => a * p, 1);
+    const pay = BT_POWER_PAYOUTS[n];
+    if (!pay) return null;
+    return (pAll * pay - 1) * 100;
+  }
+
+  // Flex: distribution over exact hit counts via Poisson-binomial.
+  // dist[k] = P(exactly k hits out of n).
+  let dist = [1];
+  for (const p of probs) {
+    const next = new Array(dist.length + 1).fill(0);
+    for (let k = 0; k < dist.length; k++) {
+      next[k]     += dist[k] * (1 - p);
+      next[k + 1] += dist[k] * p;
+    }
+    dist = next;
+  }
+  if (n === 2) {
+    // Flex 2-leg = Power 2-leg.
+    return (dist[2] * BT_POWER_PAYOUTS[2] - 1) * 100;
+  }
+  const table = BT_FLEX_PAYOUTS[n];
+  if (!table) return null;
+  let expected = 0;
+  for (let k = 0; k < dist.length; k++) {
+    const pay = table[k] || 0;
+    expected += dist[k] * pay;
+  }
+  return (expected - 1) * 100;
+}
+
 // Normalise the various result wordings the legs table may carry.
 function btNormLegResult(r) {
   const s = String(r || "").toLowerCase();
@@ -373,8 +415,17 @@ function SlipCard({ slip }) {
   }[slip.result];
   const [placeState, setPlaceState] = React.useState("idle");
 
-  // Re-fire this slip's legs to the Chrome extension's queue
-  // (POST /api/pending-slip). Same shape the old vanilla-JS UI used.
+  // Slip-level +EV%: expected return per 1u stake, in %.
+  const evPct = React.useMemo(
+    () => btSlipEvPct(slip.type, slip.bets),
+    [slip.type, slip.bets]
+  );
+
+  // Place-on-PrizePicks. Two-step flow mirroring the old vanilla-JS UI:
+  //   1. POST the slip's legs to /api/pending-slip → backend queues it.
+  //   2. Open https://app.prizepicks.com/ in a new tab → the CoreProp
+  //      Chrome extension's content script picks up the queued slip,
+  //      builds it on PrizePicks via DOM automation, and clears the queue.
   const placeOnPP = async () => {
     if (placeState === "sending") return;
     setPlaceState("sending");
@@ -395,6 +446,9 @@ function SlipCard({ slip }) {
           n_legs:    legs.length,
         },
       });
+      // Open PrizePicks so the extension's content script fires. Same
+      // user-gesture chain as the click guarantees the popup isn't blocked.
+      window.open("https://app.prizepicks.com/", "_blank", "noopener,noreferrer");
       setPlaceState("queued");
       setTimeout(() => setPlaceState(s => s === "queued" ? "idle" : s), 4000);
     } catch (ex) {
@@ -411,7 +465,17 @@ function SlipCard({ slip }) {
           <span className="bt-slip-type">{slip.type} · {slip.legs}L</span>
           <span className="bt-slip-ts">{slip.ts}</span>
         </div>
-        <span className={"bt-slip-badge " + resultLabel.cls}>{resultLabel.t}</span>
+        <div className="bt-slip-hd-r">
+          {evPct != null && (
+            <span
+              className={"bt-slip-ev " + (evPct >= 0 ? "is-pos" : "is-neg")}
+              title="Expected value per 1u stake using each leg's true probability"
+            >
+              {evPct >= 0 ? "+" : ""}{evPct.toFixed(1)}% EV
+            </span>
+          )}
+          <span className={"bt-slip-badge " + resultLabel.cls}>{resultLabel.t}</span>
+        </div>
       </header>
 
       <ul className="bt-slip-legs">
@@ -438,6 +502,7 @@ function SlipCard({ slip }) {
                   <span className={"bt-leg-side bt-leg-side-" + (b.side === "O" ? "over" : "under")}>{b.side}{b.line}</span>
                 </div>
               </div>
+              <span className="bt-leg-pct mono" title="Modeled win probability">{(b.pct || 0).toFixed(1)}%</span>
               <span className={"bt-leg-actual mono leg-" + b.result}>{actualDisplay}</span>
             </li>
           );

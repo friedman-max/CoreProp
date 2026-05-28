@@ -960,20 +960,43 @@ body::before{
 }
 
 /* Header strip */
-.bt-slip-compact .bt-slip-hd{align-items:center;margin-bottom:4px}
+.bt-slip-compact .bt-slip-hd{align-items:center;margin-bottom:4px;gap:10px}
+.bt-slip-compact .bt-slip-hd-l{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.bt-slip-compact .bt-slip-hd-r{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .bt-slip-compact .bt-slip-type{font-size:14px;font-weight:800;letter-spacing:.02em;color:var(--text)}
 .bt-slip-compact .bt-slip-ts{font-size:12px;color:var(--text-3)}
 .bt-slip-compact .bt-slip-badge{font-size:10.5px;padding:4px 10px;letter-spacing:.10em;font-weight:800}
 
-/* Leg rows */
+/* Slip-level +EV % badge */
+.bt-slip-ev{
+  font-family:"JetBrains Mono",monospace;
+  font-size:11.5px;font-weight:800;letter-spacing:.04em;
+  padding:4px 9px;border-radius:6px;
+  white-space:nowrap;
+}
+.bt-slip-ev.is-pos{color:#86EFAC;background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.40)}
+.bt-slip-ev.is-neg{color:#FCA5A5;background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.40)}
+
+/* Leg rows: player + prop on the left, True % in the middle, actual on the right */
 .bt-slip-compact .bt-slip-legs{gap:4px}
 .bt-slip-compact .bt-slip-leg{
   display:grid;
-  grid-template-columns:1fr auto;
-  gap:12px;
+  grid-template-columns:1fr auto auto;
+  gap:10px;
   align-items:center;
   padding:8px 4px;
   border-bottom:1px solid rgba(255,255,255,.06);
+}
+.bt-slip-compact .bt-leg-pct{
+  font-size:12.5px;
+  font-weight:700;
+  color:var(--primary-2);
+  font-family:"JetBrains Mono",monospace;
+  padding:2px 7px;
+  border-radius:5px;
+  background:rgba(99,102,241,.10);
+  border:1px solid rgba(99,102,241,.22);
+  min-width:50px;text-align:center;
 }
 .bt-slip-compact .bt-slip-leg:last-child{border-bottom:0}
 
