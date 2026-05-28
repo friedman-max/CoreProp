@@ -114,17 +114,31 @@ function AnalyticsPage() {
     );
   }
 
+  // When the user is hovering the chart, the big number on top shows the
+  // cumulative P&L (in units) AT that timestamp. When not hovering, it shows
+  // the window delta (end − start). The right-side caption shows either the
+  // hovered date or the full window range.
+  const headerNumber = hover ? hover.pnl : totalPnL;
+  const headerLabel  = hover
+    ? hover.date.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+    : (filtered.length
+        ? `${filtered[0].date.toLocaleDateString(undefined,{month:"short",day:"numeric"})} → ${filtered[filtered.length-1].date.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}`
+        : "");
+
   return (
     <main className="bd-page an-page">
       <div className="an-panel">
         <div className="pnl-header">
           <div>
-            <div className="pnl-title">Cumulative P&amp;L <span className="pnl-title-sub">Unit Stake / Slip</span></div>
-            <div className={"pnl-total " + (totalPnL >= 0 ? "tone-good" : "tone-bad")}>
-              {totalPnL >= 0 ? "+" : ""}{totalPnL.toFixed(2)}u
+            <div className="pnl-title">
+              {hover ? "P&L at hover" : "Cumulative P&L"}
+              <span className="pnl-title-sub">{hover ? "units at this point in time" : "Unit Stake / Slip · window delta"}</span>
+            </div>
+            <div className={"pnl-total " + (headerNumber >= 0 ? "tone-good" : "tone-bad")}>
+              {headerNumber >= 0 ? "+" : ""}{headerNumber.toFixed(2)}u
             </div>
           </div>
-          <div className="pnl-hover">{hovered ? hovered.date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""}</div>
+          <div className="pnl-hover">{headerLabel}</div>
         </div>
 
         <PnLChart series={filtered} onHover={setHover} hover={hover} />
@@ -230,8 +244,9 @@ function PnLChart({ series, onHover, hover }) {
         <path d={path} fill="none" stroke={color} strokeWidth="2" />
         {hoverIdx >= 0 && (
           <g>
-            <line x1={xs(hoverIdx)} x2={xs(hoverIdx)} y1={padT} y2={H - padB} stroke="rgba(255,255,255,.25)" strokeDasharray="3,3" />
-            <circle cx={xs(hoverIdx)} cy={ys(series[hoverIdx].pnl)} r="4" fill={color} stroke="white" strokeWidth="1.5" />
+            <line x1={xs(hoverIdx)} x2={xs(hoverIdx)} y1={padT} y2={H - padB} stroke="rgba(255,255,255,.45)" strokeWidth="1.25" strokeDasharray="4,4" />
+            <circle cx={xs(hoverIdx)} cy={ys(series[hoverIdx].pnl)} r="9" fill={color} fillOpacity="0.18" />
+            <circle cx={xs(hoverIdx)} cy={ys(series[hoverIdx].pnl)} r="5" fill={color} stroke="#0a0a0d" strokeWidth="2" />
           </g>
         )}
         {xTicks.map((t, i) => (

@@ -73,6 +73,8 @@ function ObservatoryPage() {
   const [heatData, setHeatData] = useState(null);
   const [feedData, setFeedData] = useState(null);
   const [curvesData, setCurvesData] = useState(null);
+  const [feedExpanded, setFeedExpanded] = useState(false);
+  const FEED_COLLAPSED_COUNT = 10;
   const [loadErr, setLoadErr] = useState("");
 
   useEffect(() => {
@@ -134,7 +136,12 @@ function ObservatoryPage() {
       prop:   r.prop,
       side:   r.side,                     // "over" | "under"
       n_eff:  r.n_eff,
-      row:    (r.cells || []).map(c => c ? c.actual * 100 : null),
+      // Each cell carries both the actual hit rate (%) and its per-cell
+      // effective sample so the user can see how trustworthy each bucket
+      // is, not just the row average.
+      row:    (r.cells || []).map(c => c
+        ? { actual: c.actual * 100, n: Math.round(c.n_eff || 0) }
+        : null),
     }));
     // Sort by league → prop → side so over/under rows sit next to each other.
     rows.sort((a, b) =>
@@ -163,36 +170,110 @@ function ObservatoryPage() {
       }));
   }, [feedData, leagueChips, resultChips]);
 
-  // Calibration curves: build from /api/calibration/curves (hierarchical state).
-  // No fallback to illustrative data — if the API hasn't returned anything yet,
-  // we render the chart frame with a "no calibration fitted" placeholder.
+  // Calibration curves: one curve per LEAGUE (sport), built from the
+  // per-league level of /api/calibration/curves. The endpoint nests the
+  // hierarchical state under `isotonic`. We render the per-league curve
+  // directly when present, and otherwise aggregate the per-(league,prop,side)
+  // entries by league weighted by n_eff so the user still sees a league
+  // line even when only prop-level state has been fitted.
   const curveSeries = useMemo(() => {
-    const props = curvesData?.props || curvesData?.curves?.props || null;
-    if (!props) return null;
-    // Group prop curves by prop name across leagues, weighted by n_eff.
-    // Each `props` key is "league|prop|side" → { curve: [[raw,cal],...], n_eff }
-    const byProp = {};
-    for (const [key, lvl] of Object.entries(props)) {
-      if (!lvl || !Array.isArray(lvl.curve)) continue;
-      const parts = key.split("|");
-      if (parts.length !== 3) continue;
-      const prop = parts[1];
-      if (!byProp[prop]) byProp[prop] = [];
-      byProp[prop].push(lvl);
-    }
-    // Stable palette: distinct, high-contrast colors that read well on dark.
-    const palette = ["#818cf8", "#22C55E", "#F59E0B", "#3DA9F0", "#A855F7", "#EC4899", "#14B8A6", "#FB7185", "#FBBF24", "#60A5FA"];
+    const iso = curvesData?.isotonic || curvesData || null;
+    if (!iso) return null;
+    const leagueLevels = iso.leagues || {};
+    const propLevels   = iso.props   || {};
+
+    // Stable per-league colors — match LeaguePill where possible.
+    const leagueColor = {
+      NBA:   "#F97316",
+      WNBA:  "#C084FC",
+      NHL:   "#60A5FA",
+      MLB:   "#34D399",
+      NFL:   "#FBBF24",
+      NCAAB: "#A78BFA",
+      NCAAF: "#F87171",
+    };
+    const fallback = ["#818cf8", "#22C55E", "#F59E0B", "#3DA9F0", "#A855F7", "#EC4899", "#14B8A6", "#FB7185"];
+
+    // Helper: average multiple curves on a fixed raw-prob grid, weighted by n_eff.
+    const avgOnGrid = (curves, weights) => {
+      const grid = [];
+      for (let v = 0.40; v <= 0.851; v += 0.025) grid.push(Number(v.toFixed(3)));
+      const interp = (curve, x) => {
+        if (!curve || !curve.length) return null;
+        // curve is [[raw, cal], ...] sorted by raw
+        const sorted = curve.slice().sort((a, b) => a[0] - b[0]);
+        if (x <= sorted[0][0]) return sorted[0][1];
+        if (x >= sorted[sorted.length - 1][0]) return sorted[sorted.length - 1][1];
+        for (let i = 1; i < sorted.length; i++) {
+          if (sorted[i][0] >= x) {
+            const [x0, y0] = sorted[i - 1];
+            const [x1, y1] = sorted[i];
+            const t = (x - x0) / (x1 - x0);
+            return y0 + (y1 - y0) * t;
+          }
+        }
+        return null;
+      };
+      const out = [];
+      for (const x of grid) {
+        let num = 0, den = 0;
+        for (let i = 0; i < curves.length; i++) {
+          const y = interp(curves[i], x);
+          if (y == null) continue;
+          const w = weights[i] || 0;
+          if (w <= 0) continue;
+          num += y * w;
+          den += w;
+        }
+        if (den > 0) out.push([x, num / den]);
+      }
+      return out;
+    };
+
+    // Build one entry per league we have any data for.
+    const leagues = new Set();
+    Object.keys(leagueLevels).forEach(l => leagues.add(l));
+    Object.keys(propLevels).forEach(k => {
+      const lg = k.split("|")[0];
+      if (lg) leagues.add(lg);
+    });
+
     let ci = 0;
-    const series = Object.entries(byProp).map(([name, lvls]) => {
-      lvls.sort((a, b) => (b.n_eff || 0) - (a.n_eff || 0));
-      const best = lvls[0];
-      const pts = (best.curve || []).map(p => [Number(p[0]), Number(p[1])]).filter(p =>
-        !isNaN(p[0]) && !isNaN(p[1]) && p[0] >= 0.4 && p[0] <= 0.85
-      );
-      return { name, color: palette[ci++ % palette.length], pts, n_eff: Math.round(best.n_eff || 0) };
-    }).filter(s => s.pts.length >= 2)
-      .sort((a, b) => b.n_eff - a.n_eff)
-      .slice(0, 8);
+    const series = [];
+    for (const lg of leagues) {
+      const direct = leagueLevels[lg];
+      let pts = null;
+      let nEff = 0;
+      if (direct && Array.isArray(direct.curve) && direct.curve.length >= 2) {
+        pts = direct.curve.map(p => [Number(p[0]), Number(p[1])]).filter(p =>
+          !isNaN(p[0]) && !isNaN(p[1]) && p[0] >= 0.30 && p[0] <= 0.95
+        );
+        nEff = Math.round(direct.n_eff || 0);
+      } else {
+        // Aggregate from prop-level entries for this league.
+        const curves = [];
+        const weights = [];
+        for (const [key, lvl] of Object.entries(propLevels)) {
+          if (!lvl || !Array.isArray(lvl.curve)) continue;
+          const parts = key.split("|");
+          if (parts.length !== 3) continue;
+          if (parts[0] !== lg) continue;
+          curves.push(lvl.curve);
+          weights.push(lvl.n_eff || 0);
+          nEff += Math.round(lvl.n_eff || 0);
+        }
+        if (curves.length) pts = avgOnGrid(curves, weights);
+      }
+      if (!pts || pts.length < 2) continue;
+      series.push({
+        name:  lg,
+        color: leagueColor[lg] || fallback[ci++ % fallback.length],
+        pts,
+        n_eff: nEff,
+      });
+    }
+
+    series.sort((a, b) => b.n_eff - a.n_eff);
     return series.length ? series : null;
   }, [curvesData]);
 
@@ -206,12 +287,12 @@ function ObservatoryPage() {
       <section className="an-panel">
         <div className="an-panel-h">
           <h3>Calibration Curves</h3>
-          <span className="an-section-sub">Predicted vs. actual hit rate, by prop family. Closer to the diagonal = better calibrated.</span>
+          <span className="an-section-sub">Predicted vs. actual hit rate, by league. Closer to the diagonal = better calibrated.</span>
         </div>
         {curvesData == null ? (
           <ObsPlaceholder>Loading calibration state…</ObsPlaceholder>
         ) : !curveSeries ? (
-          <ObsPlaceholder>No fitted calibration curves yet — once your model has enough resolved props in any (league, prop, side) bucket, the curves appear here.</ObsPlaceholder>
+          <ObsPlaceholder>No fitted calibration curves yet — once your model has enough resolved props per league, the curves appear here.</ObsPlaceholder>
         ) : (
           <>
             <CalibrationCurves series={curveSeries} />
@@ -288,13 +369,14 @@ function ObservatoryPage() {
                       <span>{row.prop}</span>
                       <span className={"bt-leg-side bt-leg-side-" + row.side}>{row.side === "over" ? "O" : "U"}</span>
                     </td>
-                    {row.row.map((v, j) => {
+                    {row.row.map((cell, j) => {
                       const expected = heatRows.bandCenters[j];
-                      if (v == null) return <td key={j} className="obs-heat-cell is-empty">—</td>;
-                      const delta = v - expected;
+                      if (cell == null) return <td key={j} className="obs-heat-cell is-empty">—</td>;
+                      const delta = cell.actual - expected;
                       return (
                         <td key={j} className="obs-heat-cell" style={{ background: heatColor(delta) }}>
-                          <span className="obs-heat-v mono">{v.toFixed(1)}%</span>
+                          <span className="obs-heat-v mono">{cell.actual.toFixed(1)}%</span>
+                          <span className="obs-heat-n mono">n={cell.n}</span>
                         </td>
                       );
                     })}
@@ -343,13 +425,14 @@ function ObservatoryPage() {
         ) : feedRows.length === 0 ? (
           <ObsPlaceholder>No observations match the current league / result filters.</ObsPlaceholder>
         ) : (
+        <>
         <div className="bd-tbl-wrap">
           <table className="bd-tbl">
             <thead>
               <tr><th>Player</th><th>League</th><th>Prop</th><th>Line</th><th>Target Prob</th><th>Result</th><th>Actual</th><th>Logged</th></tr>
             </thead>
             <tbody>
-              {feedRows.map((f, i) => (
+              {(feedExpanded ? feedRows : feedRows.slice(0, FEED_COLLAPSED_COUNT)).map((f, i) => (
                 <tr key={i}>
                   <td className="bd-player">{f.player}</td>
                   <td><LeaguePill league={f.league} /></td>
@@ -364,6 +447,20 @@ function ObservatoryPage() {
             </tbody>
           </table>
         </div>
+        {feedRows.length > FEED_COLLAPSED_COUNT && (
+          <div style={{display:"flex",justifyContent:"center",marginTop:14}}>
+            <button
+              className="cp-btn cp-btn-ghost cp-btn-sm"
+              onClick={() => setFeedExpanded(v => !v)}
+            >
+              {feedExpanded
+                ? `Show fewer (top ${FEED_COLLAPSED_COUNT})`
+                : `Show all (${feedRows.length})`}
+            </button>
+          </div>
+        )}
+        </>
+        )}
       </section>
     </main>
   );
