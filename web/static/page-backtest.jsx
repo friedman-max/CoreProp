@@ -83,12 +83,67 @@ const BT_SLIPS = [
     ] },
 ];
 
+// Mirror engine/constants.py exactly. Used to recompute slip payout from
+// leg outcomes when the API's `payout` or `completed` flags are missing
+// (e.g. older slips whose legs use "won"/"lost" instead of "hit"/"miss").
+const BT_POWER_PAYOUTS = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 40.0 };
+const BT_FLEX_PAYOUTS = {
+  3: { 2: 1.0, 3: 3.0 },
+  4: { 3: 1.5, 4: 6.0 },
+  5: { 3: 0.4, 4: 2.0, 5: 10.0 },
+  6: { 4: 0.4, 5: 2.0, 6: 25.0 },
+};
+
+// Normalise the various result wordings the legs table may carry.
+function btNormLegResult(r) {
+  const s = String(r || "").toLowerCase();
+  if (s === "hit" || s === "won" || s === "win" || s === "1") return "hit";
+  if (s === "miss" || s === "lost" || s === "loss" || s === "0") return "miss";
+  if (s === "push") return "push";
+  if (s === "dnp") return "dnp";
+  return "pending";
+}
+
+// Compute (resolved?, payout, result, hits_eff, n_eff) for a slip from its
+// legs, independent of whatever the backend filled in. Returns:
+//   resolved: every leg has a non-"pending" status
+//   payout:   units returned for a 1-unit stake (0 = total loss)
+//   result:   "pending" | "hit" | "miss" | "push"
+function btComputeSlipOutcome(s) {
+  const legs = (s.legs || []).map(l => btNormLegResult(l.result));
+  if (!legs.length) return { resolved: false, payout: null, result: "pending", hitsEff: 0, nEff: 0 };
+  if (legs.some(r => r === "pending")) return { resolved: false, payout: null, result: "pending", hitsEff: 0, nEff: 0 };
+
+  // Pushes and DNPs are excluded from the n_eff denominator — exactly as
+  // engine/web/app.py does. n_eff = legs that actually resolved hit/miss.
+  const effective = legs.filter(r => r !== "push" && r !== "dnp");
+  const nEff = effective.length;
+  const hitsEff = effective.filter(r => r === "hit").length;
+  const slipType = String(s.slip_type || s.type || "power").toLowerCase();
+
+  let payout;
+  if (nEff < 2) {
+    payout = (nEff === 0 || (nEff === 1 && hitsEff === 1)) ? 1.0 : 0.0;
+  } else if (slipType === "power") {
+    payout = (hitsEff === nEff) ? (BT_POWER_PAYOUTS[nEff] || 0) : 0;
+  } else if (nEff === 2) {
+    // Flex 2-leg = Power 2-leg.
+    payout = (hitsEff === 2) ? BT_POWER_PAYOUTS[2] : 0;
+  } else {
+    payout = ((BT_FLEX_PAYOUTS[nEff] || {})[hitsEff]) || 0;
+  }
+
+  let result;
+  if (nEff === 0) result = "push";
+  else if (payout > 1) result = "hit";
+  else if (payout === 1) result = "push";
+  else result = "miss";
+
+  return { resolved: true, payout, result, hitsEff, nEff };
+}
+
 function btResultFromSlip(s) {
-  if (!s.completed) return "pending";
-  const legs = s.legs || [];
-  const eff = legs.filter(l => l.result !== "push" && l.result !== "dnp");
-  if (eff.length === 0) return "push";
-  return (s.payout || 0) > (s.stake || 0) ? "hit" : "miss";
+  return btComputeSlipOutcome(s).result;
 }
 
 function btMapSlip(s) {
@@ -107,12 +162,21 @@ function btMapSlip(s) {
       line,
       prop: [propName, sideShort, line].filter(Boolean).join(" ").trim(),
       pct: l.true_prob != null ? l.true_prob * 100 : 0,
-      result: l.result || "pending",
+      // Normalise to hit/miss/push/dnp/pending so summary stats and the
+      // leg-actual pill render consistently regardless of how the row was
+      // written ("won"/"lost"/"1"/"0" all map to hit/miss).
+      result: btNormLegResult(l.result),
       actual,
     };
   });
-  const result = btResultFromSlip(s);
+  const computed = btComputeSlipOutcome(s);
+  const result = computed.result;
+  // Trust our own computation: it works even when the backend left
+  // `payout` null or `completed` false because the legs use "won"/"lost"
+  // wording.
+  const payoutUnits = computed.resolved ? computed.payout : null;
   const ts = s.timestamp ? new Date(s.timestamp).toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+  const tsRaw = s.timestamp ? new Date(s.timestamp).getTime() : 0;
   // Pick a representative league (most common across legs) — or MIXED.
   const leagueCounts = {};
   for (const l of (s.legs || [])) { const k = l.league || "MIXED"; leagueCounts[k] = (leagueCounts[k] || 0) + 1; }
@@ -121,11 +185,12 @@ function btMapSlip(s) {
   return {
     id: s.id || s.slip_id,
     ts,
+    tsRaw,
     type: ((s.slip_type || "power").charAt(0).toUpperCase() + (s.slip_type || "power").slice(1)),
     legs: s.n_legs || legs.length,
     league,
-    stake: s.stake || 0,
-    payout: s.payout,
+    stake: 1,                   // 1-unit canonical stake everywhere
+    payout: payoutUnits,        // null until resolved; in units (incl. stake)
     result,
     hits: s.hits || 0,
     bets: legs,
