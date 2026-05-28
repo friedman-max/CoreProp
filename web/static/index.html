@@ -888,6 +888,24 @@ body::before{
 .ev-prefs-save-saved{background:linear-gradient(180deg,#16a34a,#15803d)}
 .ev-prefs-save-error{background:linear-gradient(180deg,#dc2626,#b91c1c)}
 
+/* Big Save-preferences bar at the bottom of the +EV main column. */
+.ev-bottom-save{
+  margin-top:24px;
+  padding:18px 22px;
+  background:linear-gradient(180deg,#13131c,#0f0f17);
+  border:1px solid var(--hair);border-radius:14px;
+  display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;
+}
+.ev-bottom-save-info{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
+.ev-bottom-save-title{font-size:14px;font-weight:700;letter-spacing:-.005em;color:var(--text)}
+.ev-bottom-save-sub{display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:13px;flex-wrap:wrap}
+.ev-bottom-save-sub b{color:var(--text)}
+.ev-prefs-save-bottom{
+  width:auto;margin-top:0;
+  padding:12px 22px;font-size:14px;border-radius:10px;
+  min-width:200px;
+}
+
 /* Backtest slip card: Place-on-PrizePicks button at the bottom */
 .bt-slip-place{
   margin-top:6px;width:100%;
