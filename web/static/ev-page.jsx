@@ -28,6 +28,12 @@ function EVPage() {
   // Slip-prefs save state — "idle" | "saving" | "saved" | "error"
   // for the explicit Save button next to Min Leg %.
   const [prefsSaveState, setPrefsSaveState] = useState("idle");
+  // True until /api/config has hydrated this user's saved prefs, so the
+  // "unsaved → idle" effect below doesn't reset state on initial load.
+  const prefsHydrated = React.useRef(false);
+  // True only once /api/config has answered. While false the Save button
+  // shows a loading state instead of "Save preferences".
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -49,9 +55,51 @@ function EVPage() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // Persist auto-backtest toggle whenever the checkbox flips. This is a
-  // single boolean so an explicit Save button would be overkill.
+  // Load the user's saved prefs from /api/config on mount so values
+  // persist across reloads / devices for that account. Once hydrated, the
+  // Save button stops surfacing "idle" until the user edits a field.
   React.useEffect(() => {
+    if (!window.cpApi || !window.cpApi.isLoggedIn()) {
+      setPrefsLoaded(true);
+      prefsHydrated.current = true;
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await window.cpApi.apiFetch("/api/config");
+        if (cancelled) return;
+        if (cfg.auto_slip_type === "Power" || cfg.auto_slip_type === "Flex") {
+          setSlipType(cfg.auto_slip_type);
+        }
+        if (typeof cfg.auto_slip_legs === "number" && cfg.auto_slip_legs >= 2 && cfg.auto_slip_legs <= 7) {
+          setLegs(cfg.auto_slip_legs);
+        }
+        if (typeof cfg.auto_slip_min_prob === "number" && cfg.auto_slip_min_prob > 0 && cfg.auto_slip_min_prob < 1) {
+          setMinLegOverride(cfg.auto_slip_min_prob * 100);
+        }
+        if (typeof cfg.auto_backtest === "boolean") {
+          setAutoBacktest(cfg.auto_backtest);
+        }
+      } catch (err) {
+        console.warn("prefs load failed:", err.message);
+      } finally {
+        if (!cancelled) {
+          setPrefsLoaded(true);
+          // Mark hydration complete *after* the state setters above flush,
+          // so the "mark dirty on change" effect ignores the initial loads.
+          setTimeout(() => { prefsHydrated.current = true; }, 0);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Persist auto-backtest toggle whenever the user flips it. Skip during
+  // hydration so the value pulled from /api/config doesn't immediately
+  // round-trip back.
+  React.useEffect(() => {
+    if (!prefsHydrated.current) return;
     if (!window.cpApi || !window.cpApi.isLoggedIn()) return;
     window.cpApi.apiFetch("/api/user/auto-backtest", {
       method: "POST",
@@ -60,9 +108,11 @@ function EVPage() {
   }, [autoBacktest]);
 
   // Whenever slipType / legs / minLegOverride changes, mark prefs as
-  // unsaved so the Save button surfaces "Save" again. The user must
-  // explicitly click Save to persist — no debounced auto-save.
+  // unsaved so the Save button surfaces "Save preferences" again. Skip
+  // during the initial hydration pass so loaded values don't show as
+  // dirty before the user touches anything.
   React.useEffect(() => {
+    if (!prefsHydrated.current) return;
     setPrefsSaveState("idle");
   }, [slipType, legs, minLegOverride]);
 
@@ -280,9 +330,10 @@ function EVPage() {
             type="button"
             className={"ev-prefs-save ev-prefs-save-" + prefsSaveState}
             onClick={saveSlipPrefs}
-            disabled={prefsSaveState === "saving"}
+            disabled={!prefsLoaded || prefsSaveState === "saving"}
           >
-            {prefsSaveState === "saving" ? "Saving…"
+            {!prefsLoaded ? "Loading account…"
+              : prefsSaveState === "saving" ? "Saving…"
               : prefsSaveState === "saved" ? "Saved ✓"
               : prefsSaveState === "error" ? "Retry save"
               : "Save preferences"}
