@@ -473,7 +473,26 @@ body::before{
 
 .ev-player{display:flex;align-items:center;gap:8px;min-width:0}
 .ev-player-n{font-weight:600;letter-spacing:-.005em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ev-logged{font-size:9.5px;font-weight:700;letter-spacing:.08em;background:rgba(239,68,68,.18);color:#FCA5A5;padding:2.5px 6px;border-radius:4px;flex-shrink:0}
+.ev-logged{font-size:10px;font-weight:800;letter-spacing:.10em;background:rgba(239,68,68,.30);color:#FECACA;padding:3px 7px;border-radius:5px;flex-shrink:0;border:1px solid rgba(239,68,68,.55);box-shadow:0 0 0 1px rgba(239,68,68,.15)}
+
+/* Logged-bet row: bet is already in this user's backtest, so it will not
+ * be selected for future auto-built slips. Painted red end-to-end so the
+ * status reads at a glance. */
+.ev-row-data.is-logged{
+  background:linear-gradient(90deg,rgba(239,68,68,.18),rgba(239,68,68,.06)) !important;
+  border-left:3px solid var(--red);
+  padding-left:calc(clamp(18px,2vw,24px) - 3px);
+}
+.ev-row-data.is-logged:hover{
+  background:linear-gradient(90deg,rgba(239,68,68,.25),rgba(239,68,68,.10)) !important;
+}
+.ev-row-data.is-logged .ev-player-n,
+.ev-row-data.is-logged .ev-prop,
+.ev-row-data.is-logged .ev-line{color:#FECACA}
+.ev-row-data.is-logged.is-sel{
+  background:linear-gradient(90deg,rgba(239,68,68,.30),rgba(239,68,68,.10)) !important;
+  border-left:3px solid var(--red);
+}
 .ev-prop{color:var(--text-2)}
 .ev-line{font-family:"JetBrains Mono",monospace;color:var(--text-2);font-size:13px}
 .ev-side{font-weight:700;font-size:12.5px;letter-spacing:.05em}

@@ -241,11 +241,15 @@ function EVPage() {
             return (
               <div
                 key={key + i}
-                className={"ev-row ev-row-data " + (isSel ? "is-sel " : "") + (hovered === key ? "is-hov " : "")}
+                className={"ev-row ev-row-data "
+                  + (isSel ? "is-sel " : "")
+                  + (hovered === key ? "is-hov " : "")
+                  + (b.inBacktest ? "is-logged " : "")}
                 onMouseEnter={() => setHovered(key)}
                 onMouseLeave={() => setHovered(null)}
                 onClick={() => toggleBet(b)}
                 style={{ animationDelay: (i * 14) + "ms" }}
+                title={b.inBacktest ? "Already logged — won't be picked for new slips" : undefined}
               >
                 <span className="ev-player">
                   <span className="ev-player-n">{b.player}</span>
