@@ -42,7 +42,7 @@ function Hero({ onLogin, onStart }) {
           </p>
           <div className="lp-cta-row">
             <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>
-              Start now!
+              Sign Up
             </button>
             <button className="cp-btn cp-btn-ghost cp-btn-lg" onClick={onLogin}>
               Log In
@@ -514,7 +514,7 @@ function FinalCTA({ onStart }) {
         <h2 className="lp-h2">Stop guessing. Start finding edge.</h2>
         <p className="lp-h2-sub">Free for the first 7 days. No credit card. Cancel anytime.</p>
         <div className="lp-cta-row lp-center">
-          <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>Start now!</button>
+          <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>Sign Up</button>
           <button className="cp-btn cp-btn-ghost cp-btn-lg" onClick={onStart}>See pricing</button>
         </div>
       </div>

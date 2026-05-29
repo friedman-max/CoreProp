@@ -867,14 +867,12 @@ body::before{
 .ev{grid-template-columns:1fr 360px}
 .ev-main{padding:22px clamp(22px,2.5vw,40px) 80px}
 .ev-slip{padding:22px 20px}
-.pp{max-width:min(1480px,calc(100vw - 48px));padding:48px clamp(22px,3vw,56px) 80px}
-
-/* Pricing page two-column on wider screens (was single centered card). */
-@media (min-width:1100px){
-  .pp{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:32px;align-items:start}
-  .pp-hd,.pp-back,.pp-foot-trust,.pp-respo,.pp-faq{grid-column:1/-1}
-  .pp-card-wrap{max-width:none}
-}
+/* Pricing page: single centered column. The page has no side column, so the
+ * pricing card, header, FAQ and trust strip all center within a comfortable
+ * reading width. (A previous build forced a 2-col grid with an empty 360px
+ * track, which shoved the card off-center.) */
+.pp{max-width:760px;margin:0 auto;padding:48px clamp(22px,3vw,56px) 80px}
+.pp-card-wrap{max-width:560px;margin:0 auto}
 
 /* Topnav: spread tabs across the full width on wide screens. */
 .cp-nav{padding:12px clamp(22px,2.5vw,40px);grid-template-columns:auto 1fr auto;gap:24px}

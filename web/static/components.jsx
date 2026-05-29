@@ -11,14 +11,14 @@ function Logo({ size = 32, animated = true }) {
   return (
     <div className="cp-logo">
       <img
-        src="/static/logo_full.png"
+        src="/static/logo_full.png?v=3"
         alt="CoreProp"
         className={"cp-mark-img " + (animated ? "is-spin" : "")}
-        style={{ height: h + "px", width: "auto" }}
+        style={{ height: h + "px", width: "auto", background: "transparent" }}
         onError={(e) => {
           if (!e.currentTarget.dataset.fallback) {
             e.currentTarget.dataset.fallback = "1";
-            e.currentTarget.src = "/static/logo.png";
+            e.currentTarget.src = "/static/logo.png?v=3";
           }
         }}
       />
