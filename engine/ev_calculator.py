@@ -26,7 +26,16 @@ from engine.isotonic_calibration import (
 # "cell untradeable" (circuit breaker fired). The wrapper below picks
 # the calibrator at import time.
 from engine import rwbc_calibration as _rwbc
-from config import USE_RWBC as _USE_RWBC, USE_RAW_CONSENSUS_ONLY as _USE_RAW
+# Beta calibration (Maybe Cool Fix C2) — when USE_BETA_CAL=true and the
+# cell has fitted params, beta-cal supersedes RWBC/isotonic. Returns None
+# when the cell isn't yet fit; the caller falls through to RWBC/isotonic.
+from engine import beta_calibration as _beta
+from engine.shade_signal import pp_shade as _pp_shade
+from config import (
+    USE_RWBC as _USE_RWBC,
+    USE_RAW_CONSENSUS_ONLY as _USE_RAW,
+    USE_BETA_CAL as _USE_BETA_CAL,
+)
 from engine.correlation import build_correlation_matrix, legs_metadata_from_bets
 
 # Module-level calibration curves (refreshed on import or via reload_calibration).
@@ -112,12 +121,26 @@ class BetResult:
         #   raw_true_prob for display while setting calibration_halted=True
         #   so the auto-backtester can filter the leg out of slip pools.
         self.calibration_halted = False
+        # Beta-cal preempts when both USE_BETA_CAL=true AND the cell has
+        # fitted params; otherwise falls through to RWBC / isotonic in
+        # that order. Diagnostic mode (USE_RAW) supersedes everything.
+        beta_calibrated_prob = None
+        if not _USE_RAW and _USE_BETA_CAL:
+            beta_calibrated_prob = _beta.calibrate(
+                league, prop_type, side, true_prob,
+                shade=_pp_shade(true_prob),
+            )
+
         if _USE_RAW:
-            # Diagnostic mode — bypass *both* calibrators. true_prob is
-            # set to the vig-stripped book consensus exactly. Useful for
-            # A/B against the calibrated paths. Halt flag is always False
+            # Diagnostic mode — bypass all calibrators. true_prob is set
+            # to the vig-stripped book consensus exactly. Useful for A/B
+            # against the calibrated paths. Halt flag is always False
             # because there's no model layer that could halt.
             calibrated_prob = max(0.001, min(0.999, true_prob))
+        elif beta_calibrated_prob is not None:
+            # Maybe Cool Fix C2: shade-conditioned beta calibration.
+            # When cell params exist, beta-cal output supersedes RWBC.
+            calibrated_prob = beta_calibrated_prob
         elif _USE_RWBC:
             _rwbc_prob = _rwbc.calibrate(true_prob, league, prop_type, side)
             if _rwbc_prob is None:
