@@ -1253,12 +1253,39 @@ def _run_pipeline_body():
         # ── CLV Tracker: update closing lines for pending bets non-blocking ──
         # Pass the precomputed probs dict only — not the full matches list —
         # so matches can be freed as soon as this scope exits.
+        #
+        # Phase 1A audit PR-3a: in addition to the legacy legs-driven path
+        # (which writes closing_prob only for the ~6.5k logged legs out of
+        # 47k observatory rows), we now also run a standalone observatory
+        # capture pass. That path writes closing_prob to ALL pending obs
+        # rows within a 4h pre-game window, raising the calibrator's CLV
+        # signal coverage from 4.7% toward the 60-80% range and unlocking
+        # the dynamic CLV-weight estimator that's currently bound by
+        # CLV_FIT_MIN_OBS=200.
+        # Build the obs-shaped key dict from the same source — the
+        # observatory join keys on (player, prop, side, line) without
+        # game_start (because the obs table is the source of truth for
+        # game_start), so we rekey here.
+        def _obs_keyed_probs(probs: dict) -> dict:
+            out: dict[tuple[str, str, str, float], float] = {}
+            for (player, prop, side, line), v in probs.items():
+                # Source dict uses (player_lower, prop_lower, side, line).
+                # Observatory match expects the same shape — no rekey needed.
+                out[(player, prop, side, float(line))] = float(v)
+            return out
+
         def _update_clv_bg(current_probs=clv_current_probs):
             try:
-                updated = _clv_tracker.update_closing_lines_from_probs(current_probs)
+                updated_legs = _clv_tracker.update_closing_lines_from_probs(current_probs)
                 finalized = _clv_tracker.finalize_missed()
-                if updated or finalized:
-                    logger.info("CLVTracker: %d updated, %d finalized in background", updated, finalized)
+                updated_obs = _clv_tracker.update_observatory_closing_lines(
+                    _obs_keyed_probs(current_probs),
+                )
+                if updated_legs or updated_obs or finalized:
+                    logger.info(
+                        "CLVTracker: legs=%d obs=%d finalized=%d (background)",
+                        updated_legs, updated_obs, finalized,
+                    )
             except Exception as clv_exc:
                 logger.warning("CLVTracker background error: %s", clv_exc)
 

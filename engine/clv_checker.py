@@ -229,6 +229,132 @@ class CLVTracker:
 
         return updated_count
 
+    def update_observatory_closing_lines(
+        self,
+        current_probs: dict[tuple[str, str, str, float], float],
+        *,
+        capture_window_minutes: int = 240,
+    ) -> int:
+        """Standalone observatory closing-line capture (Phase 1A audit PR-3a).
+
+        The legacy `update_closing_lines_from_probs` path only iterates the
+        `legs` table, so an observatory row only ever receives a
+        `closing_prob` if a logged bet exists for the same 6-tuple. With
+        6,572 legs vs 47,653 observatory rows, that path leaves 95% of the
+        training corpus without CLV signal. Result (measured): the dynamic
+        CLV-weight estimator in isotonic_calibration._compute_clv_weight is
+        operating on <2,000 rows even though 38,788 are settled.
+
+        This method writes closing_prob to ALL pending observatory rows
+        whose game_start is within `capture_window_minutes` of now (default
+        4 hours pre-game). The window matters because:
+
+          (a) Lines move materially in the last 1-2 hours pre-game. Writing
+              closing_prob 6 hours out means the "closing" we measure is
+              not the closing — it's the early-line consensus.
+          (b) Writing on every scrape cycle (15 min) means a 4h-window row
+              gets ~16 writes. Each write overwrites the previous, so the
+              final value IS the closing line, and intermediate writes are
+              just bookkeeping.
+
+        Returns the number of observatory rows updated.
+
+        Schema notes: writes the RAW pre-calibration consensus (the dict
+        values from _build_current_probs are worst_case_prob already, but
+        they're pre-isotonic). The calibration refit at
+        isotonic_calibration._ingest_resolved_row reads this raw value and
+        avoids the feedback loop documented at isotonic_calibration.py:746.
+        """
+        db = get_db()
+        if not db:
+            return 0
+        if not current_probs:
+            return 0
+
+        now_utc = datetime.now(timezone.utc)
+        window_end_iso = (
+            now_utc + timedelta(minutes=capture_window_minutes)
+        ).isoformat()
+        now_iso = now_utc.isoformat()
+
+        updated = 0
+        page_size = 1000
+        offset = 0
+        # Paged scan over pending obs rows within the capture window.
+        while True:
+            try:
+                res = (
+                    db.table("market_observatory")
+                      .select("id, player, prop, side, line, game_start, closing_prob")
+                      .eq("result", "pending")
+                      .gte("game_start", now_iso)
+                      .lte("game_start", window_end_iso)
+                      .range(offset, offset + page_size - 1)
+                      .execute()
+                )
+            except Exception as exc:
+                logger.warning(
+                    "CLVTracker.observatory: page %d query failed: %s",
+                    offset, exc,
+                )
+                return updated
+            rows = res.data or []
+            if not rows:
+                break
+
+            for row in rows:
+                key = (
+                    (row.get("player") or "").lower().strip(),
+                    (row.get("prop") or "").lower().strip(),
+                    (row.get("side") or "").lower().strip(),
+                    float(row.get("line") or 0),
+                )
+                new_raw = current_probs.get(key)
+                if new_raw is None:
+                    continue
+                try:
+                    new_val = float(new_raw)
+                except (TypeError, ValueError):
+                    continue
+                if not (0.0 < new_val < 1.0):
+                    continue
+
+                old_cp = row.get("closing_prob")
+                if old_cp is not None:
+                    try:
+                        if abs(float(old_cp) - new_val) < 1e-4:
+                            continue
+                    except (TypeError, ValueError):
+                        pass
+
+                try:
+                    (db.table("market_observatory")
+                       .update({"closing_prob": round(new_val, 4)})
+                       .eq("id", row["id"])
+                       .execute())
+                    updated += 1
+                except Exception as exc:
+                    # Mirror the legacy logger's swallow-after-first behavior
+                    # so a missing column / migration gap doesn't spam the
+                    # log on every iteration. Break out of the page loop too.
+                    logger.warning(
+                        "CLVTracker.observatory: write failed at obs_id=%s: %s",
+                        row.get("id"), exc,
+                    )
+                    return updated
+
+            if len(rows) < page_size:
+                break
+            offset += page_size
+
+        if updated:
+            logger.info(
+                "CLVTracker.observatory: updated closing_prob on %d pending "
+                "observatory rows (window=%dmin)",
+                updated, capture_window_minutes,
+            )
+        return updated
+
     def finalize_missed(self) -> int:
         """
         Recovery pass: for legs where a `closing_prob` was captured but the
