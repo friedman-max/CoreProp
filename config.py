@@ -92,3 +92,15 @@ USE_RAW_CONSENSUS_ONLY = os.getenv("USE_RAW_CONSENSUS_ONLY", "false").lower() in
 # by the primary server on restart).
 DISABLE_AUTO_BACKTEST = os.getenv("DISABLE_AUTO_BACKTEST", "false").lower() in ("true", "1", "yes")
 DISABLE_PERSISTENCE   = os.getenv("DISABLE_PERSISTENCE",   "false").lower() in ("true", "1", "yes")
+
+# ---------------------------------------------------------------------------
+# Maybe Cool Fix experimental toggles. Each is OFF by default; the Phase 3
+# strategy comparison logger runs the same model with these flipped ON to
+# measure the experimental delta against the Holy Fix baseline.
+# ---------------------------------------------------------------------------
+# C1: anti-public-side filter using the data/anti_public_cells.json deny-list.
+USE_SHADE_FILTER = os.getenv("USE_SHADE_FILTER", "false").lower() in ("true", "1", "yes")
+# C2: Beta calibration with shade conditioning, replacing isotonic on top of RWBC.
+USE_BETA_CAL = os.getenv("USE_BETA_CAL", "false").lower() in ("true", "1", "yes")
+# C3: Portfolio Kelly across same-day slips (joint optimization).
+USE_PORTFOLIO_KELLY = os.getenv("USE_PORTFOLIO_KELLY", "false").lower() in ("true", "1", "yes")

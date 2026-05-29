@@ -1112,6 +1112,22 @@ def _run_pipeline_body():
                     # only sees Tier A legs.
                     pre_tier = len(pool)
                     pool = filter_legs_for_slip(pool, slip_type, n_legs)
+
+                    # Maybe Cool Fix C1: anti-public-side filter (OFF unless
+                    # USE_SHADE_FILTER=true). Drops legs in (league, side,
+                    # shade_bucket) cells flagged as historically anti-skill
+                    # at high shade. Refit by Phase 3 strategy logger.
+                    if cfg.USE_SHADE_FILTER:
+                        from engine.shade_signal import is_anti_public
+                        pre_shade = len(pool)
+                        pool = [b for b in pool if not is_anti_public(b)]
+                        n_dropped = pre_shade - len(pool)
+                        if n_dropped > 0:
+                            logger.info(
+                                "auto_backtest    user=%s shade_filter "
+                                "dropped=%d remaining=%d",
+                                uid, n_dropped, len(pool),
+                            )
                     if pre_tier != len(pool):
                         counts = tier_summary(pool)
                         logger.info(
