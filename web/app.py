@@ -2450,6 +2450,10 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
 
 class BacktestAddSlipRequest(BaseModel):
     bet_ids: list[str]
+    # The slip type the user picked in the +EV slip builder. Stored on the
+    # slip row so the backtest reflects user intent (Power / Flex). Falls
+    # back to "Manual" for older clients that don't send it.
+    slip_type: str = "Manual"
 
 
 @app.post("/api/backtest/add-slip")
@@ -2460,6 +2464,12 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
     """
     if not req.bet_ids or len(req.bet_ids) < 2 or len(req.bet_ids) > 6:
         raise HTTPException(status_code=400, detail="Slip must have 2-6 legs.")
+
+    # Normalise the requested slip type. Anything we don't recognise is
+    # stored verbatim (e.g. "Manual") so we never reject on this field.
+    req_slip_type = (req.slip_type or "Manual").strip().title()
+    if req_slip_type not in ("Power", "Flex", "Manual"):
+        req_slip_type = "Manual"
 
     with _lock:
         bet_map      = _state["bet_map"]
@@ -2533,7 +2543,7 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
 
     # Force the slip through — bypass the "enough bets" / EV gate by
     # calling try_log_slip with only these bets (already in correct format).
-    new_slip = _logger.try_log_slip(backtest_bets, slip_type="Manual")
+    new_slip = _logger.try_log_slip(backtest_bets, slip_type=req_slip_type)
     if new_slip is None:
         # try_log_slip may reject due to EV or already-used bets;
         # for manual adds we force-log it anyway.
@@ -2582,7 +2592,9 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
             best_ev = max(candidates) if candidates else 0.0
         except Exception:
             best_ev = 0.0
-        best_type = "Manual"
+        # Tag the slip with the user's requested type so the backtest view
+        # reflects intent (Power / Flex) rather than a generic "Manual".
+        best_type = req_slip_type
 
         slip_id   = str(uuid.uuid4())[:8].upper()
         timestamp = _dt.now().isoformat(timespec="seconds")

@@ -250,19 +250,37 @@ function BacktestPage() {
 
   React.useEffect(() => {
     let cancelled = false;
+    const URL = "/api/backtest/slips";
+    const apply = (data) => {
+      if (cancelled || !data) return;
+      setSlips((data.slips || []).map(btMapSlip));
+      setLoadState("ok");
+    };
+    // Seed instantly from the SWR cache if available, then subscribe so a
+    // slip logged from the +EV tab (which revalidates this URL) shows up
+    // here without a manual refresh.
+    const cached = window.cpApi.getCached && window.cpApi.getCached(URL);
+    if (cached) apply(cached);
+    const unsub = window.cpApi.subscribeCache
+      ? window.cpApi.subscribeCache(URL, apply)
+      : () => {};
     (async () => {
       try {
-        const data = await window.cpApi.apiFetch("/api/backtest/slips");
-        if (cancelled) return;
-        setSlips((data.slips || []).map(btMapSlip));
-        setLoadState("ok");
+        const data = window.cpApi.cachedFetch
+          ? await window.cpApi.cachedFetch(URL)
+          : await window.cpApi.apiFetch(URL);
+        apply(data);
       } catch (ex) {
         if (cancelled) return;
         setErrMsg(ex.message || "Failed to load slips.");
-        setLoadState("error");
+        if (!cached) setLoadState("error");
       }
     })();
-    return () => { cancelled = true; };
+    // Light poll so resolved results / newly-logged slips refresh over time.
+    const id = setInterval(() => {
+      if (window.cpApi.cachedFetch) window.cpApi.cachedFetch(URL).then(apply).catch(() => {});
+    }, 60000);
+    return () => { cancelled = true; clearInterval(id); unsub(); };
   }, []);
 
   const filtered = useMemo(() =>

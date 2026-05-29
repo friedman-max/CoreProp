@@ -190,9 +190,17 @@ function EVPage() {
 
     setSaving(true);
     try {
-      await window.cpApi.apiFetch("/api/slip", {
+      // /api/backtest/add-slip is the endpoint that actually WRITES the slip
+      // (header + legs) to Supabase so it shows up on the Backtest tab.
+      // (/api/slip only *computes* EV and persists nothing — using it was
+      //  why nothing was being logged.) slip_type carries the user's choice
+      // (Power / Flex) so the logged slip reflects their intent.
+      await window.cpApi.apiFetch("/api/backtest/add-slip", {
         method: "POST",
-        body: { bet_ids: selected.map(s => s.id).filter(Boolean), bankroll: 100 },
+        body: {
+          bet_ids:   selected.map(s => s.id).filter(Boolean),
+          slip_type: slipType,
+        },
       });
       // Mark the just-logged bets as in-backtest locally so they turn red
       // immediately, before the next 30s poll re-joins /api/backtest/keys.
@@ -203,8 +211,14 @@ function EVPage() {
         ));
       }
       setSelected([]);
+      // Invalidate the cached backtest slips so the Backtest tab shows the
+      // new slip immediately when the user switches to it.
+      if (window.cpApi.cachedFetch) {
+        window.cpApi.cachedFetch("/api/backtest/slips").catch(() => {});
+        window.cpApi.cachedFetch("/api/backtest/keys").catch(() => {});
+      }
     } catch (ex) {
-      alert("Save failed: " + (ex.message || ex));
+      alert("Couldn't log slip to backtest: " + (ex.message || ex));
     } finally {
       setSaving(false);
     }
