@@ -1107,7 +1107,46 @@ function App() {
   // Tabs the user has opened at least once. We keep their components mounted
   // (hidden, not destroyed) so switching back is instant — no refetch flash.
   const [visited, setVisited] = useState(() => new Set(["+EV Bets"]));
+  // Billing gate. Default unlocked (subActive=true) so nothing flashes locked
+  // before /api/billing/status answers, and so the app stays fully open until
+  // billing enforcement is switched on server-side (BILLING_ENFORCE).
+  const [subActive, setSubActive] = useState(true);
+  const [subEnforce, setSubEnforce] = useState(false);
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+  // Load billing status on login and after returning from Stripe Checkout.
+  // The webhook may lag a second or two, so on a fresh ?checkout=success we
+  // poll a few times before giving up.
+  useEffect(() => {
+    if (!loggedIn || !window.cpApi) return;
+    let cancelled = false, tries = 0;
+    const justCheckedOut = /[?&]checkout=success/.test(window.location.search);
+    const poll = async () => {
+      try {
+        const s = await window.cpApi.billingStatus();
+        if (cancelled) return;
+        setSubActive(!!s.active);
+        setSubEnforce(!!s.enforce);
+        // Keep polling briefly after checkout until the subscription lands.
+        if (justCheckedOut && s.enforce && !s.active && tries < 6) {
+          tries++; setTimeout(poll, 1500);
+        }
+      } catch (e) { /* leave unlocked on error */ }
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [loggedIn]);
+
+  // Strip the ?checkout= flag from the URL once handled (cosmetic).
+  useEffect(() => {
+    if (/[?&]checkout=/.test(window.location.search)) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("checkout");
+      window.history.replaceState({}, "", url.pathname + url.search);
+    }
+  }, []);
+
+  const locked = subEnforce && !subActive;
 
   // Apply tweaks via CSS vars
   useEffect(() => {
@@ -1121,6 +1160,12 @@ function App() {
       setVisited(prev => { const n = new Set(prev); n.add(active); return n; });
     }
   }, [view, active]);
+
+  // If billing enforcement locks the account while the user is in the app,
+  // bounce them to the pricing page to subscribe.
+  useEffect(() => {
+    if (locked && view === "ev") { setView("pricing"); }
+  }, [locked, view]);
 
   // Prefetch every tab's data into the SWR cache shortly after login so the
   // first visit to each tab paints instantly instead of showing a spinner.
@@ -1159,7 +1204,11 @@ function App() {
 
   const onTab = (tab) => {
     if (tab === "landing") { setView("landing"); return; }
+    if (tab === "pricing") { setView("pricing"); window.scrollTo({ top: 0 }); return; }
     if (!loggedIn) { setAuthOpen(true); return; }
+    // Subscription gate: when enforcement is on and the user isn't active,
+    // route any app-tab click to the pricing page instead of the locked app.
+    if (locked) { setView("pricing"); window.scrollTo({ top: 0 }); return; }
     setActive(tab);
     setView("ev");
   };
@@ -1177,8 +1226,8 @@ function App() {
         variant={view === "landing" ? "landing" : "app"}
       />
       {view === "landing" && <Landing onLogin={onLogin} onStart={onStart} onTab={onTab} />}
-      {view === "pricing" && <PricingPage onStart={onAuthSubmit} onBack={() => setView("landing")} />}
-      {view === "ev" && (() => {
+      {view === "pricing" && <PricingPage onStart={onAuthSubmit} onBack={() => setView(loggedIn && !locked ? "ev" : "landing")} loggedIn={loggedIn} locked={locked} />}
+      {view === "ev" && !locked && (() => {
         // Keep-alive tab host: once a tab has been visited it stays mounted
         // and is hidden via display:none when inactive. This preserves each
         // page's state + fetched data so switching back is instant.

@@ -1,8 +1,11 @@
 // Pricing / checkout-style sell page. Single tier: $50/mo.
 const { useState: useStateP } = React;
 
-function PricingPage({ onStart, onBack }) {
+function PricingPage({ onStart, onBack, loggedIn, locked }) {
   const [billing, setBilling] = useState("monthly"); // monthly | yearly
+  const [cta, setCta] = useState("idle");            // idle | loading | error
+  const [ctaErr, setCtaErr] = useState("");
+  const [portalBusy, setPortalBusy] = useState(false);
   const monthly = 50;
   const yearly = Math.round(monthly * 12 * 0.85); // 15% off
   const yearlyPerMonth = (yearly / 12).toFixed(2);
@@ -19,6 +22,31 @@ function PricingPage({ onStart, onBack }) {
     { icon: "league", t: "All major leagues",             d: "NBA, NFL, MLB, NHL, WNBA, NCAA, soccer, tennis, and more. New markets added weekly." },
     { icon: "refresh",t: "Auto refresh + LOGGED tags",    d: "Lines update every 30 seconds. Tag bets you have placed and we track CLV automatically." },
   ];
+
+  // CTA click: if signed in, start Stripe Checkout for the selected plan.
+  // If signed out, hand back to the app's auth flow (onStart) so they log in
+  // first — after auth they land here and can subscribe.
+  const onCta = async () => {
+    if (cta === "loading") return;
+    if (!window.cpApi || !window.cpApi.isLoggedIn()) {
+      onStart && onStart();
+      return;
+    }
+    setCta("loading"); setCtaErr("");
+    try {
+      await window.cpApi.startCheckout(billing); // redirects to Stripe
+    } catch (e) {
+      // Billing not configured yet (503) or a Stripe error — fall back to the
+      // original behavior so the button still does something useful.
+      console.warn("checkout failed:", e.message);
+      if (/not configured|503/i.test(e.message || "")) {
+        onStart && onStart();
+      } else {
+        setCtaErr(e.message || "Couldn't start checkout.");
+        setCta("error");
+      }
+    }
+  };
 
   return (
     <main className="pp">
@@ -93,10 +121,27 @@ function PricingPage({ onStart, onBack }) {
             <span className="pp-books-plus">+ all major leagues</span>
           </div>
 
-          <button className="cp-btn pp-cta" onClick={onStart}>
-            Try 7 days free
+          <button className="cp-btn pp-cta" onClick={onCta} disabled={cta === "loading"}>
+            {cta === "loading" ? "Redirecting to checkout…" : "Try 7 days free"}
           </button>
-          <div className="pp-cta-sub">Then ${monthly}/mo. Cancel anytime in one click.</div>
+          {ctaErr && <div className="pp-cta-sub" style={{color:"#FCA5A5"}}>{ctaErr}</div>}
+          <div className="pp-cta-sub">
+            Then ${billing === "monthly" ? monthly + "/mo" : yearly + "/yr"}. Cancel anytime in one click.
+          </div>
+          {loggedIn && (
+            <button
+              type="button"
+              className="cp-link cp-center"
+              style={{ marginTop: 4 }}
+              disabled={portalBusy}
+              onClick={async () => {
+                if (portalBusy) return;
+                setPortalBusy(true);
+                try { await window.cpApi.openBillingPortal(); }
+                catch (e) { setCtaErr(e.message || "Couldn't open billing portal."); setPortalBusy(false); }
+              }}
+            >{portalBusy ? "Opening…" : "Manage / cancel subscription"}</button>
+          )}
 
           <ul className="pp-benefits">
             {benefits.map((b, i) => (

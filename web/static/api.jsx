@@ -255,10 +255,34 @@
 
   init();
 
+  // ── Billing (Stripe) ─────────────────────────────────────────────────────
+  async function billingConfig() {
+    try { return await apiFetch("/api/billing/config"); }
+    catch (e) { return { enabled: false, enforce: false }; }
+  }
+  async function billingStatus() {
+    if (!isLoggedIn()) return { active: true, enforce: false, configured: false };
+    try { return await apiFetch("/api/billing/status"); }
+    catch (e) { return { active: true, enforce: false, configured: false }; }
+  }
+  // Kick off Stripe Checkout for a plan; redirects the page to Stripe.
+  async function startCheckout(plan) {
+    const res = await apiFetch("/api/billing/checkout", { method: "POST", body: { plan } });
+    if (res && res.url) { window.location.assign(res.url); return true; }
+    throw new Error("Checkout did not return a URL.");
+  }
+  // Open the Stripe customer portal (manage / cancel).
+  async function openBillingPortal() {
+    const res = await apiFetch("/api/billing/portal", { method: "POST", body: {} });
+    if (res && res.url) { window.location.assign(res.url); return true; }
+    throw new Error("Portal did not return a URL.");
+  }
+
   window.cpApi = {
     init, getSession, getUser, isLoggedIn, subscribe,
     signIn, signUp, signOut,
     apiFetch, betToUi, lineToUi, useBoardLines,
     cachedFetch, getCached, subscribeCache, prefetch,
+    billingConfig, billingStatus, startCheckout, openBillingPortal,
   };
 })();
