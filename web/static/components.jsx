@@ -4,9 +4,9 @@ const { useState, useEffect, useRef, useMemo } = React;
 
 // ───────── Logo ─────────
 function Logo({ size = 32, animated = true }) {
-  // Use the real brand wordmark (logo_full.png) — the design-handoff
-  // logo-transparent.png had near-invisible white-outline text against our
-  // dark nav. Fall back to logo.png (mark only) if the wordmark fails.
+  // Use the real brand wordmark (logo_full.png) — transparent background,
+  // blue wave mark + white "CoreProp" text, built for dark surfaces.
+  // Fall back to logo.png (mark only) if the wordmark fails to load.
   const h = size;
   return (
     <div className="cp-logo">

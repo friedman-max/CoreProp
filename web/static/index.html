@@ -98,10 +98,10 @@ body::before{
 .cp-nav.is-landing{background:rgba(10,10,13,.55)}
 .cp-logo-btn{background:transparent;border:0;cursor:default;padding:0}
 .cp-logo{display:flex;align-items:center;gap:9px}
-/* No drop-shadow: logo_full.png has a non-transparent dark background, so a
- * drop-shadow filter traces the rectangular alpha edge and reads as an
- * uneven box-shaped glow on dark nav. Cleaner to leave the PNG's own
- * artwork untouched. The "showHalo" tweak is now a no-op. */
+/* logo_full.png is now a transparent-background wordmark, so the artwork
+ * sits cleanly on the dark nav with no rectangular edge. We keep it free of
+ * any drop-shadow glow per the brand look. The "showHalo" tweak stays a
+ * no-op for the wordmark. */
 .cp-mark-img{display:block;transition:transform .8s cubic-bezier(.3,1.4,.4,1)}
 .cp-logo-btn:hover .cp-mark-img.is-spin{transform:rotate(-6deg) scale(1.04)}
 .app.no-halo .cp-mark-img{filter:none}
