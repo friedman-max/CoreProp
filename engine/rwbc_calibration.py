@@ -357,6 +357,38 @@ def record_history(
 # Cache load + inference path
 # ─────────────────────────────────────────────────────────────────────────
 
+def set_cell_cache_from_fits(fits: dict[tuple[str, str, str], dict]) -> int:
+    """Hydrate the process-local cache directly from an in-memory fits dict.
+
+    Used in two situations:
+      (a) Cold-start before migration_010 has been applied — the DB
+          load path returns 0, so we seed the cache from the freshly
+          computed fit so calibrate() and the Observatory panels work
+          immediately.
+      (b) Test fixtures that want to inject canned cells without going
+          through publish + reload.
+
+    Returns the number of cells installed.
+    """
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    new_cache: dict[tuple[str, str, str], CellStats] = {}
+    for (lg, prop, side), fit in fits.items():
+        new_cache[(lg, prop, side)] = CellStats(
+            league=lg, prop=prop, side=side,
+            w_cell=fit["w_cell"], p_post=fit["p_post"], n_eff=fit["n_eff"],
+            resolution=fit["resolution"], reliability_error=fit["reliability_error"],
+            mean_pred=fit["mean_pred"], mean_obs=fit["mean_obs"],
+            last_fit_at=now, last_publish_at=now,
+            last_publish_n_eff=fit["n_eff"],
+        )
+    with _cache_lock:
+        _cell_cache.clear()
+        _cell_cache.update(new_cache)
+    logger.info("RWBC.cache: hydrated %d cells from in-memory fit", len(new_cache))
+    return len(new_cache)
+
+
 def load_cell_cache_from_db(db) -> int:
     """Replace the process-local cache from calibration_cells. Returns
     the number of cells loaded. Safe to call repeatedly (e.g. once per

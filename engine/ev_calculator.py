@@ -26,7 +26,7 @@ from engine.isotonic_calibration import (
 # "cell untradeable" (circuit breaker fired). The wrapper below picks
 # the calibrator at import time.
 from engine import rwbc_calibration as _rwbc
-from config import USE_RWBC as _USE_RWBC
+from config import USE_RWBC as _USE_RWBC, USE_RAW_CONSENSUS_ONLY as _USE_RAW
 from engine.correlation import build_correlation_matrix, legs_metadata_from_bets
 
 # Module-level calibration curves (refreshed on import or via reload_calibration).
@@ -53,6 +53,10 @@ class BetResult:
         "raw_true_prob", "true_prob", "true_odds", "edge", "individual_ev_pct",
         "over_odds", "under_odds", "both_sided",
         "pp_player_id", "start_time", "market_width", "team",
+        # RWBC: set True when the calibration cell halted this leg
+        # (w_cell < W_CELL_HALT_THRESHOLD or unknown cell). Auto-backtest
+        # worker filters legs with this=True from the slip pool.
+        "calibration_halted",
     )
 
     def __init__(
@@ -108,7 +112,13 @@ class BetResult:
         #   raw_true_prob for display while setting calibration_halted=True
         #   so the auto-backtester can filter the leg out of slip pools.
         self.calibration_halted = False
-        if _USE_RWBC:
+        if _USE_RAW:
+            # Diagnostic mode — bypass *both* calibrators. true_prob is
+            # set to the vig-stripped book consensus exactly. Useful for
+            # A/B against the calibrated paths. Halt flag is always False
+            # because there's no model layer that could halt.
+            calibrated_prob = max(0.001, min(0.999, true_prob))
+        elif _USE_RWBC:
             _rwbc_prob = _rwbc.calibrate(true_prob, league, prop_type, side)
             if _rwbc_prob is None:
                 # Cell halted — display surfaces see raw model output but

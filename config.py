@@ -65,3 +65,26 @@ PORT = int(os.getenv("PORT", "8000"))
 # hourly scheduler in web/app.py drives both code paths.
 # ---------------------------------------------------------------------------
 USE_RWBC = os.getenv("USE_RWBC", "false").lower() in ("true", "1", "yes")
+
+# ---------------------------------------------------------------------------
+# USE_RAW_CONSENSUS_ONLY — diagnostic mode. When true, engine/ev_calculator.py
+# bypasses *both* isotonic AND RWBC calibrators and sets
+#     true_prob = raw_true_prob
+# exactly — the vig-stripped, book-sharpness-weighted consensus from
+# engine.consensus.compute_true_probability(), with no model layer on top.
+#
+# Useful for A/B comparison against the calibrated paths: run two servers
+# side-by-side on different ports, one with USE_RWBC=true and one with
+# USE_RAW_CONSENSUS_ONLY=true, and diff the +EV tables.
+#
+# Takes precedence over USE_RWBC if both are set.
+# ---------------------------------------------------------------------------
+USE_RAW_CONSENSUS_ONLY = os.getenv("USE_RAW_CONSENSUS_ONLY", "false").lower() in ("true", "1", "yes")
+
+# Operational toggles for running a "display-only" comparison server that
+# shouldn't write to shared state. When both set, the server still scrapes
+# and renders +EV but skips auto-backtest logging and skips persisting its
+# scrape snapshot back to Supabase (so it doesn't clobber the seed used
+# by the primary server on restart).
+DISABLE_AUTO_BACKTEST = os.getenv("DISABLE_AUTO_BACKTEST", "false").lower() in ("true", "1", "yes")
+DISABLE_PERSISTENCE   = os.getenv("DISABLE_PERSISTENCE",   "false").lower() in ("true", "1", "yes")

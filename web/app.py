@@ -12,6 +12,7 @@ import gc
 import hashlib
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -996,8 +997,14 @@ def _run_pipeline_body():
             sync_state_to_supabase("pin_lines", serialized_pin)
             if _state["last_refresh"]:
                 sync_state_to_supabase("last_refresh", _state["last_refresh"].isoformat())
-        
-        threading.Thread(target=_sync_all, daemon=True).start()
+
+        if cfg.DISABLE_PERSISTENCE:
+            logger.info(
+                "persistence      DISABLE_PERSISTENCE=true — skipping sync_state_to_supabase "
+                "(comparison-server mode; primary server's seed stays untouched)"
+            )
+        else:
+            threading.Thread(target=_sync_all, daemon=True).start()
 
         # Auto-backtest logging for opted-in users — each user's chosen
         # slip_type / n_legs (from the Slip Builder) drives what gets logged.
@@ -1007,12 +1014,49 @@ def _run_pipeline_body():
                 db = get_db()
                 if not db:
                     return
-                users_res = (
-                    db.table("user_config")
-                    .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
-                    .eq("auto_backtest", True)
-                    .execute()
-                )
+                # LOCAL_AUTO_BACKTEST_USER_IDS override: comma-separated user
+                # IDs that get auto-backtested by *this* server regardless
+                # of their auto_backtest flag. Used for localhost-exclusive
+                # logger mode — pair it with flipping auto_backtest=false on
+                # those users in Supabase so the production Render instance
+                # stops logging slips for them. Other users keep their
+                # normal flag-driven behavior (Render still serves them).
+                _override_csv = os.getenv("LOCAL_AUTO_BACKTEST_USER_IDS", "").strip()
+                _override_uids = [u.strip() for u in _override_csv.split(",") if u.strip()]
+                if _override_uids:
+                    # Union: flag-on users PLUS the override list. Dedup
+                    # via dict keyed on user_id below.
+                    flag_res = (
+                        db.table("user_config")
+                        .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+                        .eq("auto_backtest", True)
+                        .execute()
+                    )
+                    over_res = (
+                        db.table("user_config")
+                        .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+                        .in_("user_id", _override_uids)
+                        .execute()
+                    )
+                    merged: dict = {}
+                    for r in (flag_res.data or []) + (over_res.data or []):
+                        uid = r.get("user_id")
+                        if uid:
+                            merged[uid] = r
+                    users_res = type("R", (), {"data": list(merged.values())})()
+                    logger.info(
+                        "auto_backtest    LOCAL_AUTO_BACKTEST_USER_IDS active — "
+                        "running for %d users (%d flag-on + %d override = %d unique)",
+                        len(merged), len(flag_res.data or []),
+                        len(over_res.data or []), len(merged),
+                    )
+                else:
+                    users_res = (
+                        db.table("user_config")
+                        .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+                        .eq("auto_backtest", True)
+                        .execute()
+                    )
                 from engine.constants import BREAK_EVEN
                 for row in (users_res.data or []):
                     uid = row.get("user_id")
@@ -1064,7 +1108,13 @@ def _run_pipeline_body():
             except Exception as e:
                 logger.error("Auto-backtest background worker error: %s", e)
 
-        threading.Thread(target=_auto_log_bg, daemon=True).start()
+        if cfg.DISABLE_AUTO_BACKTEST:
+            logger.info(
+                "auto_backtest    DISABLE_AUTO_BACKTEST=true — skipping slip logging "
+                "(this server is in display-only comparison mode)"
+            )
+        else:
+            threading.Thread(target=_auto_log_bg, daemon=True).start()
 
         # ── Market Observatory: log lines for global calibration ──
         # Source: `obs_entries`, which is every priced side from the match
@@ -1486,7 +1536,15 @@ def startup():
                     brier_rwbc = None
 
                 pub, skip = rwbc_calibration.publish_if_delta_n_exceeded(db, fits)
-                rwbc_calibration.load_cell_cache_from_db(db)
+                # Prefer the DB-persisted cells (gives us recency-weighted
+                # historical state across restarts), but fall back to the
+                # in-memory fits if the DB load returns 0 — happens when
+                # migration_010 hasn't landed yet or the table is empty
+                # on first boot. Either way, calibrate() and the Observatory
+                # panels see real data immediately.
+                n_loaded = rwbc_calibration.load_cell_cache_from_db(db)
+                if n_loaded == 0 and fits:
+                    rwbc_calibration.set_cell_cache_from_fits(fits)
                 rwbc_calibration.record_history(
                     db,
                     scope="global",
@@ -2650,6 +2708,174 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
 
 class BacktestAddSlipRequest(BaseModel):
     bet_ids: list[str]
+
+
+@app.post("/api/admin/trigger-auto-backtest")
+def admin_trigger_auto_backtest():
+    """LOCAL-TEST-ONLY endpoint. Fires the auto-backtest worker against
+    the bets currently in _state, bypassing the run_pipeline early-returns
+    that suppress it when the PrizePicks scrape fails (e.g. on a home IP
+    where PP returns "Empty response" via Cloudflare).
+
+    Pairs with USE_RWBC=true + LOCAL_AUTO_BACKTEST_USER_IDS=<uid> to make
+    localhost the exclusive logger for a specific user while the cached
+    bet pool refreshes on each successful scrape cycle.
+
+    Gated by env: returns 404 unless ENABLE_ADMIN_TRIGGERS=true. NEVER
+    enable this in production — it's an unauthenticated slip writer.
+    """
+    if os.getenv("ENABLE_ADMIN_TRIGGERS", "false").lower() not in ("true", "1", "yes"):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    with _lock:
+        bets_payload = list(_state.get("bets") or [])
+    if not bets_payload:
+        return {"ok": False, "reason": "no bets in state cache yet"}
+
+    from engine.database import get_db
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=500, detail="DB unavailable")
+
+    # The state's serialized bets carry true_prob from whoever last
+    # serialized them (probably an isotonic-calibrated Render snapshot).
+    # Re-score live through the active calibrator path so the admin
+    # trigger reflects what THIS server's calibrator says now. Without
+    # this re-score, RWBC's halts wouldn't be visible on cached bets.
+    from engine import rwbc_calibration as _rwbc
+    use_rwbc = os.getenv("USE_RWBC", "false").lower() in ("true", "1", "yes")
+    rescored = []
+    n_rewritten = 0
+    n_halted_rescore = 0
+    for b in bets_payload:
+        nb = dict(b)
+        raw = b.get("raw_true_prob") or b.get("true_prob")
+        if raw is None:
+            rescored.append(nb)
+            continue
+        if use_rwbc:
+            p_cal = _rwbc.calibrate(float(raw), b.get("league"), b.get("prop_type"), b.get("side"))
+            if p_cal is None:
+                nb["calibration_halted"] = True
+                # Display value falls back to raw model output so this bet
+                # still appears in display contexts; auto-backtester
+                # filters on calibration_halted.
+                nb["true_prob"] = max(0.001, min(0.999, float(raw)))
+                n_halted_rescore += 1
+            else:
+                nb["calibration_halted"] = False
+                nb["true_prob"] = p_cal
+                n_rewritten += 1
+        elif cfg.USE_RAW_CONSENSUS_ONLY:
+            # Raw consensus mode — just use raw_true_prob as true_prob,
+            # bypassing any historical-correction layer. No halts.
+            nb["calibration_halted"] = False
+            nb["true_prob"] = max(0.001, min(0.999, float(raw)))
+            n_rewritten += 1
+        rescored.append(nb)
+    bets_payload = rescored
+
+    # Mirror the user-selection logic from _auto_log_bg, including the
+    # LOCAL_AUTO_BACKTEST_USER_IDS override.
+    _override_csv = os.getenv("LOCAL_AUTO_BACKTEST_USER_IDS", "").strip()
+    _override_uids = [u.strip() for u in _override_csv.split(",") if u.strip()]
+    if _override_uids:
+        flag_res = (
+            db.table("user_config")
+              .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+              .eq("auto_backtest", True).execute()
+        )
+        over_res = (
+            db.table("user_config")
+              .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+              .in_("user_id", _override_uids).execute()
+        )
+        users = {r["user_id"]: r for r in (flag_res.data or []) + (over_res.data or []) if r.get("user_id")}
+        users = list(users.values())
+    else:
+        users = (db.table("user_config")
+                   .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+                   .eq("auto_backtest", True).execute()).data or []
+
+    from engine.constants import BREAK_EVEN
+    from engine.backtest import BacktestLogger
+    MAX_PER_USER = 20
+    results = []
+    for row in users:
+        uid = row["user_id"]
+        slip_type = row.get("auto_slip_type") or "Power"
+        try:
+            n_legs = int(row.get("auto_slip_legs") or 6)
+        except (TypeError, ValueError):
+            n_legs = 6
+        n_legs = max(2, min(6, n_legs))
+        raw_min = row.get("auto_slip_min_prob")
+        try:
+            min_prob = float(raw_min) if raw_min is not None else None
+        except (TypeError, ValueError):
+            min_prob = None
+        if min_prob is None:
+            min_prob = BREAK_EVEN.get((str(n_legs), slip_type.lower()), 0.5407)
+
+        pool = [b for b in bets_payload if float(b.get("true_prob") or 0.0) >= min_prob]
+        n_before = len(pool)
+        pool = [b for b in pool if not b.get("calibration_halted")]
+        n_skipped = n_before - len(pool)
+
+        bl = BacktestLogger(user_id=uid, db_client=db)
+        n_logged = 0
+        for _ in range(MAX_PER_USER):
+            r = bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
+            if r is None:
+                break
+            n_logged += 1
+
+        results.append({
+            "user_id": uid,
+            "slip_type": slip_type,
+            "n_legs": n_legs,
+            "min_prob": min_prob,
+            "pool_before_halt": n_before,
+            "skipped_circuit_breaker": n_skipped,
+            "pool_after_halt": len(pool),
+            "slips_logged": n_logged,
+        })
+        logger.info(
+            "auto_backtest    user=%s admin_trigger slips_logged=%d skipped_due_to_circuit_breaker=%d pool=%d",
+            uid, n_logged, n_skipped, len(pool),
+        )
+
+    # Diagnostic histogram so the operator can see WHERE the re-scored bets
+    # landed in probability space — explains zero-pool results when every
+    # bet got shrunk below the user threshold.
+    rescored_bin = {"<0.50": 0, "0.50-0.55": 0, "0.55-0.60": 0,
+                    "0.60-0.65": 0, "0.65-0.70": 0, ">=0.70": 0,
+                    "halted": 0, "no_raw": 0}
+    for b in bets_payload:
+        if b.get("calibration_halted"):
+            rescored_bin["halted"] += 1; continue
+        p = b.get("true_prob")
+        if p is None:
+            rescored_bin["no_raw"] += 1; continue
+        p = float(p)
+        if   p < 0.50: rescored_bin["<0.50"]    += 1
+        elif p < 0.55: rescored_bin["0.50-0.55"] += 1
+        elif p < 0.60: rescored_bin["0.55-0.60"] += 1
+        elif p < 0.65: rescored_bin["0.60-0.65"] += 1
+        elif p < 0.70: rescored_bin["0.65-0.70"] += 1
+        else:          rescored_bin[">=0.70"]   += 1
+
+    return {
+        "ok": True,
+        "bets_in_state": len(bets_payload),
+        "use_rwbc": use_rwbc,
+        "rescore": {
+            "n_recalibrated":   n_rewritten,
+            "n_halted_by_RWBC": n_halted_rescore,
+            "histogram":        rescored_bin,
+        },
+        "users": results,
+    }
 
 
 @app.post("/api/backtest/add-slip")
