@@ -463,7 +463,7 @@ function SlipCard({ slip }) {
       <header className="bt-slip-hd">
         <div className="bt-slip-hd-l">
           <span className="bt-slip-type">{slip.type} · {slip.legs}L</span>
-          <span className="bt-slip-ts">{slip.ts}</span>
+          <span className="bt-slip-ts" title="When this slip was logged to your backtest">Logged {slip.ts}</span>
         </div>
         <div className="bt-slip-hd-r">
           {evPct != null && (

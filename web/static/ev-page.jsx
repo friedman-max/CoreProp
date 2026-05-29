@@ -173,12 +173,35 @@ function EVPage() {
 
   const saveSlip = async () => {
     if (selected.length < 2 || selected.length > 6) return;
+
+    // Enforce the user's Min Leg % before logging. Every leg in a saved slip
+    // must clear the threshold (override if set, else the slip's break-even),
+    // so a logged slip is always one the user would actually want backtested.
+    const effMin = (typeof minLegOverride === "number") ? minLegOverride : slipBE;
+    const below = selected.filter(s => (s.truePct || 0) < effMin - 1e-9);
+    if (below.length) {
+      alert(
+        `Can't log this slip — ${below.length} leg(s) are below your Min Leg % (${effMin.toFixed(2)}%):\n` +
+        below.map(s => `  • ${s.player} ${s.prop} — ${(s.truePct || 0).toFixed(1)}%`).join("\n") +
+        `\n\nRaise the threshold or remove those legs.`
+      );
+      return;
+    }
+
     setSaving(true);
     try {
       await window.cpApi.apiFetch("/api/slip", {
         method: "POST",
         body: { bet_ids: selected.map(s => s.id).filter(Boolean), bankroll: 100 },
       });
+      // Mark the just-logged bets as in-backtest locally so they turn red
+      // immediately, before the next 30s poll re-joins /api/backtest/keys.
+      const savedKeys = new Set(selected.map(s => s.betKey).filter(Boolean));
+      if (savedKeys.size) {
+        setAllBets(prev => prev.map(b =>
+          (b.betKey && savedKeys.has(b.betKey)) ? { ...b, inBacktest: true } : b
+        ));
+      }
       setSelected([]);
     } catch (ex) {
       alert("Save failed: " + (ex.message || ex));

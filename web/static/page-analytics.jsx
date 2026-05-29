@@ -50,10 +50,28 @@ function AnalyticsPage() {
 
   const filtered = useMemo(() => {
     if (!fullSeries.length) return [];
-    if (range === "MAX") return fullSeries;
-    const latest = fullSeries[fullSeries.length - 1].date.getTime();
-    const cutoff = _windowStartMs(range, latest);
-    return fullSeries.filter(p => p.date.getTime() >= cutoff);
+
+    // Slice to the window, then REBASE so the window opens at 0u. Viewing a
+    // single timeframe in a vacuum: a +18u week reads 0 → +18, not
+    // −65 → −47. Baseline = the cumulative P&L immediately *before* the
+    // window's first slip (or that slip's own pre-delta value if the window
+    // includes the very first slip).
+    let startIdx = 0;
+    if (range !== "MAX") {
+      const latest = fullSeries[fullSeries.length - 1].date.getTime();
+      const cutoff = _windowStartMs(range, latest);
+      startIdx = fullSeries.findIndex(p => p.date.getTime() >= cutoff);
+      if (startIdx < 0) return [];
+    }
+    const first = fullSeries[startIdx];
+    const baseline = startIdx > 0
+      ? fullSeries[startIdx - 1].pnl          // P&L right before the window
+      : (first.pnl - (first.delta || 0));     // pre-first-slip = ~0
+    return fullSeries.slice(startIdx).map(p => ({
+      ...p,
+      pnl: p.pnl - baseline,                  // rebased: window starts at 0u
+      cumAbs: p.pnl,                          // keep absolute for reference
+    }));
   }, [fullSeries, range]);
 
   // Window stats: filter resolved_legs by the same window and recompute.
@@ -81,7 +99,9 @@ function AnalyticsPage() {
     });
   }, [data, range, fullSeries]);
 
-  const totalPnL = filtered.length ? filtered[filtered.length - 1].pnl - (filtered[0]?.pnl || 0) : 0;
+  // Series is already rebased to open at 0u, so the window's net P&L is just
+  // the last rebased cumulative value.
+  const totalPnL = filtered.length ? filtered[filtered.length - 1].pnl : 0;
 
   const allLegs = windowLegs;
   const brier = allLegs.length
@@ -97,9 +117,25 @@ function AnalyticsPage() {
   const rawHit = allLegs.length ? (allLegs.filter(l => l.outcome === 1).length / allLegs.length) * 100 : 0;
   const delta = rawHit - avgPred;
 
-  const clvCount = windowClv.length;
-  const clvPos = clvCount ? (windowClv.filter(l => l.clv_pct > 0).length / clvCount) * 100 : 0;
-  const clvAvg = clvCount ? windowClv.reduce((a, l) => a + l.clv_pct, 0) / clvCount : 0;
+  // CLV: prefer the windowed per-leg rows. But clv_legs only carries a row
+  // when BOTH closing_prob and clv_pct are populated AND the slip timestamp
+  // resolved server-side — so the windowed array can come back empty even
+  // when the model has tracked CLV. In that case (or for MAX) fall back to
+  // the backend's all-time aggregate (clv_plus_rate / avg_clv_pct /
+  // n_clv_tracked) so the CLV cards always show a value when any exists.
+  // clv_pct is a probability delta (closing_prob − true_prob), i.e. a
+  // fraction like 0.025 → 2.5 percentage points, so it is ×100 for display.
+  const haveWindowClv = windowClv.length > 0;
+  const clvCount = haveWindowClv ? windowClv.length : (data?.n_clv_tracked || 0);
+  const clvPos = haveWindowClv
+    ? (windowClv.filter(l => l.clv_pct > 0).length / windowClv.length) * 100
+    : (typeof data?.clv_plus_rate === "number" ? data.clv_plus_rate * 100 : 0);
+  const clvAvg = haveWindowClv
+    ? (windowClv.reduce((a, l) => a + l.clv_pct, 0) / windowClv.length) * 100
+    : (typeof data?.avg_clv_pct === "number" ? data.avg_clv_pct * 100 : 0);
+  // Note whether the CLV figures are window-scoped or the all-time fallback
+  // so the section subtitle can be honest about it.
+  const clvIsAllTime = !haveWindowClv && clvCount > 0;
 
   const hovered = hover ?? filtered[filtered.length - 1];
 
@@ -179,7 +215,7 @@ function AnalyticsPage() {
           <StatCard label="Hit Rate Delta" value={(delta >= 0 ? "+" : "") + delta.toFixed(1) + "%"} tone={delta >= 0 ? "good" : "bad"} />
         </div>
 
-        <div className="an-section-h">Closing Line Value <span className="an-section-sub">if CLV+ {`>`} 50% &amp; Avg CLV% {`>`} 0, you're beating the market</span></div>
+        <div className="an-section-h">Closing Line Value <span className="an-section-sub">if CLV+ {`>`} 50% &amp; Avg CLV% {`>`} 0, you're beating the market{clvIsAllTime ? " · all-time (no CLV tracked in this window)" : ""}</span></div>
         <div className="bt-summary">
           <StatCard label="Tracked" value={String(clvCount)} />
           <StatCard label="CLV+ Rate" value={clvCount ? clvPos.toFixed(1) + "%" : "—"} tone={clvPos >= 50 ? "good" : "bad"} />
