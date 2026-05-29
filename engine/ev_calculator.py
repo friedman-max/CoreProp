@@ -140,6 +140,19 @@ class BetResult:
         self.edge = round(calibrated_prob - OPTIMAL_BREAK_EVEN, 6)
         self.individual_ev_pct = round((calibrated_prob * OPTIMAL_IMPLIED_DECIMAL) - 1.0, 6)
 
+    def score_for(self, slip_n: int = 6, slip_type: str = "power") -> float:
+        """Context-aware per-leg EV%. Returns the leg's EV as a fraction of
+        stake given the slip (size, type) it will deploy in. Use this when
+        ranking legs for a *specific* slip; the legacy `individual_ev_pct`
+        assumes Power-6 and misranks legs intended for shorter slips."""
+        from engine.constants import score_leg
+        return score_leg(self.true_prob, slip_n=slip_n, slip_type=slip_type)
+
+    def tier(self) -> str:
+        """Phase 1A tier label for this leg. 'A' / 'B' / 'C' / 'REJECT'."""
+        from engine.tier import tier_for_prob
+        return tier_for_prob(self.true_prob, calibration_halted=self.calibration_halted)
+
     def to_dict(self) -> dict:
         return {
             "bet_id":            self.bet_id,
@@ -164,6 +177,9 @@ class BetResult:
             # this bet had w_cell < W_CELL_HALT_THRESHOLD at scoring time
             # (auto-backtest worker filters legs with this=True).
             "calibration_halted": bool(getattr(self, "calibration_halted", False)),
+            # Phase 1A tier label. The auto-backtest worker reads this to
+            # decide which (slip_type, n_legs) combos this leg may enter.
+            "tier": self.tier(),
         }
 
 

@@ -37,8 +37,41 @@ FLEX_PAYOUTS = {
 }
 
 # The most efficient single-leg implied decimal odds (Power 6 / 1.849 multiplier)
+# DEPRECATED for ranking / EV display: this is the per-leg break-even ONLY for
+# a 6-leg Power slip. Legs near this threshold are EV-negative inside shorter
+# slips (3-Power BE=0.5503, 4-Power BE=0.5623). Use `score_leg(p, n, type)`
+# below for context-aware EV. The constants are kept so the existing
+# strategy_tester / ev_calculator paths continue to compile.
 OPTIMAL_IMPLIED_DECIMAL = 1.849
 OPTIMAL_BREAK_EVEN = 1.0 / OPTIMAL_IMPLIED_DECIMAL  # ≈ 0.54083
+
+
+def score_leg(
+    p: float,
+    slip_n: int = 6,
+    slip_type: str = "power",
+) -> float:
+    """Context-aware per-leg EV%.
+
+    Returns the leg's EV as a fraction of stake, given the slip-size and
+    slip-type the leg will be deployed in. Replaces the legacy
+    `p * OPTIMAL_IMPLIED_DECIMAL - 1` formula which silently assumed
+    6-Power and misranked legs intended for 3-Power slips.
+
+    Math:
+      implied_decimal = 1 / BREAK_EVEN[(n, type)]
+      ev_pct          = p * implied_decimal - 1
+    """
+    be = BREAK_EVEN.get((str(slip_n), slip_type.lower()), OPTIMAL_BREAK_EVEN)
+    if be <= 0:
+        return 0.0
+    return p / be - 1.0
+
+
+def per_leg_break_even(slip_n: int = 6, slip_type: str = "power") -> float:
+    """Lookup helper. Returns OPTIMAL_BREAK_EVEN as the legacy default for
+    callers that pass nothing."""
+    return BREAK_EVEN.get((str(slip_n), slip_type.lower()), OPTIMAL_BREAK_EVEN)
 
 # Leagues that must NEVER surface in any user-facing view, even if old rows
 # (observatory, calibration JSON, correlation map, sharpness state) still

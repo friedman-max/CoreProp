@@ -64,7 +64,11 @@ PORT = int(os.getenv("PORT", "8000"))
 # observation stream the isotonic refit already loads, so the existing
 # hourly scheduler in web/app.py drives both code paths.
 # ---------------------------------------------------------------------------
-USE_RWBC = os.getenv("USE_RWBC", "false").lower() in ("true", "1", "yes")
+# Default flipped to true after the Phase 1A audit. RWBC's 30 hard-halted
+# cells (NHL/NBA-UNDER/WNBA-UNDER) match FINDINGS.md's "destructive cells"
+# exactly. Leaving it off would re-introduce the auto-backtest's logged-leg
+# pollution from those cells. Set USE_RWBC=false to revert to isotonic-only.
+USE_RWBC = os.getenv("USE_RWBC", "true").lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
 # USE_RAW_CONSENSUS_ONLY — diagnostic mode. When true, engine/ev_calculator.py

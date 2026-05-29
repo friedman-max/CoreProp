@@ -1070,17 +1070,21 @@ def _run_pipeline_body():
                         n_legs = 6
                     n_legs = max(2, min(6, n_legs))
 
-                    # Per-leg min: explicit override beats the slip's
-                    # break-even floor. Falls back to break-even when unset
-                    # so legs that can't even pay for themselves never enter
-                    # the slip.
+                    # Per-leg min: tier-aware effective_min_prob respects
+                    # the user's explicit override; otherwise routes to the
+                    # tier floor that's eligible for this (slip_type, n_legs).
+                    # See engine/tier.py for the routing table. The override
+                    # is still capped from below by the slip's break-even —
+                    # `effective_min_prob` handles the floor.
+                    from engine.tier import (
+                        effective_min_prob, filter_legs_for_slip, tier_summary,
+                    )
                     raw_min = row.get("auto_slip_min_prob")
                     try:
-                        min_prob = float(raw_min) if raw_min is not None else None
+                        user_min = float(raw_min) if raw_min is not None else None
                     except (TypeError, ValueError):
-                        min_prob = None
-                    if min_prob is None:
-                        min_prob = BREAK_EVEN.get((str(n_legs), slip_type.lower()), 0.5407)
+                        user_min = None
+                    min_prob = effective_min_prob(user_min, slip_type, n_legs)
 
                     pool = [b for b in bets if float(b.get("true_prob") or 0.0) >= min_prob]
 
@@ -1090,10 +1094,9 @@ def _run_pipeline_body():
                     # RWBC circuit-breaker filter — when USE_RWBC is on,
                     # legs whose calibration cell has w_cell < threshold
                     # are flagged with `calibration_halted=True` by
-                    # engine/ev_calculator.py. Skip them before
-                    # try_log_slip so we never log a slip leg with no
-                    # trustworthy probability behind it. Counted for
-                    # auditability.
+                    # engine/ev_calculator.py. Skip them before the tier
+                    # filter so a halted leg can never sneak in via a
+                    # Tier-A probability assignment.
                     n_before = len(pool)
                     pool = [b for b in pool if not b.get("calibration_halted")]
                     n_skipped = n_before - len(pool)
@@ -1101,6 +1104,22 @@ def _run_pipeline_body():
                         logger.info(
                             "auto_backtest    user=%s skipped_due_to_circuit_breaker=%d remaining_pool=%d",
                             uid, n_skipped, len(pool),
+                        )
+
+                    # Phase 1A tier routing. Tier A enters any slip; Tier B
+                    # only 5/6-pick; Tier C never auto-logs. Filter against
+                    # the requested (slip_type, n_legs) so a 3-Power request
+                    # only sees Tier A legs.
+                    pre_tier = len(pool)
+                    pool = filter_legs_for_slip(pool, slip_type, n_legs)
+                    if pre_tier != len(pool):
+                        counts = tier_summary(pool)
+                        logger.info(
+                            "auto_backtest    user=%s tier_filter slip=%s-%d "
+                            "kept=%d (A=%d B=%d C=%d REJECT=%d) dropped=%d",
+                            uid, slip_type, n_legs, len(pool),
+                            counts["A"], counts["B"], counts["C"], counts["REJECT"],
+                            pre_tier - len(pool),
                         )
 
                     # Pass the top ~40 candidates from the filtered pool.
