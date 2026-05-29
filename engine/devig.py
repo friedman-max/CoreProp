@@ -216,6 +216,24 @@ def _shin_true(pi: float, z: float) -> float:
     return (math.sqrt(z * z + 4.0 * (1.0 - z) * pi * pi) - z) / (2.0 * (1.0 - z))
 
 
+# ---------------------------------------------------------------------------
+# Shin z-prior for shrinkage (Phase 1A audit C4)
+# ---------------------------------------------------------------------------
+# Per Strumbelj (2014) and follow-ups on the Shin family, player-prop markets
+# exhibit insider-trade parameter z in the 0.02-0.08 band. A single-market
+# bisection on a single book pair has high variance — z is fit from one
+# (overround, dispersion) sample. Shrinking the per-market z toward a
+# (league, prop) prior with strength `k` stabilizes thin markets:
+#
+#   z_final = (k · z_prior + z_fitted) / (k + 1)
+#
+# With k=3 the prior carries 75% weight on each market estimate. The prior
+# itself is refit from realized CLV residuals; see
+# engine/sharpness_calibration.py for the analogous fit on book weights.
+SHIN_Z_PRIOR_DEFAULT = 0.05
+SHIN_Z_PRIOR_STRENGTH = 3.0
+
+
 def devig_shin(
     over_american: int | float,
     under_american: int | float,
@@ -255,6 +273,61 @@ def devig_shin(
     t_o = _shin_true(pi_o, z)
     t_u = _shin_true(pi_u, z)
 
+    total = t_o + t_u
+    if total <= 0:
+        return devig_multiplicative(over_american, under_american)
+    return t_o / total, t_u / total
+
+
+def devig_shin_with_prior(
+    over_american: int | float,
+    under_american: int | float,
+    *,
+    z_prior: float = SHIN_Z_PRIOR_DEFAULT,
+    k_prior: float = SHIN_Z_PRIOR_STRENGTH,
+    tol: float = 1e-9,
+    max_iter: int = 200,
+) -> tuple[float, float]:
+    """Shin devig with shrinkage toward a (league, prop) z prior.
+
+    Returns (true_over_prob, true_under_prob). Falls back to multiplicative
+    when the booksum < 1.
+
+    The fitted z (from bisection on observed booksum) is blended with the
+    prior via:
+
+        z_final = (k_prior · z_prior + z_fitted) / (k_prior + 1)
+
+    For typical k_prior=3 and z_prior=0.05, this anchors thin markets
+    around 0.05 while still letting a market with a clearly outlying
+    overround push z up to 0.08-0.10.
+    """
+    pi_o = american_to_implied(over_american)
+    pi_u = american_to_implied(under_american)
+
+    booksum = pi_o + pi_u
+    if booksum <= 1.0:
+        return pi_o, pi_u
+
+    # Fit z to this market (same bisection as devig_shin).
+    lo, hi = 0.0, 1.0 - 1e-6
+    for _ in range(max_iter):
+        mid = 0.5 * (lo + hi)
+        s = _shin_true(pi_o, mid) + _shin_true(pi_u, mid)
+        if abs(s - 1.0) < tol:
+            break
+        if s > 1.0:
+            lo = mid
+        else:
+            hi = mid
+    z_fitted = 0.5 * (lo + hi)
+
+    # Shrink toward prior.
+    z_blend = (k_prior * z_prior + z_fitted) / (k_prior + 1.0)
+    z_blend = max(0.0, min(1.0 - 1e-6, z_blend))
+
+    t_o = _shin_true(pi_o, z_blend)
+    t_u = _shin_true(pi_u, z_blend)
     total = t_o + t_u
     if total <= 0:
         return devig_multiplicative(over_american, under_american)

@@ -61,8 +61,13 @@ LEAGUE_PACE_MULTIPLIER: dict[str, float] = {
 
 # Absolute ceiling on any single ρ entry. Latent ρ close to 1 makes the
 # Cholesky factorisation near-singular and makes the slip behaviour
-# degenerate (all legs move together). 0.5 is conservative.
-MAX_RHO: float = 0.50
+# degenerate (all legs move together). Phase 1A audit raised this from
+# 0.50 to 0.75: same-player same-game stacks (e.g. Points+Rebs+Asts) have
+# true latent ρ in the 0.6-0.7 range per empirical fits, and the 0.50 cap
+# systematically understated slip risk on exactly the construction users
+# are most likely to build. PSD-projection downstream handles the
+# numerical edge cases.
+MAX_RHO: float = 0.75
 
 # Empirical correlation map — persisted JSON. Auto-loaded at module import
 # and refreshed by the hourly scheduler job via `update_correlation_map()`.
@@ -232,11 +237,46 @@ def _bernoulli_phi(sum_x: int, sum_y: int, sum_xy: int, n: int) -> Optional[floa
 def _phi_to_latent(phi: float) -> float:
     """Approximate Bernoulli phi → latent Gaussian-copula ρ.
 
-    Exact for marginals at p = 0.5: ρ = sin(π · phi / 2) (the tetrachoric
-    correlation at the symmetric point). Within a few percent across the
-    0.3-0.7 probability range we care about in sports betting, which is
-    well within the sampling noise of a 100-pair bucket."""
+    Symmetric-point tetrachoric: exact for marginals at p = 0.5,
+    underestimates ρ for skewed marginals. Kept as the fallback when
+    contingency-table cells aren't available (heuristic path)."""
     return math.sin(phi * math.pi / 2.0)
+
+
+def _phi_to_latent_bp(
+    sum_x: int, sum_y: int, sum_xy: int, n: int,
+) -> Optional[float]:
+    """Pearson-Edwards (Bonett-Price family) closed-form tetrachoric
+    estimator from the 2×2 contingency cells.
+
+    Given:
+        a = sum_xy            (both 1)
+        b = sum_x - sum_xy    (x=1, y=0)
+        c = sum_y - sum_xy    (x=0, y=1)
+        d = n - sum_x - sum_y + sum_xy   (both 0)
+
+    Tetrachoric approximation (Edwards, 1957; Bonett & Price, 2005):
+        ρ ≈ cos( π / (1 + sqrt(a·d / (b·c))) )
+
+    Properly accounts for marginal skew that `sin(π·φ/2)` ignores. Returns
+    None when any cell is zero (formula undefined) so the caller can fall
+    back to the symmetric-point approximation."""
+    if n <= 0:
+        return None
+    a = float(sum_xy)
+    b = float(sum_x - sum_xy)
+    c = float(sum_y - sum_xy)
+    d = float(n - sum_x - sum_y + sum_xy)
+    if a <= 0 or b <= 0 or c <= 0 or d <= 0:
+        return None
+    try:
+        ratio = (a * d) / (b * c)
+    except ZeroDivisionError:
+        return None
+    if ratio <= 0:
+        return None
+    denom = 1.0 + math.sqrt(ratio)
+    return math.cos(math.pi / denom)
 
 
 def update_correlation_map() -> Optional[dict]:
@@ -321,16 +361,25 @@ def update_correlation_map() -> Optional[dict]:
                     bk["sum_xy"] += a["hit"] * b["hit"]
 
     # Derive phi and latent ρ per bucket.
+    #
+    # Phase 1A audit C4: Bonett-Price tetrachoric approximation from the
+    # full 2×2 contingency table is used when all four cells are populated;
+    # falls back to the symmetric-point sin(π·φ/2) when a cell is zero
+    # (typically very thin or near-perfectly-correlated buckets).
     fitted: dict = {}
     for key, s in buckets.items():
         phi = _bernoulli_phi(s["sum_x"], s["sum_y"], s["sum_xy"], s["n"])
         if phi is None:
             continue
-        rho_latent = _phi_to_latent(phi)
+        rho_bp = _phi_to_latent_bp(
+            s["sum_x"], s["sum_y"], s["sum_xy"], s["n"],
+        )
+        rho_latent = rho_bp if rho_bp is not None else _phi_to_latent(phi)
         fitted[key] = {
             "n": s["n"],
             "phi": round(phi, 4),
             "rho_latent": round(float(np.clip(rho_latent, -MAX_RHO, MAX_RHO)), 4),
+            "method": "bonett_price" if rho_bp is not None else "sin_symmetric",
         }
 
     payload = {

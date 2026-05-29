@@ -22,6 +22,8 @@ M_i = market width (overround %).
 from __future__ import annotations
 
 import logging
+import math
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -116,6 +118,33 @@ def _get_book_bias(book_name: str, league: str | None, prop: str | None = None) 
 # Minimum market width (overround %) to avoid division-by-zero.
 # A market with lower overround than this is already extremely efficient.
 _MIN_MARKET_WIDTH = 1.0  # 1% overround
+
+# Phase 1A audit C4: width-weighting mode.
+#   "log"    — effective_width_term = 1 / log(1 + M)   (audit default)
+#   "linear" — effective_width_term = 1 / M            (legacy)
+#   "none"   — effective_width_term = 1                (let sharpness
+#                                                       weights carry
+#                                                       width info alone)
+# Rationale for log: the legacy 1/M term double-counts when sharpness
+# weights are themselves fit from CLV residuals (sharp books are also
+# tight). Linear 1/M overpenalizes wide markets (M=15 → weight × 0.067)
+# in a way that's not justified by the marginal information content of
+# the price relative to the close. Log softens to weight × 0.36 at the
+# same width; lets the sharpness weight carry the marginal book skill.
+WIDTH_WEIGHTING_MODE = os.getenv("WIDTH_WEIGHTING_MODE", "log").lower()
+
+
+def _width_weighting_term(width: float) -> float:
+    """Convert market width (overround %) to a multiplicative weight on the
+    book's contribution to the VWAP consensus. Higher = book carries more
+    weight in the consensus."""
+    w = max(width, _MIN_MARKET_WIDTH)
+    if WIDTH_WEIGHTING_MODE == "linear":
+        return 1.0 / w
+    if WIDTH_WEIGHTING_MODE == "none":
+        return 1.0
+    # Default: log.
+    return 1.0 / math.log(1.0 + w)
 
 
 # ---------------------------------------------------------------------------
@@ -350,8 +379,12 @@ def compute_true_probability(
     worst_case_prob: Optional[float] = None
 
     for power_prob, worst_prob, weight, width, _odds in entries:
-        inv_width = 1.0 / width
-        effective_weight = weight * inv_width
+        # Width-weighting mode is selected at import time via env var.
+        # Default "log" damps the legacy double-count between sharpness
+        # weights (which already encode width via CLV-residual fit) and
+        # the linear 1/M term.
+        width_term = _width_weighting_term(width)
+        effective_weight = weight * width_term
 
         weighted_sum += power_prob * effective_weight
         weight_denom += effective_weight

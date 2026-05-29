@@ -804,33 +804,113 @@ class StrategyTester:
         return float(payout), n_eff, hits_eff, n_pushed
 
 
-    # ── Kelly (independent-bernoulli; same as v1) ───────────────────────
+    # ── Kelly (log-optimal closed form; Phase 1A audit C4) ──────────────
+    #
+    # The legacy implementation used a Sharpe-ratio proxy: f = ev/variance
+    # × 0.25. That is the Markowitz mean-variance optimum, which approximates
+    # log-utility Kelly only when wealth changes are small and outcomes are
+    # nearly Gaussian. Slip outcomes are far from Gaussian (you either win
+    # 25× or lose 1×), and the approximation can be 30-60% off on
+    # high-variance slips. This replacement solves the log-optimal Kelly
+    # directly via bisection on the first-order condition, then damps with
+    # a 0.25 fractional multiplier and caps at 5% of bankroll.
+    #
+    # Audit context: D1 found mean CLV at p≥0.65 is -14.9%, meaning the
+    # calibrator is systematically too aggressive on its high-prob picks.
+    # A 5% hard cap is the load-bearing safety against that overconfidence
+    # — even if the calibrator says 80%, we never stake more than 5%.
 
-    def _calculate_kelly_fraction(self, probs: List[float], slip_size: int, slip_type: str) -> float:
+    _KELLY_FRACTION = 0.25
+    _KELLY_CAP = 0.05
+
+    @staticmethod
+    def _payoff_distribution(
+        probs: List[float], slip_size: int, slip_type: str,
+    ) -> list[tuple[float, float]]:
+        """Enumerate the payoff distribution under independence.
+
+        Returns (probability, payout_multiplier) tuples covering every
+        2^n outcome. Independence is the same assumption the legacy
+        Kelly used; same-game correlation correction belongs in the
+        Maybe Cool Fix portfolio Kelly module.
+        """
         import itertools
-        outcomes = list(itertools.product([0, 1], repeat=slip_size))
-        ev = 0.0
-        ev_sq = 0.0
-        for outcome in outcomes:
+        out: list[tuple[float, float]] = []
+        for outcome in itertools.product([0, 1], repeat=slip_size):
             prob = 1.0
             for i in range(slip_size):
                 prob *= probs[i] if outcome[i] == 1 else (1.0 - probs[i])
             hits = sum(outcome)
-            mult = 0.0
             if slip_type == "power":
-                if hits == slip_size:
-                    mult = POWER_PAYOUTS.get(slip_size, 0.0)
+                mult = POWER_PAYOUTS.get(slip_size, 0.0) if hits == slip_size else 0.0
             else:
                 mult = FLEX_PAYOUTS.get(slip_size, {}).get(hits, 0.0)
-            net_profit = mult - 1.0
-            ev    += prob * net_profit
-            ev_sq += prob * (net_profit ** 2)
-        if ev <= 0:
+            out.append((prob, mult))
+        return out
+
+    @classmethod
+    def _kelly_log_optimal(
+        cls, payoff_dist: list[tuple[float, float]],
+    ) -> float:
+        """Solve f* = argmax_f E[log(1 + f·(m-1))] via bisection.
+
+        FOC: Σ_i p_i · (m_i - 1) / (1 + f·(m_i - 1)) = 0
+        Returns the un-damped Kelly fraction (apply _KELLY_FRACTION and
+        _KELLY_CAP downstream).
+        """
+        def fp(f: float) -> float:
+            s = 0.0
+            for p, m in payoff_dist:
+                if p <= 0:
+                    continue
+                delta = m - 1.0
+                denom = 1.0 + f * delta
+                if denom <= 1e-12:
+                    return -1e12
+                s += p * delta / denom
+            return s
+
+        if fp(0.0) <= 0:
             return 0.0
-        variance = ev_sq - (ev ** 2)
-        if variance <= 0:
+
+        # Bracket the root.
+        hi = 1.0
+        for _ in range(40):
+            if fp(hi) <= 0:
+                break
+            hi *= 2.0
+            if hi > 1024:
+                break
+        if fp(hi) > 0:
+            # Unbounded edge — return hi and let the cap handle it.
+            return hi
+
+        lo = 0.0
+        for _ in range(80):
+            mid = 0.5 * (lo + hi)
+            v = fp(mid)
+            if abs(v) < 1e-10:
+                return mid
+            if v > 0:
+                lo = mid
+            else:
+                hi = mid
+        return 0.5 * (lo + hi)
+
+    def _calculate_kelly_fraction(self, probs: List[float], slip_size: int, slip_type: str) -> float:
+        """Closed-form log-optimal Kelly with κ damping and 5% bankroll cap.
+
+        For Power slips with a single non-zero payoff tier this reduces to
+        the textbook  f* = (D·p - 1) / (D - 1)  where D is the decimal
+        payout multiplier and p is the joint win probability. For Flex,
+        the bisection in _kelly_log_optimal handles the multi-tier case.
+        """
+        payoff_dist = self._payoff_distribution(probs, slip_size, slip_type)
+        f_star = self._kelly_log_optimal(payoff_dist)
+        if f_star <= 0:
             return 0.0
-        return max(0.0, min((ev / variance) * 0.25, 1.0))   # quarter-Kelly
+        damped = self._KELLY_FRACTION * f_star
+        return max(0.0, min(damped, self._KELLY_CAP))
 
 
     # ── Bootstrap ───────────────────────────────────────────────────────
