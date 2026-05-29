@@ -432,18 +432,37 @@ def _save_state(state: dict) -> None:
 
 def _ingest_into_state(state: dict, league: str, prop: str, side: str,
                        x: float, y: float, w: float, *, is_outcome: bool = False) -> None:
-    """Add one observation to all three hierarchy levels.
+    """Add one observation to all four hierarchy levels.
 
-    The (league, prop) bucket is keyed by side too — over and under tend to
-    be miscalibrated asymmetrically (books often shade one side for variance
-    protection), and pooling them washes the signal out. `side` must be
-    "over" or "under"; anything else (legacy "both", missing, etc.) is
-    skipped at the prop level but still contributes to global and league.
+    Hierarchy (parent -> child):
+        global
+          -> league                     (side-pooled; legacy)
+          -> league|side                (side-keyed; Phase 1A audit fix)
+                -> league|prop|side     (full)
+
+    Phase 1A audit finding: pooling over and under at the league tier washes
+    out the +8.3pp pooled-UNDER bias, leaving thin (league, prop, side)
+    buckets to absorb the full directional correction via shrinkage. With
+    SHRINKAGE_KAPPA=50 and most prop buckets sitting at n_eff < 50, the
+    correction never materializes. Side-keying the league tier moves the
+    side-specific shade up to where the data lives (per-league n_eff is in
+    the thousands), letting the prop bucket inherit the right starting point.
+
+    Both league bins are accumulated simultaneously for backward compat:
+    the side-pooled `LEAGUE` bin keeps producing a number for legacy
+    callers and as a parent for the (legacy) prop layout that didn't carry
+    side; the new `LEAGUE|side` bin is the parent of the (prop, side)
+    layout used by calibrate() today.
     """
     if w <= 0 or not (0.0 < x < 1.0):
         return
     _accum_bin_set(state["global"], x, y, w, is_outcome=is_outcome)
+    # Side-pooled league bin (legacy, kept).
     _accum(state["leagues"], league, x, y, w, is_outcome=is_outcome)
+    # Side-keyed league bin (Phase 1A audit fix). Only over/under contribute
+    # because that's the only level where the side asymmetry is meaningful.
+    if side in ("over", "under"):
+        _accum(state["leagues"], f"{league}|{side}", x, y, w, is_outcome=is_outcome)
     if prop and side in ("over", "under"):
         _accum(state["props"], f"{league}|{prop}|{side}", x, y, w, is_outcome=is_outcome)
 
@@ -1104,17 +1123,23 @@ def load_isotonic_calibration() -> dict:
 
     # Strip excluded leagues at load time so stale curves fitted before a
     # league was de-listed (e.g. soccer) can't surface in the UI or in
-    # downstream calibration lookups. The props map keys on
-    # "<league>|<prop>|<side>" so the same filter applies there.
+    # downstream calibration lookups. The league bin may now be keyed
+    # "<league>" (legacy / pooled) or "<league>|<side>" (Phase 1A audit);
+    # both formats start with the league name, so split on "|" first.
+    # Props bin remains "<league>|<prop>|<side>".
     from engine.constants import is_excluded_league
     leagues_raw = (raw.get("leagues") or {})
     props_raw   = (raw.get("props") or {})
+
+    def _league_head(key: str) -> str:
+        return key.split("|", 1)[0] if "|" in key else key
+
     return {
         "global":  _normalize(raw.get("global")),
         "leagues": {lg: _normalize(v) for lg, v in leagues_raw.items()
-                    if not is_excluded_league(lg)},
+                    if not is_excluded_league(_league_head(lg))},
         "props":   {k: _normalize(v) for k, v in props_raw.items()
-                    if not is_excluded_league((k.split("|", 1)[0]) if "|" in k else k)},
+                    if not is_excluded_league(_league_head(k))},
         "fitted_at": raw.get("fitted_at"),
         "config":  raw.get("config", {}),
     }
@@ -1190,16 +1215,22 @@ def calibrate(curves: dict, league: str | None, prop: str | None,
         return raw_prob
     q_global = _interp(global_level["curve"], raw_prob)
 
-    # Tier 1: league posterior shrinks toward global. Provides a
-    # league-wide bias correction that the prop bucket can lean on
-    # before falling through to the global curve.
-    league_level = curves.get("leagues", {}).get(league) if league else None
+    # Tier 1: league posterior shrinks toward global. Prefer the
+    # side-keyed league bin (Phase 1A audit fix — captures the +8.3pp
+    # pooled-UNDER asymmetry the side-pooled parent washes out). Falls
+    # back to the side-pooled bin for backward compat with state
+    # written before the side-keyed bin existed.
+    side_norm = (side or "").lower()
+    league_level = None
+    if league and side_norm in ("over", "under"):
+        league_level = curves.get("leagues", {}).get(f"{league}|{side_norm}")
+    if league_level is None and league:
+        league_level = curves.get("leagues", {}).get(league)
     q_league = _shrink(q_global, league_level, raw_prob)
 
     # Tier 2: (league, prop, side) bucket shrinks toward the league
     # posterior. Side-asymmetric calibration lives here.
     prop_level = None
-    side_norm = (side or "").lower()
     if league and prop and side_norm in ("over", "under"):
         prop_level = curves.get("props", {}).get(f"{league}|{prop}|{side_norm}")
     return _shrink(q_league, prop_level, raw_prob)
