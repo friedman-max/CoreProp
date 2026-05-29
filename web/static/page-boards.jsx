@@ -252,16 +252,18 @@ function SportsbooksPage() {
   const bookEndpoint = { fd: "/api/fanduel", dk: "/api/draftkings", pin: "/api/pinnacle" }[book];
   const { rows: data } = window.cpApi.useBoardLines(bookEndpoint, "lines");
 
+  // Single-book endpoints (/api/fanduel etc.) return each row with the
+  // book's own odds in `bookOdds` (from line_odds) — there are no
+  // fd/dk/pin columns to filter on. Keep any row that has a book price.
   const filtered = useMemo(() =>
     data
-      .filter(x => x[book] != null)
+      .filter(x => x.bookOdds != null)
       .filter(x =>
         (!league || x.league === league) &&
         (!propQ || (x.prop || "").toLowerCase().includes(propQ.toLowerCase())) &&
         (!player || (x.player || "").toLowerCase().includes(player.toLowerCase()))
-      )
-      .map(withTrueOdds),
-    [data, book, league, propQ, player]
+      ),
+    [data, league, propQ, player]
   );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER));
@@ -311,8 +313,9 @@ function SportsbooksPage() {
           </thead>
           <tbody>
             {rows.map((r, i) => {
-              const bookOdds = r[book];
-              const edge = bookOdds > r.trueOdds; // book pays more than true = +EV
+              const bookOdds = r.bookOdds;
+              // +EV when the book pays more than our true (devigged) price.
+              const edge = (r.trueOdds != null && bookOdds != null) && bookOdds > r.trueOdds;
               return (
                 <tr key={i} className={edge ? "bd-edge-row" : ""}>
                   <td className="bd-player">{r.player}</td>
@@ -320,7 +323,7 @@ function SportsbooksPage() {
                   <td className="bd-muted">{r.prop}</td>
                   <td className="mono">{r.line}</td>
                   <td className={"bd-side " + (r.side === "OVER" ? "is-over" : "is-under")}>{r.side}</td>
-                  <td className="mono bd-true-odds">{r.trueOdds > 0 ? "+" + r.trueOdds : r.trueOdds}</td>
+                  <td className="mono bd-true-odds">{r.trueOdds != null ? (r.trueOdds > 0 ? "+" + r.trueOdds : r.trueOdds) : "—"}</td>
                   <td><OddsCell value={bookOdds} best={edge} /></td>
                   <td className={"bd-edge-cell " + (edge ? "is-edge" : "")}>{edge ? "+EV" : "—"}</td>
                   <td className="bd-time mono">{fmtGameTimeB(r.startTime)}</td>

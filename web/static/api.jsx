@@ -138,49 +138,117 @@
   }
 
   // Map a generic prop line (PP / FD / DK / PIN / matched).
+  // Field shapes per endpoint (from web/app.py serializers):
+  //   PP        : player_name, stat_type, line_score, side, start_time
+  //   matched   : player_name, stat_type, (pp_)line, side, fd_odds, dk_odds,
+  //               pin_odds, best_odds, true_odds, start_time
+  //   FD/DK/PIN : player_name, stat_type, line_score, side, line_odds,
+  //               true_odds, start_time   ← single book's odds in line_odds
   function lineToUi(l) {
     const prop = l.stat_type || l.prop_type || "";
+    const line = l.line ?? l.pp_line ?? l.line_score ?? l.fd_line ?? l.dk_line ?? l.pin_line ?? "";
     return {
-      id:        l.line_id || l.id || (l.player_name + "|" + prop + "|" + (l.line ?? l.pp_line ?? "")),
+      id:        l.line_id || l.id || (l.player_name + "|" + prop + "|" + line + "|" + (l.side || "")),
       player:    l.player_name,
       league:    l.league,
       prop:      prop,
-      line:      l.line ?? l.pp_line ?? l.fd_line ?? l.dk_line ?? l.pin_line ?? "",
+      line:      line,
       side:      (l.side || "").toUpperCase(),
       truePct:   l.true_prob != null ? l.true_prob * 100 : null,
       trueOdds:  l.true_odds != null ? l.true_odds : null,
+      // matched rows carry per-book odds; single-book rows carry one odds
+      // value in line_odds — expose it as bookOdds for the Sportsbooks view.
       fd:        l.fd_odds ?? l.fd_odds_book ?? null,
       dk:        l.dk_odds ?? l.dk_odds_book ?? null,
       pin:       l.pin_odds ?? l.pin_odds_book ?? null,
+      bookOdds:  l.line_odds ?? null,
       best:      l.best_odds ?? null,
       startTime: l.start_time,
       raw: l,
     };
   }
 
+  // ── Stale-while-revalidate cache ─────────────────────────────────────────
+  // Last successful JSON response per URL is kept in-memory for the whole
+  // session. getCached() returns it synchronously (for instant first paint
+  // when a tab is re-opened); cachedFetch() returns the cached value
+  // immediately if fresh, otherwise fetches. Either way it revalidates in
+  // the background and notifies subscribers so the UI updates in place.
+  const _cache = new Map();        // url -> { data, ts }
+  const _cacheSubs = new Map();    // url -> Set<fn>
+  const CACHE_TTL_MS = 25000;
+
+  function getCached(url) {
+    const e = _cache.get(url);
+    return e ? e.data : null;
+  }
+
+  function subscribeCache(url, fn) {
+    if (!_cacheSubs.has(url)) _cacheSubs.set(url, new Set());
+    _cacheSubs.get(url).add(fn);
+    return () => { const s = _cacheSubs.get(url); if (s) s.delete(fn); };
+  }
+
+  function _notifyCache(url, data) {
+    const s = _cacheSubs.get(url);
+    if (s) s.forEach(fn => { try { fn(data); } catch (e) { console.error(e); } });
+  }
+
+  // Returns cached data immediately when fresh; always kicks a background
+  // revalidation unless told the cache is still within TTL.
+  async function cachedFetch(url, opts) {
+    const now = Date.now();
+    const e = _cache.get(url);
+    const fresh = e && (now - e.ts) < CACHE_TTL_MS;
+    const revalidate = async () => {
+      const data = await apiFetch(url, opts);
+      _cache.set(url, { data, ts: Date.now() });
+      _notifyCache(url, data);
+      return data;
+    };
+    if (fresh) {
+      revalidate().catch(() => {}); // refresh in background, ignore errors
+      return e.data;
+    }
+    return revalidate();
+  }
+
+  // Prefetch a set of GET endpoints into the cache (fire-and-forget). Called
+  // right after login so the first visit to each tab paints instantly.
+  function prefetch(urls) {
+    if (!isLoggedIn()) return;
+    urls.forEach(u => { cachedFetch(u).catch(() => {}); });
+  }
+
   // React hook: fetch a board endpoint and return {rows, state, error}.
+  // Seeds initial rows synchronously from the SWR cache so a re-opened tab
+  // paints with last-known data instantly, then revalidates.
   function useBoardLines(url, fieldKey) {
-    const [rows, setRows] = React.useState([]);
-    const [state, setState] = React.useState("loading");
+    const pick = (data) => {
+      const arr = (data && (data[fieldKey] || data.lines || data.matches || data.bets)) || [];
+      return arr.map(lineToUi);
+    };
+    const seed = getCached(url);
+    const [rows, setRows] = React.useState(seed ? pick(seed) : []);
+    const [state, setState] = React.useState(seed ? "ok" : "loading");
     const [error, setError] = React.useState("");
     React.useEffect(() => {
       let cancelled = false;
+      const apply = (data) => { if (!cancelled) { setRows(pick(data)); setState("ok"); } };
+      // Subscribe so background revalidations (incl. from other tabs/pollers)
+      // update this view in place.
+      const unsub = subscribeCache(url, apply);
       const load = async () => {
         try {
-          const data = await apiFetch(url);
-          if (cancelled) return;
-          const arr = data[fieldKey] || data.lines || data.matches || data.bets || [];
-          setRows(arr.map(lineToUi));
-          setState("ok");
+          const data = await cachedFetch(url);
+          apply(data);
         } catch (ex) {
-          if (cancelled) return;
-          setError(ex.message || "Failed to load");
-          setState("error");
+          if (!cancelled) { setError(ex.message || "Failed to load"); if (!getCached(url)) setState("error"); }
         }
       };
       load();
       const id = setInterval(load, 30000);
-      return () => { cancelled = true; clearInterval(id); };
+      return () => { cancelled = true; clearInterval(id); unsub(); };
     }, [url, fieldKey]);
     return { rows, state, error };
   }
@@ -191,5 +259,6 @@
     init, getSession, getUser, isLoggedIn, subscribe,
     signIn, signUp, signOut,
     apiFetch, betToUi, lineToUi, useBoardLines,
+    cachedFetch, getCached, subscribeCache, prefetch,
   };
 })();

@@ -1106,6 +1106,9 @@ function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [loggedIn, setLoggedIn] = useState(() => !!(window.cpApi && window.cpApi.isLoggedIn()));
   const [active, setActive] = useState("+EV Bets");
+  // Tabs the user has opened at least once. We keep their components mounted
+  // (hidden, not destroyed) so switching back is instant — no refetch flash.
+  const [visited, setVisited] = useState(() => new Set(["+EV Bets"]));
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
   // Apply tweaks via CSS vars
@@ -1113,6 +1116,29 @@ function App() {
     document.documentElement.style.setProperty("--primary", t.accent);
     document.documentElement.style.setProperty("--primary-hi", t.accent + "33");
   }, [t.accent]);
+
+  // Track visited tabs for keep-alive mounting.
+  useEffect(() => {
+    if (view === "ev" && !visited.has(active)) {
+      setVisited(prev => { const n = new Set(prev); n.add(active); return n; });
+    }
+  }, [view, active]);
+
+  // Prefetch every tab's data into the SWR cache shortly after login so the
+  // first visit to each tab paints instantly instead of showing a spinner.
+  useEffect(() => {
+    if (!loggedIn || !window.cpApi) return;
+    const id = setTimeout(() => {
+      window.cpApi.prefetch([
+        "/api/bootstrap/core", "/api/backtest/keys", "/api/config",
+        "/api/matched", "/api/prizepicks", "/api/fanduel", "/api/draftkings", "/api/pinnacle",
+        "/api/backtest/slips", "/api/analytics",
+        "/api/observatory", "/api/observatory/multipliers",
+        "/api/calibration/heatmap", "/api/calibration/curves",
+      ]);
+    }, 400);
+    return () => clearTimeout(id);
+  }, [loggedIn]);
 
   // Subscribe to Supabase session changes.
   useEffect(() => {
@@ -1154,14 +1180,28 @@ function App() {
       />
       {view === "landing" && <Landing onLogin={onLogin} onStart={onStart} onTab={onTab} />}
       {view === "pricing" && <PricingPage onStart={onAuthSubmit} onBack={() => setView("landing")} />}
-      {view === "ev" && active === "+EV Bets" && <EVPage />}
-      {view === "ev" && active === "Combined Lines" && <CombinedLinesPage />}
-      {view === "ev" && active === "PrizePicks Lines" && <PrizePicksPage />}
-      {view === "ev" && active === "Sportsbooks" && <SportsbooksPage />}
-      {view === "ev" && active === "Backtest" && <BacktestPage />}
-      {view === "ev" && active === "Analytics" && <AnalyticsPage />}
-      {view === "ev" && active === "Observatory" && <ObservatoryPage />}
-      {view === "ev" && active === "Sandbox" && <SandboxPage />}
+      {view === "ev" && (() => {
+        // Keep-alive tab host: once a tab has been visited it stays mounted
+        // and is hidden via display:none when inactive. This preserves each
+        // page's state + fetched data so switching back is instant.
+        const TABS = {
+          "+EV Bets":         EVPage,
+          "Combined Lines":   CombinedLinesPage,
+          "PrizePicks Lines": PrizePicksPage,
+          "Sportsbooks":      SportsbooksPage,
+          "Backtest":         BacktestPage,
+          "Analytics":        AnalyticsPage,
+          "Observatory":      ObservatoryPage,
+          "Sandbox":          SandboxPage,
+        };
+        return Object.entries(TABS).map(([name, Comp]) =>
+          visited.has(name) ? (
+            <div key={name} style={{ display: active === name ? "block" : "none" }}>
+              <Comp />
+            </div>
+          ) : null
+        );
+      })()}
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSubmit={onAuthSubmit} />
 
       <TweaksPanel>
