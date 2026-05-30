@@ -3039,8 +3039,20 @@ function renderCalibration(data) {
     }
   }
 
-  // CLV Tracking section
-  $("clv-count").textContent = data.n_clv_tracked || 0;
+  // CLV Tracking section.
+  // Coverage card: how many of the bets we took have a captured closing
+  // line (the "122 of 717" denominator). Falls back to the tracked count
+  // when the coverage fields aren't present (older payloads / range recompute).
+  const covEl = $("clv-coverage");
+  if (covEl) {
+    if (data.clv_coverage_pct != null && data.n_logged_legs != null) {
+      covEl.textContent = `${data.n_clv_tracked || 0}/${data.n_logged_legs}`;
+      covEl.className = "bt-card-value" + (data.clv_coverage_pct >= 0.9 ? " positive" : data.clv_coverage_pct < 0.5 ? " negative" : "");
+    } else {
+      covEl.textContent = String(data.n_clv_tracked || 0);
+      covEl.className = "bt-card-value";
+    }
+  }
 
   const clvPlusEl = $("clv-positive-rate");
   if (data.clv_plus_rate != null) {
@@ -3051,14 +3063,31 @@ function renderCalibration(data) {
     clvPlusEl.className = "bt-card-value";
   }
 
+  // Prefer the moved-only average (the honest signal that excludes stale
+  // frozen captures) when available; fall back to the all-in average.
   const avgClvEl = $("clv-avg-pct");
-  if (data.avg_clv_pct != null) {
-    const r = data.avg_clv_pct;
-    avgClvEl.textContent = (r > 0 ? "+" : "") + (r * 100).toFixed(2) + "%";
-    avgClvEl.className = "bt-card-value" + (r > 0 ? " positive" : r < 0 ? " negative" : "");
+  const avgVal = (data.avg_clv_pct_moved != null) ? data.avg_clv_pct_moved : data.avg_clv_pct;
+  if (avgVal != null) {
+    avgClvEl.textContent = (avgVal > 0 ? "+" : "") + (avgVal * 100).toFixed(2) + "%";
+    avgClvEl.className = "bt-card-value" + (avgVal > 0 ? " positive" : avgVal < 0 ? " negative" : "");
   } else {
     avgClvEl.textContent = "\u2014";
     avgClvEl.className = "bt-card-value";
+  }
+
+  // Quality note: moved vs stale captures + coverage %, so the user knows
+  // whether the average reflects real closing-line movement or frozen
+  // bet-time values.
+  const noteEl = $("clv-quality-note");
+  if (noteEl) {
+    const parts = [];
+    if (data.clv_coverage_pct != null) {
+      parts.push(`${(data.clv_coverage_pct * 100).toFixed(0)}% of bets tracked`);
+    }
+    if (data.n_clv_moved != null && data.n_clv_stale != null) {
+      parts.push(`${data.n_clv_moved} moved \u00b7 ${data.n_clv_stale} stale (line unchanged)`);
+    }
+    noteEl.textContent = parts.length ? parts.join("  \u2022  ") : "\u00a0";
   }
 }
 
@@ -3385,19 +3414,36 @@ function _filterAnalyticsForWindow(data, xMinMs, xMaxMs) {
   }
 
   // ── CLV legs ─────────────────────────────────────────────────────
+  // Split moved (real signal, |clv| > eps) vs stale (closing == bet-time
+  // prob; capture never re-fired) so the average isn't biased toward zero
+  // by frozen captures. Mirrors engine/calibration._summarize_clv.
+  const STALE_EPS = 1e-6;
   const clvLegs = (data.clv_legs || []).filter(l => inRange(l.timestamp));
   const nClv = clvLegs.length;
-  let clvPlusRate = null, avgClvPct = null;
+  let clvPlusRate = null, avgClvPct = null, avgClvMoved = null;
+  let nMoved = 0, nStale = 0;
   if (nClv > 0) {
-    let plus = 0, sumPct = 0;
+    let plus = 0, sumPct = 0, sumMoved = 0;
     for (const l of clvLegs) {
       const v = Number(l.clv_pct) || 0;
-      if (v > 0) plus += 1;
       sumPct += v;
+      if (Math.abs(v) > STALE_EPS) {
+        nMoved += 1;
+        sumMoved += v;
+        if (v > 0) plus += 1;
+      } else {
+        nStale += 1;
+      }
     }
-    clvPlusRate = plus / nClv;
     avgClvPct   = sumPct / nClv;
+    avgClvMoved = nMoved > 0 ? sumMoved / nMoved : null;
+    clvPlusRate = nMoved > 0 ? plus / nMoved : null;
   }
+
+  // Coverage within the range: legs with CLV vs resolved legs in range.
+  // Resolved-leg count is the closest per-range denominator available
+  // client-side (logged-but-unresolved legs aren't in either array).
+  const coverage = n > 0 ? Math.min(1, nClv / n) : null;
 
   // Return the same field names renderCalibration() consumes.
   return {
@@ -3407,8 +3453,13 @@ function _filterAnalyticsForWindow(data, xMinMs, xMaxMs) {
     hit_rate:           hitRate,
     avg_predicted_prob: avgPred,
     n_clv_tracked:      nClv,
+    n_clv_moved:        nMoved,
+    n_clv_stale:        nStale,
     clv_plus_rate:      clvPlusRate,
     avg_clv_pct:        avgClvPct,
+    avg_clv_pct_moved:  avgClvMoved,
+    clv_coverage_pct:   coverage,
+    n_logged_legs:      n,
   };
 }
 

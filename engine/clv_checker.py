@@ -173,10 +173,28 @@ class CLVTracker:
                     try:
                         sid = row.get("slip_id")
                         l_num = int(row.get("leg_num", 0))
-                        db.table("legs").update({
-                            "closing_prob": round(closing_prob, 4),
-                            "clv_pct":      round(clv_pct, 4)
-                        }).eq("slip_id", sid).eq("leg_num", l_num).execute()
+                        # Capture-time quality (migration_012): record WHEN
+                        # this close was written and how many minutes before
+                        # tip-off. Lets the analytics tab distinguish a real
+                        # near-tip close from a stale early one, and prefer
+                        # the latest capture as the true closing line.
+                        update_payload = {
+                            "closing_prob":        round(closing_prob, 4),
+                            "clv_pct":             round(clv_pct, 4),
+                            "closing_captured_at": now_utc.isoformat(),
+                            "closing_lead_min":    round(mins_to_start, 2),
+                        }
+                        try:
+                            db.table("legs").update(update_payload).eq(
+                                "slip_id", sid).eq("leg_num", l_num).execute()
+                        except Exception:
+                            # Pre-migration_012 schema — retry without the
+                            # new quality columns so closing capture still
+                            # works on un-migrated deploys.
+                            db.table("legs").update({
+                                "closing_prob": round(closing_prob, 4),
+                                "clv_pct":      round(clv_pct, 4),
+                            }).eq("slip_id", sid).eq("leg_num", l_num).execute()
                         updated_count += 1
                     except Exception as db_exc:
                         logger.error("CLVTracker DB update failed: %s", db_exc)

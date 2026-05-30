@@ -22,8 +22,31 @@ logger = logging.getLogger(__name__)
 # Clamp probabilities away from 0 and 1 to avoid log(0) in log-loss
 _EPS = 1e-7
 
-# Only include data starting from this slip ID for CLV tracking
+# DEPRECATED (Phase 1A audit C5): this gate sorted legs by slip_id — which
+# is RANDOM HEX, not chronological — and discarded everything lexically
+# before this id, dropping ~39% of CLV-tracked legs from the analytics
+# average essentially at random by hex prefix. A leg from yesterday with
+# id "0010B35C" was dropped; one from months ago with "9F..." was kept.
+# The average CLV shown to users was therefore computed on a biased 61%
+# subset. Replaced by `CLV_START_DATE` (a real chronological cutoff, None
+# = all history) applied against the slip TIMESTAMP. Kept as a module
+# attribute only so any external import doesn't break.
 START_SLIP_ID = "5D3D2A96"
+
+# Chronological CLV cutoff. None = include every leg that has a tracked
+# closing line. Set to an ISO date string (e.g. "2026-04-01") to exclude
+# the earliest period if its closing captures are known-unreliable. Unlike
+# the old hex gate this is applied against the slip's actual timestamp, so
+# it does what "start from date X" was always meant to do.
+CLV_START_DATE: Optional[str] = None
+
+# A clv_pct whose magnitude is below this is treated as a STALE capture
+# (closing_prob == bet-time prob to 4 decimals) rather than a genuine
+# 0% CLV. ~18% of historical legs are exactly 0.0 because the closing
+# capture never re-fired after log time. We still report them (coverage)
+# but separate "moved" CLV (real signal) from "stale" so the average
+# isn't silently biased toward zero by frozen captures.
+CLV_STALE_EPS = 1e-6
 
 
 def _load_resolved_rows(user_jwt: str) -> list[dict]:
@@ -70,7 +93,16 @@ def _load_resolved_rows(user_jwt: str) -> list[dict]:
 
 
 def _load_clv_rows(user_jwt: str) -> list[dict]:
-    """Read rows that have a closing_prob/clv_pct tracked, starting from START_SLIP_ID."""
+    """Read every leg that has a tracked closing line.
+
+    Phase 1A audit C5: this no longer applies the broken START_SLIP_ID
+    hex-sort gate (which dropped ~39% of CLV legs at random by hex prefix).
+    A leg without a genuine closing capture simply has clv_pct = NULL and
+    self-excludes via the null check below, so the gate was both redundant
+    and harmful. The optional CLV_START_DATE chronological cutoff is applied
+    in evaluate_analytics (which has the slip timestamps); this lower-level
+    loader returns all tracked rows.
+    """
     db = get_user_db(user_jwt)
     if not db:
         return []
@@ -78,21 +110,47 @@ def _load_clv_rows(user_jwt: str) -> list[dict]:
     try:
         res = db.table("legs").select("closing_prob, clv_pct, slip_id").execute()
         rows = []
-        found_start = False
-        # Sort data by slip_id to replicate the original ordering
-        sorted_data = sorted(res.data, key=lambda x: x.get("slip_id", ""))
-        for r in sorted_data:
-            if not found_start:
-                if r.get("slip_id") == START_SLIP_ID:
-                    found_start = True
-                else:
-                    continue
+        for r in (res.data or []):
             if r.get("closing_prob") is not None and r.get("clv_pct") is not None:
                 rows.append({"closing_prob": r["closing_prob"], "clv_pct": r["clv_pct"]})
         return rows
     except Exception as e:
         logger.warning("Calibration: Supabase CLV load failed: %s", e)
         return []
+
+
+def _summarize_clv(clv_rows: list[dict]) -> dict:
+    """Compute the CLV summary used by the Analytics tab.
+
+    Splits tracked legs into 'moved' (genuine CLV signal, |clv| > eps) and
+    'stale' (closing == bet-time prob, capture never re-fired). Reports both
+    the all-in average (what users intuitively expect) and the moved-only
+    average (the honest signal), plus +CLV rate.
+    """
+    n = len(clv_rows)
+    if n == 0:
+        return {
+            "n_clv_tracked":   0,
+            "n_clv_moved":     0,
+            "n_clv_stale":     0,
+            "clv_plus_rate":   None,
+            "avg_clv_pct":     None,
+            "avg_clv_pct_moved": None,
+        }
+    vals = [float(r["clv_pct"]) for r in clv_rows]
+    moved = [v for v in vals if abs(v) > CLV_STALE_EPS]
+    n_stale = n - len(moved)
+    n_plus = sum(1 for v in vals if v > CLV_STALE_EPS)
+    return {
+        "n_clv_tracked":     n,
+        "n_clv_moved":       len(moved),
+        "n_clv_stale":       n_stale,
+        # +CLV rate is over MOVED legs — a stale 0.0 is neither a win nor a
+        # loss against the close, so counting it dilutes the rate.
+        "clv_plus_rate":     (n_plus / len(moved)) if moved else None,
+        "avg_clv_pct":       sum(vals) / n,
+        "avg_clv_pct_moved": (sum(moved) / len(moved)) if moved else None,
+    }
 
 
 def brier_score(rows: list[dict]) -> Optional[float]:
@@ -191,15 +249,9 @@ def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows:
             "count": count,
         })
 
-    # CLV
+    # CLV — split moved (real signal) vs stale (frozen capture) per audit C5.
     clv_rows = _clv_rows if _clv_rows is not None else _load_clv_rows(user_jwt)
-    n_clv = len(clv_rows)
-    clv_plus_rate = None
-    avg_clv_pct = None
-    if n_clv > 0:
-        n_plus = sum(1 for r in clv_rows if r["clv_pct"] > 0)
-        clv_plus_rate = n_plus / n_clv
-        avg_clv_pct = sum(r["clv_pct"] for r in clv_rows) / n_clv
+    clv = _summarize_clv(clv_rows)
 
     return {
         "brier_score": round(bs, 6) if bs is not None else None,
@@ -210,9 +262,12 @@ def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows:
         "hit_rate": round(hit_rate, 4) if hit_rate is not None else None,
         "avg_predicted_prob": round(avg_pred, 4) if n > 0 else None,
         "calibration_buckets": buckets,
-        "n_clv_tracked": n_clv,
-        "clv_plus_rate": round(clv_plus_rate, 4) if clv_plus_rate is not None else None,
-        "avg_clv_pct": round(avg_clv_pct, 4) if avg_clv_pct is not None else None,
+        "n_clv_tracked":     clv["n_clv_tracked"],
+        "n_clv_moved":       clv["n_clv_moved"],
+        "n_clv_stale":       clv["n_clv_stale"],
+        "clv_plus_rate":     round(clv["clv_plus_rate"], 4) if clv["clv_plus_rate"] is not None else None,
+        "avg_clv_pct":       round(clv["avg_clv_pct"], 4) if clv["avg_clv_pct"] is not None else None,
+        "avg_clv_pct_moved": round(clv["avg_clv_pct_moved"], 4) if clv["avg_clv_pct_moved"] is not None else None,
     }
 
 
@@ -298,21 +353,30 @@ def evaluate_analytics(user_jwt: str) -> dict:
                 "timestamp": ts,
             })
 
+    # CLV rows — Phase 1A audit C5: no more START_SLIP_ID hex gate. Include
+    # every leg with a tracked closing line; apply the optional chronological
+    # CLV_START_DATE cutoff against the slip timestamp (the correct way to
+    # "start from date X"). Also count coverage: how many of the bets we took
+    # actually have a closing line (the "122 of 717" denominator OddsJam
+    # shows), so the average is never silently computed on a partial subset.
     clv_rows: list[dict] = []
     clv_legs_with_ts: list[dict] = []
-    _seen_start = False
-    _sorted_legs = sorted(all_legs, key=lambda x: x.get("slip_id", ""))
-    for leg in _sorted_legs:
-        if not _seen_start:
-            if leg.get("slip_id") == START_SLIP_ID:
-                _seen_start = True
-            else:
-                continue
+    n_logged_legs = 0          # all logged legs (the bets we took)
+    n_logged_excluded_league = 0
+    for leg in all_legs:
+        if is_excluded_league(leg.get("league")):
+            n_logged_excluded_league += 1
+            continue
+        sid = leg.get("slip_id", "")
+        ts = slip_ts.get(sid)
+        # Chronological cutoff (None = include everything).
+        if CLV_START_DATE is not None and ts is not None and ts < CLV_START_DATE:
+            continue
+        n_logged_legs += 1
         cp = leg.get("closing_prob")
         cv = leg.get("clv_pct")
         if cp is not None and cv is not None:
             clv_rows.append({"closing_prob": cp, "clv_pct": cv})
-            ts = slip_ts.get(leg.get("slip_id", ""))
             if ts:
                 clv_legs_with_ts.append({
                     "closing_prob": cp,
@@ -321,6 +385,12 @@ def evaluate_analytics(user_jwt: str) -> dict:
                 })
 
     base = evaluate_calibration(user_jwt, _rows=rows, _clv_rows=clv_rows)
+    # CLV coverage — fraction of the bets we took that have a tracked close.
+    base["n_logged_legs"] = n_logged_legs
+    base["clv_coverage_pct"] = (
+        round(base["n_clv_tracked"] / n_logged_legs, 4)
+        if n_logged_legs else None
+    )
 
     # --- Cumulative P&L timeline --------------------------------------------
     pnl_timeline: list[dict] = []
