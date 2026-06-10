@@ -35,11 +35,18 @@ from engine.devig import devig_shin
 
 logger = logging.getLogger(__name__)
 
-# Slip shapes the backtest validated as placeable and +EV. 4-leg fallback
-# included: feasibility-constrained replay showed 4-6 leg Flex at +40.8%
-# ROI/slip vs +17.6% for strict 5/6 (the 4-leg days add real volume).
-ALLOWED_SLIP_TYPE = "flex"
-ALLOWED_SLIP_SIZES = (4, 5, 6)
+# Slip shapes the placeability-constrained backtest validated as +EV.
+# 3-Power is the DEFAULT: needing only 3 co-available sharp legs, it formed
+# 44 placeable slips (1.52/day, +25.0u, +56.8%/slip) vs 29 for 4-Flex
+# (+11.0u) and just 12 for strict 6-Flex (-1.6u) — placeability beats
+# per-slip EV theory on real slates. Flex 4-6 stays allowed for users who
+# explicitly configure it.
+# PAYOUT DEPENDENCY: +56.8% assumes the 6x 3-Power payout in
+# engine/constants.POWER_PAYOUTS. If PrizePicks pays 5x, per-leg break-even
+# jumps 0.550 -> 0.585 and the edge thins to ~+11% — verify in-app.
+DEFAULT_SLIP_TYPE = "Power"
+DEFAULT_SLIP_SIZE = 3
+_ALLOWED_SHAPES = {("power", 3), ("flex", 4), ("flex", 5), ("flex", 6)}
 
 
 def pinnacle_fair_from_books(books: Iterable, side: str) -> Optional[float]:
@@ -83,5 +90,6 @@ def is_tradeable(fair_prob: Optional[float]) -> bool:
 
 
 def slip_shape_allowed(slip_type: str, n_legs: int) -> bool:
-    """Only 4-6 leg Flex cleared the placeability-constrained backtest."""
-    return (slip_type or "").lower() == ALLOWED_SLIP_TYPE and int(n_legs) in ALLOWED_SLIP_SIZES
+    """Shapes that cleared the placeability-constrained backtest:
+    3-Power (default) and 4/5/6-leg Flex."""
+    return ((slip_type or "").lower(), int(n_legs)) in _ALLOWED_SHAPES

@@ -1098,16 +1098,25 @@ def _run_pipeline_body():
 
                     if cfg.USE_SHARP_ANCHOR:
                         # SHARP ANCHOR mode — the validated rule, nothing else:
-                        #   * Flex only, 4-6 legs (feasibility-constrained
-                        #     backtest: +40.8% ROI/slip on 4-6 Flex; Power
-                        #     was never validated and has higher break-evens).
+                        #   * Default shape: 3-leg Power. Feasibility-
+                        #     constrained backtest: 44 placeable slips
+                        #     (1.52/day, +25.0u, +56.8%/slip) vs 29 for
+                        #     4-Flex and 12 for strict 6-Flex — 3 legs
+                        #     co-available is the easiest fill, so 3-Power
+                        #     converts sharp legs into the most placed bets.
+                        #     Users who explicitly configured a validated
+                        #     Flex shape (4/5/6) keep their choice.
                         #   * Floor = max(user's min, SHARP_MIN_PROB=0.56).
                         #   * Legs without a two-sided Pinnacle price never
                         #     enter the pool (sharp_missing -> halted).
                         # Tier routing and shade filters belong to the old
                         # model and are intentionally bypassed.
-                        slip_type = "Flex"
-                        n_legs = max(4, min(6, n_legs))
+                        from engine.sharp_anchor import (
+                            slip_shape_allowed, DEFAULT_SLIP_TYPE, DEFAULT_SLIP_SIZE,
+                        )
+                        if not slip_shape_allowed(slip_type, n_legs):
+                            slip_type = DEFAULT_SLIP_TYPE
+                            n_legs = DEFAULT_SLIP_SIZE
                         min_prob = max(user_min or 0.0, cfg.SHARP_MIN_PROB)
                         pool = [
                             b for b in bets
@@ -1117,17 +1126,19 @@ def _run_pipeline_body():
                         ]
                         logger.info(
                             "auto_backtest    user=%s SHARP_ANCHOR pool=%d "
-                            "(floor=%.3f, flex-%d)",
-                            uid, len(pool), min_prob, n_legs,
+                            "(floor=%.3f, %s-%d)",
+                            uid, len(pool), min_prob, slip_type, n_legs,
                         )
                         from engine.backtest import BacktestLogger
                         bl = BacktestLogger(user_id=uid, db_client=db)
-                        # Size fallback 6 -> 5 -> 4: thin slates carried real
-                        # volume in the feasibility backtest (9x5-leg + 4x4-leg
-                        # of the 25 placeable slips). Stop at first success.
-                        for try_n in range(n_legs, 3, -1):
-                            if bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=try_n):
-                                break
+                        # Flex keeps its thin-slate size fallback (6->5->4);
+                        # Power-3 is already the minimum fill.
+                        if slip_type.lower() == "flex":
+                            for try_n in range(n_legs, 3, -1):
+                                if bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=try_n):
+                                    break
+                        else:
+                            bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
                         continue
 
                     # ── Legacy path (USE_SHARP_ANCHOR=false) ────────────────

@@ -72,12 +72,17 @@ def test_floor_is_load_bearing():
 # ── slip shapes: only what the placeability backtest validated ──────────
 
 def test_slip_shapes():
+    # 3-Power is the validated default (44 placeable slips, +25u, +56.8%/slip
+    # in the feasibility backtest); Flex 4-6 allowed for explicit user choice.
+    assert sa.slip_shape_allowed("Power", 3) is True
     assert sa.slip_shape_allowed("Flex", 6) is True
     assert sa.slip_shape_allowed("flex", 5) is True
     assert sa.slip_shape_allowed("flex", 4) is True
     assert sa.slip_shape_allowed("flex", 3) is False
     assert sa.slip_shape_allowed("power", 6) is False
-    assert sa.slip_shape_allowed("Power", 3) is False
+    assert sa.slip_shape_allowed("power", 2) is False
+    assert sa.DEFAULT_SLIP_TYPE == "Power"
+    assert sa.DEFAULT_SLIP_SIZE == 3
 
 
 # ── the calibration-bypass guarantee ────────────────────────────────────
