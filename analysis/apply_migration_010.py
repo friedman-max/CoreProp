@@ -1,5 +1,5 @@
 """
-Apply migration_010.sql to the local Supabase project via the service-role
+Apply migration_010b_rwbc.sql to the local Supabase project via the service-role
 key. This script is intentionally outside the repo's deploy path — keep it
 local. Production deploys still apply migrations via the Supabase SQL editor.
 
@@ -8,7 +8,7 @@ Usage:
 
 What it does:
   1. Loads .env to read SUPABASE_URL + SUPABASE_SERVICE_KEY
-  2. Reads migration_010.sql from the repo root
+  2. Reads migration_010b_rwbc.sql from the repo root
   3. Submits the SQL via the Supabase REST `/rpc/exec_sql` if available,
      otherwise prints the SQL with instructions to paste into the SQL
      editor manually (Supabase API doesn't always expose raw DDL via the
@@ -35,9 +35,9 @@ if not (SUPABASE_URL and SUPABASE_KEY):
     print("✗ SUPABASE_URL or SUPABASE_SERVICE_KEY missing from .env", file=sys.stderr)
     sys.exit(1)
 
-migration_path = ROOT / "migration_010.sql"
+migration_path = ROOT / "migration_010b_rwbc.sql"
 if not migration_path.exists():
-    print(f"✗ migration_010.sql not found at {migration_path}", file=sys.stderr)
+    print(f"✗ migration_010b_rwbc.sql not found at {migration_path}", file=sys.stderr)
     sys.exit(1)
 
 sql = migration_path.read_text()

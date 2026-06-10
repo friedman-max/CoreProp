@@ -1,0 +1,59 @@
+// Sample +EV bets data — matches the structure visible in CoreProp screenshots.
+const EV_BETS = [
+  { player: "Cale Makar",        league: "NHL",  prop: "Assists",      line: 0.5,  side: "OVER",  truePct: 72.4, books: [["FD", -138], ["DK", -145], ["PIN", -135]], time: "5/26 9:08 PM" },
+  { player: "Courtney Williams", league: "WNBA", prop: "Rebs+Asts",    line: 9.5,  side: "UNDER", truePct: 66.4, books: [["FD", -140]],                                time: "5/27 9:00 PM" },
+  { player: "Olivia Miles",      league: "WNBA", prop: "Rebs+Asts",    line: 10.5, side: "UNDER", truePct: 63.6, books: [["FD", -136]],                                time: "5/27 9:00 PM" },
+  { player: "Cason Wallace",     league: "NBA",  prop: "Rebounds",     line: 3.5,  side: "UNDER", truePct: 62.0, books: [["FD", -132], ["DK", -121.64], ["PIN", -133]], time: "5/26 8:40 PM" },
+  { player: "Jordan Wicks",      league: "MLB",  prop: "Hits Allowed", line: 4.5,  side: "UNDER", truePct: 62.0, books: [["DK", -118], ["PIN", -134]],                 time: "5/26 6:40 PM" },
+  { player: "Marina Mabrey",     league: "WNBA", prop: "Rebs+Asts",    line: 7.5,  side: "UNDER", truePct: 60.2, books: [["FD", -130]],                                time: "5/27 8:00 PM" },
+  { player: "Paige Bueckers",    league: "WNBA", prop: "Rebs+Asts",    line: 8.5,  side: "UNDER", truePct: 60.2, books: [["FD", -130]],                                time: "5/28 8:00 PM" },
+  { player: "Victor Wembanyama", league: "NBA",  prop: "Assists",      line: 3.5,  side: "UNDER", truePct: 59.9, books: [["FD", -133.7], ["DK", -122.74], ["PIN", -141]], time: "5/26 8:40 PM" },
+  { player: "Luguentz Dort",     league: "NBA",  prop: "Rebounds",     line: 2.5,  side: "UNDER", truePct: 59.2, books: [["FD", -122], ["DK", -111.75], ["PIN", -112]], time: "5/26 8:40 PM" },
+  { player: "Sean Burke",        league: "MLB",  prop: "Walks Allowed",line: 1.5,  side: "UNDER", truePct: 58.3, books: [["DK", -120]],                                time: "5/26 7:40 PM" },
+  { player: "Jaccob Slavin",     league: "NHL",  prop: "Blocked Shots",line: 1.5,  side: "OVER",  truePct: 58.0, books: [["FD", -190]],                                time: "5/27 8:08 PM" },
+  { player: "Jordan Wicks",      league: "MLB",  prop: "Walks Allowed",line: 1.5,  side: "UNDER", truePct: 57.8, books: [["DK", -119]],                                time: "5/26 6:40 PM" },
+  { player: "Nia Coffey",        league: "WNBA", prop: "Rebounds",     line: 5.5,  side: "UNDER", truePct: 57.8, books: [["FD", -125], ["DK", -121.64]],               time: "5/27 9:00 PM" },
+  { player: "Gabriela Jaquez",   league: "WNBA", prop: "Points",       line: 11.5, side: "UNDER", truePct: 57.7, books: [["FD", -128], ["DK", -123.86]],               time: "5/27 8:00 PM" },
+  { player: "Chet Holmgren",     league: "NBA",  prop: "Rebounds",     line: 7.5,  side: "UNDER", truePct: 57.6, books: [["FD", -114], ["DK", -114.53], ["PIN", -112]], time: "5/26 8:40 PM" },
+  { player: "Jared McCain",      league: "NBA",  prop: "Rebounds",     line: 2.5,  side: "UNDER", truePct: 57.6, books: [["FD", -114], ["DK", -114.53], ["PIN", -112]], time: "5/26 8:40 PM" },
+  { player: "Stephon Castle",    league: "NBA",  prop: "Points",       line: 17.5, side: "UNDER", truePct: 57.1, books: [["DK", -116.47], ["PIN", -129]],              time: "5/26 8:40 PM" },
+  { player: "Julian Champagnie", league: "NBA",  prop: "Pts+Rebs",     line: 14.5, side: "UNDER", truePct: 57.0, books: [["FD", -130], ["DK", -111.75]],               time: "5/26 8:40 PM" },
+  { player: "Devin Vassell",     league: "NBA",  prop: "Rebounds",     line: 4.5,  side: "UNDER", truePct: 57.0, books: [["FD", -125], ["DK", 100.86], ["PIN", -126]], time: "5/26 8:40 PM" },
+  { player: "Natasha Cloud",     league: "WNBA", prop: "Rebounds",     line: 3.5,  side: "UNDER", truePct: 56.9, books: [["FD", -130], ["DK", -111.75]],               time: "5/27 8:00 PM" },
+  { player: "Jalen Williams",    league: "NBA",  prop: "Points",       line: 14.5, side: "UNDER", truePct: 56.7, books: [["FD", -146.36], ["DK", -121.64], ["PIN", -122]], time: "5/26 8:40 PM" },
+];
+
+// Ticker plays — for the live ticker in the hero. Each has its own book odds so the alert card cycles all fields.
+const TICKER_PLAYS = [
+  { player: "Cale Makar",       prop: "Assists O0.5",     pct: 72.4, books: [["FD", -138], ["DK", -145], ["PIN", -135]] },
+  { player: "Wembanyama",       prop: "Assists U3.5",     pct: 59.9, books: [["FD", -133], ["DK", -122], ["PIN", -141]] },
+  { player: "Paige Bueckers",   prop: "Rebs+Asts U8.5",   pct: 60.2, books: [["FD", -130], ["DK", -126], ["PIN", -134]] },
+  { player: "Chet Holmgren",    prop: "Rebounds U7.5",    pct: 57.6, books: [["FD", -114], ["DK", -115], ["PIN", -112]] },
+  { player: "Jordan Wicks",     prop: "Hits Allowed U4.5",pct: 62.0, books: [["FD", -125], ["DK", -118], ["PIN", -134]] },
+  { player: "Marina Mabrey",    prop: "Rebs+Asts U7.5",   pct: 60.2, books: [["FD", -130], ["DK", -124], ["PIN", -128]] },
+  { player: "Devin Vassell",    prop: "Rebounds U4.5",    pct: 57.0, books: [["FD", -125], ["DK", -118], ["PIN", -126]] },
+  { player: "Olivia Miles",     prop: "Rebs+Asts U10.5",  pct: 63.6, books: [["FD", -136], ["DK", -128], ["PIN", -132]] },
+];
+
+// Yesterday's winners — +EV bets we surfaced that hit. Stat is the actual result.
+// margin = how much the result beat the line by (positive = comfortable win).
+const YESTERDAY_WINS = [
+  { player: "Cale Makar",        league: "NHL",  team: "COL", opp: "DAL", prop: "Assists",       line: 0.5,  side: "OVER",  truePct: 72.4, stat: 2,    statLabel: "2 AST",   margin: 1.5,  odds: -138 },
+  { player: "Victor Wembanyama", league: "NBA",  team: "SAS", opp: "OKC", prop: "Assists",       line: 3.5,  side: "UNDER", truePct: 59.9, stat: 2,    statLabel: "2 AST",   margin: 1.5,  odds: -122 },
+  { player: "Paige Bueckers",    league: "WNBA", team: "DAL", opp: "ATL", prop: "Rebs+Asts",     line: 8.5,  side: "UNDER", truePct: 60.2, stat: 7,    statLabel: "7 R+A",   margin: 1.5,  odds: -130 },
+  { player: "Chet Holmgren",     league: "NBA",  team: "OKC", opp: "SAS", prop: "Rebounds",      line: 7.5,  side: "UNDER", truePct: 57.6, stat: 6,    statLabel: "6 REB",   margin: 1.5,  odds: -114 },
+  { player: "Jordan Wicks",      league: "MLB",  team: "CHC", opp: "MIL", prop: "Hits Allowed",  line: 4.5,  side: "UNDER", truePct: 62.0, stat: 3,    statLabel: "3 H",     margin: 1.5,  odds: -118 },
+  { player: "Olivia Miles",      league: "WNBA", team: "WAS", opp: "MIN", prop: "Rebs+Asts",     line: 10.5, side: "UNDER", truePct: 63.6, stat: 8,    statLabel: "8 R+A",   margin: 2.5,  odds: -136 },
+  { player: "Marina Mabrey",     league: "WNBA", team: "CHI", opp: "PHX", prop: "Rebs+Asts",     line: 7.5,  side: "UNDER", truePct: 60.2, stat: 6,    statLabel: "6 R+A",   margin: 1.5,  odds: -130 },
+  { player: "Devin Vassell",     league: "NBA",  team: "SAS", opp: "OKC", prop: "Rebounds",      line: 4.5,  side: "UNDER", truePct: 57.0, stat: 3,    statLabel: "3 REB",   margin: 1.5,  odds: -125 },
+  { player: "Jaccob Slavin",     league: "NHL",  team: "CAR", opp: "NJD", prop: "Blocked Shots", line: 1.5,  side: "OVER",  truePct: 58.0, stat: 4,    statLabel: "4 BLK",   margin: 2.5,  odds: -190 },
+  { player: "Stephon Castle",    league: "NBA",  team: "SAS", opp: "OKC", prop: "Points",        line: 17.5, side: "UNDER", truePct: 57.1, stat: 13,   statLabel: "13 PTS",  margin: 4.5,  odds: -116 },
+  { player: "Jalen Williams",    league: "NBA",  team: "OKC", opp: "SAS", prop: "Points",        line: 14.5, side: "UNDER", truePct: 56.7, stat: 11,   statLabel: "11 PTS",  margin: 3.5,  odds: -122 },
+  { player: "Sean Burke",        league: "MLB",  team: "CHW", opp: "DET", prop: "Walks Allowed", line: 1.5,  side: "UNDER", truePct: 58.3, stat: 1,    statLabel: "1 BB",    margin: 0.5,  odds: -120 },
+  { player: "Cason Wallace",     league: "NBA",  team: "OKC", opp: "SAS", prop: "Rebounds",      line: 3.5,  side: "UNDER", truePct: 62.0, stat: 2,    statLabel: "2 REB",   margin: 1.5,  odds: -121 },
+  { player: "Nia Coffey",        league: "WNBA", team: "LAS", opp: "SEA", prop: "Rebounds",      line: 5.5,  side: "UNDER", truePct: 57.8, stat: 4,    statLabel: "4 REB",   margin: 1.5,  odds: -125 },
+  { player: "Jared McCain",      league: "NBA",  team: "PHI", opp: "BOS", prop: "Rebounds",      line: 2.5,  side: "UNDER", truePct: 57.6, stat: 1,    statLabel: "1 REB",   margin: 1.5,  odds: -114 },
+  { player: "Julian Champagnie", league: "NBA",  team: "SAS", opp: "OKC", prop: "Pts+Rebs",      line: 14.5, side: "UNDER", truePct: 57.0, stat: 9,    statLabel: "9 P+R",   margin: 5.5,  odds: -130 },
+];
+
+Object.assign(window, { EV_BETS, TICKER_PLAYS, YESTERDAY_WINS });

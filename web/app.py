@@ -2012,13 +2012,20 @@ def get_matched(request: Request):
 
 
 @app.get("/api/bootstrap/core")
-def get_bootstrap_core(request: Request):
+def get_bootstrap_core(request: Request, user: Optional[dict] = Depends(get_current_user_optional)):
     """Critical-path payload for first paint: bets + meta only.
 
     Intentionally does NOT include matches/pp/fd/dk/pin — those load lazily
     when their tab is activated. This trims the initial payload by ~80% and
     removes 5 heavy allocations from the common request path on the 512MB tier.
+
+    Gated behind an active subscription ONLY when BILLING_ENFORCE=true; when
+    enforcement is off (the default) _user_has_access() returns True for
+    everyone and this is a no-op, so the hot path is unchanged until billing
+    is switched on.
     """
+    if not _user_has_access(user):
+        raise HTTPException(status_code=402, detail="Subscription required.")
     return _cached_response("core", request)
 
 
@@ -2837,6 +2844,10 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
 
 class BacktestAddSlipRequest(BaseModel):
     bet_ids: list[str]
+    # The slip type the user picked in the +EV slip builder. Stored on the
+    # slip row so the backtest reflects user intent (Power / Flex). Falls
+    # back to "Manual" for older clients that don't send it.
+    slip_type: str = "Manual"
 
 
 @app.post("/api/admin/trigger-auto-backtest")
@@ -3016,6 +3027,12 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
     if not req.bet_ids or len(req.bet_ids) < 2 or len(req.bet_ids) > 6:
         raise HTTPException(status_code=400, detail="Slip must have 2-6 legs.")
 
+    # Normalise the requested slip type. Anything we don't recognise is
+    # stored verbatim (e.g. "Manual") so we never reject on this field.
+    req_slip_type = (req.slip_type or "Manual").strip().title()
+    if req_slip_type not in ("Power", "Flex", "Manual"):
+        req_slip_type = "Manual"
+
     with _lock:
         bet_map      = _state["bet_map"]
         serialized   = _state["bets"]
@@ -3088,7 +3105,7 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
 
     # Force the slip through — bypass the "enough bets" / EV gate by
     # calling try_log_slip with only these bets (already in correct format).
-    new_slip = _logger.try_log_slip(backtest_bets, slip_type="Manual")
+    new_slip = _logger.try_log_slip(backtest_bets, slip_type=req_slip_type)
     if new_slip is None:
         # try_log_slip may reject due to EV or already-used bets;
         # for manual adds we force-log it anyway.
@@ -3137,7 +3154,9 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
             best_ev = max(candidates) if candidates else 0.0
         except Exception:
             best_ev = 0.0
-        best_type = "Manual"
+        # Tag the slip with the user's requested type so the backtest view
+        # reflects intent (Power / Flex) rather than a generic "Manual".
+        best_type = req_slip_type
 
         slip_id   = str(uuid.uuid4())[:8].upper()
         timestamp = _dt.now().isoformat(timespec="seconds")
@@ -3677,6 +3696,303 @@ def get_calibration_curves_api():
         return {"isotonic": {}, "sharpness": {}}
 
 
+# ===========================================================================
+# Stripe billing
+# ===========================================================================
+# Subscription billing: a single "CoreProp All Access" product with monthly
+# and yearly recurring prices, each with a card-required N-day free trial.
+# Access to the logged-in app is gated behind an active trial/subscription
+# ONLY when BILLING_ENFORCE=true — so the site keeps working until billing
+# is fully configured and explicitly switched on.
+import os as _os
+
+STRIPE_SECRET_KEY      = _os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET  = _os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PUBLISHABLE_KEY = _os.getenv("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_PRICE_MONTHLY   = _os.getenv("STRIPE_PRICE_MONTHLY", "")
+STRIPE_PRICE_YEARLY    = _os.getenv("STRIPE_PRICE_YEARLY", "")
+BILLING_TRIAL_DAYS     = int(_os.getenv("BILLING_TRIAL_DAYS", "7"))
+BILLING_ENFORCE        = _os.getenv("BILLING_ENFORCE", "false").lower() == "true"
+PUBLIC_BASE_URL        = _os.getenv("PUBLIC_BASE_URL", "https://coreprop.onrender.com").rstrip("/")
+
+# Statuses Stripe reports that we treat as "access granted".
+_ACTIVE_SUB_STATUSES = {"trialing", "active", "past_due"}
+
+
+def _billing_configured() -> bool:
+    """True when we have enough Stripe config to actually run checkout."""
+    return bool(STRIPE_SECRET_KEY and STRIPE_PRICE_MONTHLY and STRIPE_PRICE_YEARLY)
+
+
+def _stripe():
+    """Lazy-import + key the Stripe SDK. Raises 503 if billing isn't set up."""
+    if not _billing_configured():
+        raise HTTPException(status_code=503, detail="Billing is not configured.")
+    try:
+        import stripe
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Stripe library not installed.")
+    stripe.api_key = STRIPE_SECRET_KEY
+    return stripe
+
+
+def _price_id_for_plan(plan: str) -> Optional[str]:
+    return {"monthly": STRIPE_PRICE_MONTHLY, "yearly": STRIPE_PRICE_YEARLY}.get(plan)
+
+
+def _plan_for_price_id(price_id: str) -> Optional[str]:
+    if price_id == STRIPE_PRICE_MONTHLY:
+        return "monthly"
+    if price_id == STRIPE_PRICE_YEARLY:
+        return "yearly"
+    return None
+
+
+def _read_user_billing(user: dict) -> dict:
+    """Return {stripe_customer_id, subscription_status, subscription_plan,
+    current_period_end} for the user from user_config (via service DB so it
+    works even if RLS columns aren't selectable for the anon role)."""
+    out = {"stripe_customer_id": None, "subscription_status": None,
+           "subscription_plan": None, "current_period_end": None}
+    try:
+        from engine.database import get_db
+        db = get_db()
+        if db:
+            res = db.table("user_config").select(
+                "stripe_customer_id, subscription_status, subscription_plan, current_period_end"
+            ).eq("user_id", user["id"]).execute()
+            if res.data:
+                out.update({k: res.data[0].get(k) for k in out})
+    except Exception as e:
+        logger.warning("billing: read user billing failed for %s: %s", user.get("id"), e)
+    return out
+
+
+def _upsert_user_billing(user_id: str, fields: dict):
+    """Write billing fields onto the user_config row (service DB, bypasses RLS)."""
+    from engine.database import get_db
+    db = get_db()
+    if not db:
+        raise RuntimeError("No DB connection for billing upsert.")
+    payload = {"user_id": user_id, **fields,
+               "updated_at": datetime.now(timezone.utc).isoformat()}
+    db.table("user_config").upsert(payload, on_conflict="user_id").execute()
+
+
+def _find_user_id_by_customer(customer_id: str) -> Optional[str]:
+    from engine.database import get_db
+    db = get_db()
+    if not db:
+        return None
+    res = db.table("user_config").select("user_id").eq(
+        "stripe_customer_id", customer_id).limit(1).execute()
+    return res.data[0]["user_id"] if res.data else None
+
+
+def _get_or_create_customer(user: dict) -> str:
+    """Return the user's Stripe customer id, creating + persisting it once."""
+    existing = _read_user_billing(user).get("stripe_customer_id")
+    if existing:
+        return existing
+    stripe = _stripe()
+    cust = stripe.Customer.create(
+        email=user.get("email") or None,
+        metadata={"supabase_user_id": user["id"]},
+    )
+    _upsert_user_billing(user["id"], {"stripe_customer_id": cust.id})
+    return cust.id
+
+
+def _user_has_access(user: Optional[dict]) -> bool:
+    """Access policy. When enforcement is off (or billing unconfigured), always
+    grant. When on, require an active/trialing/past_due subscription, OR a
+    canceled sub still inside its paid period."""
+    if not BILLING_ENFORCE or not _billing_configured():
+        return True
+    if not user:
+        return False
+    b = _read_user_billing(user)
+    status = (b.get("subscription_status") or "").lower()
+    if status in _ACTIVE_SUB_STATUSES:
+        return True
+    # Canceled but still within the paid period → keep access until it ends.
+    cpe = b.get("current_period_end")
+    if status == "canceled" and cpe:
+        try:
+            return datetime.fromisoformat(str(cpe).replace("Z", "+00:00")) > datetime.now(timezone.utc)
+        except Exception:
+            return False
+    return False
+
+
+@app.get("/api/billing/config")
+def billing_config():
+    """Public billing config the frontend needs to render the pricing CTA."""
+    return {
+        "enabled":        _billing_configured(),
+        "enforce":        BILLING_ENFORCE,
+        "publishable_key": STRIPE_PUBLISHABLE_KEY,
+        "price_monthly":  STRIPE_PRICE_MONTHLY,
+        "price_yearly":   STRIPE_PRICE_YEARLY,
+        "trial_days":     BILLING_TRIAL_DAYS,
+    }
+
+
+@app.get("/api/billing/status")
+def billing_status(user: dict = Depends(get_current_user)):
+    """The signed-in user's subscription state + whether the app is unlocked."""
+    b = _read_user_billing(user)
+    return {
+        "status":             b.get("subscription_status"),
+        "plan":               b.get("subscription_plan"),
+        "current_period_end": b.get("current_period_end"),
+        "active":             _user_has_access(user),
+        "enforce":            BILLING_ENFORCE,
+        "configured":         _billing_configured(),
+    }
+
+
+class CheckoutRequest(BaseModel):
+    plan: str = "monthly"   # "monthly" | "yearly"
+
+
+@app.post("/api/billing/checkout")
+def billing_checkout(req: CheckoutRequest, user: dict = Depends(get_current_user)):
+    """Create a Stripe Checkout Session for a card-required trial subscription
+    and return its hosted URL for the client to redirect to."""
+    stripe = _stripe()
+    price_id = _price_id_for_plan(req.plan)
+    if not price_id:
+        raise HTTPException(status_code=400, detail="Unknown plan.")
+
+    customer_id = _get_or_create_customer(user)
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            customer=customer_id,
+            line_items=[{"price": price_id, "quantity": 1}],
+            subscription_data={
+                "trial_period_days": BILLING_TRIAL_DAYS,
+                "metadata": {"supabase_user_id": user["id"], "plan": req.plan},
+            },
+            # Card required up front so the trial auto-converts to paid.
+            payment_method_collection="always",
+            allow_promotion_codes=True,
+            success_url=f"{PUBLIC_BASE_URL}/?checkout=success",
+            cancel_url=f"{PUBLIC_BASE_URL}/?checkout=cancelled",
+            metadata={"supabase_user_id": user["id"], "plan": req.plan},
+        )
+        return {"url": session.url, "id": session.id}
+    except Exception as e:
+        logger.error("billing: checkout create failed for %s: %s", user["id"], e)
+        raise HTTPException(status_code=502, detail=f"Stripe checkout failed: {e}")
+
+
+@app.post("/api/billing/portal")
+def billing_portal(user: dict = Depends(get_current_user)):
+    """Open the Stripe-hosted Customer Portal so the user can update payment
+    method, switch plans, or cancel."""
+    stripe = _stripe()
+    customer_id = _read_user_billing(user).get("stripe_customer_id")
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="No billing account yet.")
+    try:
+        sess = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=f"{PUBLIC_BASE_URL}/?tab=pricing",
+        )
+        return {"url": sess.url}
+    except Exception as e:
+        logger.error("billing: portal create failed for %s: %s", user["id"], e)
+        raise HTTPException(status_code=502, detail=f"Stripe portal failed: {e}")
+
+
+def _sync_subscription_to_db(sub: dict):
+    """Persist a Stripe Subscription object onto the owning user's row."""
+    customer_id = sub.get("customer")
+    if not customer_id:
+        return
+    user_id = _find_user_id_by_customer(customer_id)
+    if not user_id:
+        # Fall back to the metadata stamp we set at checkout.
+        user_id = (sub.get("metadata") or {}).get("supabase_user_id")
+    if not user_id:
+        logger.warning("billing: no user for customer %s; skipping sync", customer_id)
+        return
+
+    status = sub.get("status")
+    # Plan label from the first line item's price id.
+    plan = None
+    try:
+        items = (sub.get("items") or {}).get("data") or []
+        if items:
+            plan = _plan_for_price_id(items[0]["price"]["id"])
+    except Exception:
+        pass
+    cpe = sub.get("current_period_end")
+    cpe_iso = (datetime.fromtimestamp(cpe, tz=timezone.utc).isoformat()
+               if isinstance(cpe, (int, float)) else None)
+
+    fields = {
+        "stripe_customer_id":  customer_id,
+        "subscription_status": status,
+    }
+    if plan:
+        fields["subscription_plan"] = plan
+    if cpe_iso:
+        fields["current_period_end"] = cpe_iso
+    _upsert_user_billing(user_id, fields)
+    logger.info("billing: synced sub for user %s → %s (%s)", user_id, status, plan)
+
+
+@app.post("/api/billing/webhook")
+async def billing_webhook(request: Request):
+    """Stripe webhook. Verifies the signature, then keeps subscription_status
+    in sync on subscription create/update/delete and checkout completion."""
+    if not _billing_configured():
+        raise HTTPException(status_code=503, detail="Billing not configured.")
+    stripe = _stripe()
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+
+    try:
+        if STRIPE_WEBHOOK_SECRET:
+            event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+        else:
+            # No signing secret set yet — parse without verification (dev only).
+            import json as _json
+            event = _json.loads(payload.decode("utf-8"))
+            logger.warning("billing: webhook signature NOT verified (no STRIPE_WEBHOOK_SECRET)")
+    except Exception as e:
+        logger.error("billing: webhook signature verification failed: %s", e)
+        raise HTTPException(status_code=400, detail="Invalid signature.")
+
+    etype = event.get("type", "")
+    obj = (event.get("data") or {}).get("object") or {}
+
+    try:
+        if etype in ("customer.subscription.created",
+                     "customer.subscription.updated",
+                     "customer.subscription.deleted"):
+            _sync_subscription_to_db(obj)
+        elif etype == "checkout.session.completed":
+            # Pull the full subscription so we record trial status + period end.
+            sub_id = obj.get("subscription")
+            if sub_id:
+                sub = stripe.Subscription.retrieve(sub_id)
+                _sync_subscription_to_db(sub)
+        elif etype == "invoice.payment_failed":
+            sub_id = obj.get("subscription")
+            if sub_id:
+                sub = stripe.Subscription.retrieve(sub_id)
+                _sync_subscription_to_db(sub)
+    except Exception as e:
+        logger.error("billing: webhook handler error for %s: %s", etype, e)
+        # 200 anyway so Stripe doesn't hammer retries on a transient DB blip;
+        # the next subscription.updated event will re-sync.
+        return {"received": True, "handled": False}
+
+    return {"received": True}
 
 
 

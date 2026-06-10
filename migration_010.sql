@@ -1,59 +1,31 @@
--- migration_010: per-cell calibration state for RWBC (Reliability-Weighted
--- Bayesian Calibration). Additive only — safe to apply alongside the
--- existing isotonic calibration code path.
+-- migration_010: Stripe billing state on user_config.
 --
--- Two new tables:
+-- Adds the columns the billing layer needs to map a Supabase user to their
+-- Stripe customer + subscription, so the app can gate access behind an
+-- active trial/subscription.
 --
---   calibration_cells     — one row per (league, prop, side) cell, holding
---                            the most recently *gated* fit. This is what
---                            engine/rwbc_calibration.calibrate() reads at
---                            inference time.
+--   stripe_customer_id    — Stripe Customer id (cus_…). One per user; created
+--                           lazily on first checkout. Indexed because the
+--                           webhook looks rows up by this id (it only has the
+--                           Stripe customer, not our user_id).
+--   subscription_status   — mirrors Stripe's subscription.status, e.g.
+--                           'trialing', 'active', 'past_due', 'canceled',
+--                           'incomplete', 'unpaid'. NULL = never subscribed.
+--   subscription_plan     — 'monthly' | 'yearly' (our own label, derived from
+--                           the Stripe Price id at checkout).
+--   current_period_end    — when the current paid/trial period ends. Lets the
+--                           client show "renews/ends on …" and lets us treat a
+--                           canceled-but-not-yet-expired sub as still active
+--                           until period end.
 --
---   calibration_history   — audit trail; every refit attempt captures
---                            Brier (current + RWBC) so the Observatory
---                            trend panel can plot the 30-day sparkline
---                            without recomputing each time.
---
--- The publication gate (Δn_eff ≥ 50 since last publish) sits on the
--- application side — the SQL layer just holds whatever the gate last
--- committed. `last_publish_n_eff` is the cursor the gate compares
--- against on the next refit.
---
--- No RLS is needed: only the service-role refit job writes these tables,
--- and the GET /api/observatory/rwbc endpoint reads them via the service
--- role too (Observatory data is non-PII).
+-- Safe to run multiple times (IF NOT EXISTS guards).
 
-create table if not exists calibration_cells (
-  league               text       not null,
-  prop                 text       not null,
-  side                 text       not null,                -- 'over' | 'under'
-  w_cell               numeric    not null,                -- trust weight in [0, 1]
-  p_post               numeric    not null,                -- Beta-Binomial posterior mean
-  n_eff                numeric    not null,                -- recency-weighted obs count
-  resolution           numeric    not null,
-  reliability_error    numeric    not null,
-  mean_pred            numeric    not null,
-  mean_obs             numeric    not null,
-  last_fit_at          timestamptz default now(),          -- last RECOMPUTE
-  last_publish_at      timestamptz default now(),          -- last PUBLISH (gated)
-  last_publish_n_eff   numeric    not null,                -- n_eff at last publish
-  primary key (league, prop, side)
-);
+alter table user_config
+  add column if not exists stripe_customer_id  text,
+  add column if not exists subscription_status text,
+  add column if not exists subscription_plan   text,
+  add column if not exists current_period_end  timestamptz;
 
-create index if not exists idx_cal_cells_w_cell on calibration_cells(w_cell);
-
-create table if not exists calibration_history (
-  id                   bigserial  primary key,
-  fit_at               timestamptz default now(),
-  scope                text       not null,                -- 'global' | <league>
-  brier_current        numeric,                            -- isotonic Brier (when computed)
-  brier_rwbc           numeric,                            -- RWBC Brier
-  n_settled            int        not null,                -- sample size feeding this fit
-  publish_skipped      boolean    default false            -- true if n_eff gate suppressed publish
-);
-
-create index if not exists idx_cal_history_recent
-  on calibration_history(fit_at desc);
-
--- One-time visibility: emit a notice so the runner sees the migration ran.
-do $$ begin raise notice 'migration_010 applied: calibration_cells + calibration_history'; end $$;
+-- The webhook resolves the user row from the Stripe customer id, so index it.
+create index if not exists idx_user_config_stripe_customer
+  on user_config (stripe_customer_id);

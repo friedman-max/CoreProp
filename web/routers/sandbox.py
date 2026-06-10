@@ -75,6 +75,10 @@ def _config_from_req(req: SandboxRequest):
 
 _SANDBOX_CACHE_TTL_SEC = 30 * 60
 _SANDBOX_CACHE_PREFIX = "sandbox.result."
+# Bump when the simulation logic changes in a way that alters results, so
+# the persisted Supabase cache is invalidated even though config and the
+# calibration fingerprint are unchanged. v2: multi-slip round-robin replay.
+_SANDBOX_LOGIC_VERSION = 2
 
 
 def _sandbox_cache_key(req: SandboxRequest) -> str:
@@ -100,6 +104,7 @@ def _sandbox_cache_key(req: SandboxRequest) -> str:
         "end_date":       req.end_date,
         "bootstrap":      bool(req.bootstrap),
         "cal_fitted_at":  cal_fitted_at,
+        "logic_version":  _SANDBOX_LOGIC_VERSION,
     }
     blob = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:24]

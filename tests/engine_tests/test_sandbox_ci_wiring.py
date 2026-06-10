@@ -1,29 +1,20 @@
-"""End-to-end wiring tests for the sandbox bootstrap-CI feature.
+"""Backend wiring tests for the sandbox bootstrap-CI feature.
 
-The single most important sandbox change: every metric card now carries
-a 95% bootstrap CI so a user can tell a +5% ROI [+3%, +7%] (decision-
-grade) from a +5% ROI [-3%, +13%] (noise). The compute path:
+Every metric card carries a 95% bootstrap CI so a user can tell a
++5% ROI [+3%, +7%] (decision-grade) from a +5% ROI [-3%, +13%] (noise).
+The server computes it in `StrategyTester._bootstrap_metrics` when
+bootstrap:true is on the request.
 
-  1. Server bootstrap when bootstrap:true is on the request
-     (`StrategyTester._bootstrap_metrics`).
-  2. Client recompute on a date-range filter (`_bootstrapSandbox`).
-  3. DOM render under each card.
-
-These tests guard each link of that chain:
-
-  * The strategy_tester bootstrap produces a CI dict with the expected
-    shape, in the expected units (percent for roi/winrate/drawdown).
-  * The CI brackets the empirical point estimate of its input.
-  * Degenerate inputs (n<2) return an empty dict, not garbage.
-  * The frontend has subvalue DOM nodes for every metric card (so the
-    JS write target exists) and the bootstrap flag is true in
-    `_readSandboxControls`.
+These tests pin the CI dict shape and units the React sandbox consumes
+(`ci.roi_pct.lo/hi`, etc.). The frontend side of this wiring — the React
+component in web/static/page-sandbox.jsx — is covered by
+tests/frontend/test_sandbox_live.mjs (the old vanilla-JS app.js the
+previous DOM-contract tests asserted against was removed in the React
+migration).
 """
 from __future__ import annotations
 
-import re
 import unittest
-from pathlib import Path
 
 from engine.strategy_tester import StrategyTester
 
@@ -90,89 +81,6 @@ class BootstrapShapeTests(unittest.TestCase):
         ci = StrategyTester._bootstrap_metrics(slips, n_resamples=300)
         self.assertLessEqual(ci["roi_pct"]["lo"], 0.0)
         self.assertGreaterEqual(ci["roi_pct"]["hi"], 0.0)
-
-
-# ── Frontend: DOM contract & control payload ─────────────────────────
-
-_REPO = Path(__file__).resolve().parents[2]
-_INDEX_HTML = (_REPO / "web" / "static" / "index.html").read_text(encoding="utf-8")
-_APP_JS     = (_REPO / "web" / "static" / "app.js"    ).read_text(encoding="utf-8")
-
-
-class FrontendWiringTests(unittest.TestCase):
-    """If any of these IDs are missing the JS write paths become no-ops
-    and the user silently sees no CI. Cheaper than a Selenium test."""
-
-    def test_every_metric_card_has_a_subvalue_node(self):
-        # Each card's CI / sub-text element id, declared in index.html.
-        expected = [
-            "sb-metric-slips-sub",
-            "sb-metric-profit-sub",
-            "sb-metric-roi-ci",
-            "sb-metric-winrate-ci",
-            "sb-metric-drawdown-ci",
-        ]
-        for eid in expected:
-            self.assertIn(f'id="{eid}"', _INDEX_HTML,
-                f"sandbox card subvalue node #{eid} missing from index.html")
-
-    def test_run_payload_requests_bootstrap_true(self):
-        # `_readSandboxControls` must set bootstrap:true; otherwise the
-        # server returns no CI on the first response and only client-
-        # filtered ranges get bands, which is exactly the regression
-        # this whole feature is meant to prevent.
-        m = re.search(
-            r"function\s+_readSandboxControls[\s\S]{0,2000}?bootstrap:\s*true",
-            _APP_JS,
-        )
-        self.assertIsNotNone(
-            m, "_readSandboxControls() no longer sets bootstrap:true — "
-               "server CI will not be returned on /api/sandbox/run.",
-        )
-
-    def test_render_writes_ci_text_into_subvalue_nodes(self):
-        # Sanity: the renderer references each CI subvalue id at least
-        # once. Catches a rename in JS that leaves index.html dangling.
-        for eid in (
-            "sb-metric-roi-ci",
-            "sb-metric-winrate-ci",
-            "sb-metric-drawdown-ci",
-        ):
-            self.assertIn(eid, _APP_JS,
-                f"renderSandboxResults no longer writes to #{eid}")
-
-    def test_fmt_ci_helper_exists(self):
-        self.assertIn("function _fmtCI(", _APP_JS,
-            "_fmtCI helper missing — CI text would fall back to raw numbers")
-
-    def test_client_bootstrap_helper_exists(self):
-        self.assertIn("function _bootstrapSandbox(", _APP_JS,
-            "_bootstrapSandbox missing — date-range filters would lose CI")
-
-    def test_be_hint_element_exists(self):
-        self.assertIn('id="sb-prob-be-hint"', _INDEX_HTML,
-            "BE hint placeholder missing; user has no signal when min_prob is below the slip type's break-even")
-
-    def test_initSandbox_auto_snaps_prob_to_BE(self):
-        # The auto-snap on init is what fixes "the sim never produces
-        # slips on the default settings" — without it the slider sits
-        # at 54.1% but 2-Power BE is 57.74%, so every run errors.
-        for needle in ("sbSnapProbToBE", "sbCurrentBE", "sbProbIsCustom"):
-            self.assertIn(needle, _APP_JS,
-                f"Sandbox slider auto-snap helper {needle!r} missing")
-
-    def test_filter_function_recomputes_ci(self):
-        # _filterSandboxData must call _bootstrapSandbox so a date-range
-        # toggle replaces the stale full-window CI with one matching the
-        # visible slips.
-        m = re.search(
-            r"function\s+_filterSandboxData[\s\S]{0,3500}?_bootstrapSandbox\s*\(",
-            _APP_JS,
-        )
-        self.assertIsNotNone(
-            m, "_filterSandboxData no longer recomputes CI on filter — "
-               "cards would show CIs from the wrong window.",
-        )
 
 
 if __name__ == "__main__":
