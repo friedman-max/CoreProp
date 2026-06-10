@@ -180,6 +180,17 @@ async def _scrape_league_id(session: requests.AsyncSession, base: str, league: s
     # matchup_id → {player_name, prop_type_normalized, over_pid, under_pid}
     prop_lookup: Dict[int, Dict] = {}
 
+    # Coverage visibility (sharp-anchor branch): count every description we
+    # DROP — either unparseable or unmapped — so a Pinnacle prop we silently
+    # ignore is one log line away from being noticed instead of a permanent
+    # 0%-coverage mystery. (Audit: MLB Hits/Runs and the NBA 2-stat combos
+    # showed 0% Pinnacle coverage; live-probe confirmed Pinnacle genuinely
+    # doesn't list those today, but the next time they ADD a market this
+    # log line is how we find out.)
+    from collections import Counter
+    dropped_unparsed: Counter = Counter()
+    dropped_unmapped: Counter = Counter()
+
     for item in matchups:
         if item.get("type") != "special":
             continue
@@ -190,6 +201,7 @@ async def _scrape_league_id(session: requests.AsyncSession, base: str, league: s
         desc = special.get("description", "")
         player_name, raw_prop = _parse_description(desc)
         if not player_name or not raw_prop:
+            dropped_unparsed[desc[:60]] += 1
             continue
 
         # League-aware prop type lookup
@@ -203,6 +215,7 @@ async def _scrape_league_id(session: requests.AsyncSession, base: str, league: s
                     normalized = lmap[raw_key]
                     break
         if not normalized:
+            dropped_unmapped[raw_key] += 1
             continue
 
         over_pid = under_pid = None
@@ -220,6 +233,15 @@ async def _scrape_league_id(session: requests.AsyncSession, base: str, league: s
             "under_pid": under_pid,
             "start_time": item.get("startTime"),
         }
+
+    if dropped_unparsed or dropped_unmapped:
+        logger.info(
+            "Pinnacle [%s] coverage: dropped %d unparsed, %d unmapped %s",
+            league,
+            sum(dropped_unparsed.values()),
+            sum(dropped_unmapped.values()),
+            dict(dropped_unmapped.most_common(8)),
+        )
 
     # ── Step 2: Join with markets to get odds & lines ──────────────────────
     props: List[PinnacleProp] = []

@@ -35,6 +35,7 @@ from config import (
     USE_RWBC as _USE_RWBC,
     USE_RAW_CONSENSUS_ONLY as _USE_RAW,
     USE_BETA_CAL as _USE_BETA_CAL,
+    USE_SHARP_ANCHOR as _USE_SHARP,
 )
 from engine.correlation import build_correlation_matrix, legs_metadata_from_bets
 
@@ -66,6 +67,9 @@ class BetResult:
         # (w_cell < W_CELL_HALT_THRESHOLD or unknown cell). Auto-backtest
         # worker filters legs with this=True from the slip pool.
         "calibration_halted",
+        # Sharp anchor: True when Pinnacle has no two-sided price for this
+        # market. Display-only; the worker never logs sharp_missing legs.
+        "sharp_missing",
     )
 
     def __init__(
@@ -85,6 +89,7 @@ class BetResult:
         start_time: str = "",
         market_width: Optional[float] = None,
         team: str = "",
+        sharp_missing: bool = False,
     ):
         self.bet_id = bet_id
         self.player_name = player_name
@@ -121,17 +126,29 @@ class BetResult:
         #   raw_true_prob for display while setting calibration_halted=True
         #   so the auto-backtester can filter the leg out of slip pools.
         self.calibration_halted = False
+        self.sharp_missing = bool(sharp_missing)
         # Beta-cal preempts when both USE_BETA_CAL=true AND the cell has
         # fitted params; otherwise falls through to RWBC / isotonic in
         # that order. Diagnostic mode (USE_RAW) supersedes everything.
+        # SHARP ANCHOR supersedes ALL OF IT: the incoming true_prob is
+        # already the devigged Pinnacle fair (or the display-only blend
+        # when sharp_missing) — no calibrator may touch it.
         beta_calibrated_prob = None
-        if not _USE_RAW and _USE_BETA_CAL:
+        if not _USE_RAW and not _USE_SHARP and _USE_BETA_CAL:
             beta_calibrated_prob = _beta.calibrate(
                 league, prop_type, side, true_prob,
                 shade=_pp_shade(true_prob),
             )
 
-        if _USE_RAW:
+        if _USE_SHARP:
+            # Sharp-anchor mode: live Pinnacle devig is the entire model.
+            # No isotonic, no RWBC, no beta, no shrinkage — by design.
+            # sharp_missing legs keep the blend for DISPLAY but are marked
+            # halted so the auto-backtest worker can never log them.
+            calibrated_prob = max(0.001, min(0.999, true_prob))
+            if self.sharp_missing:
+                self.calibration_halted = True
+        elif _USE_RAW:
             # Diagnostic mode — bypass all calibrators. true_prob is set
             # to the vig-stripped book consensus exactly. Useful for A/B
             # against the calibrated paths. Halt flag is always False
@@ -200,6 +217,9 @@ class BetResult:
             # this bet had w_cell < W_CELL_HALT_THRESHOLD at scoring time
             # (auto-backtest worker filters legs with this=True).
             "calibration_halted": bool(getattr(self, "calibration_halted", False)),
+            # Sharp anchor: True when Pinnacle had no two-sided price.
+            # Display-only legs; never auto-logged in sharp mode.
+            "sharp_missing": bool(getattr(self, "sharp_missing", False)),
             # Phase 1A tier label. The auto-backtest worker reads this to
             # decide which (slip_type, n_legs) combos this leg may enter.
             "tier": self.tier(),

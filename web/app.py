@@ -711,22 +711,38 @@ def _run_pipeline_body():
                 return _display_odds(bk, side, margin)
 
             def get_combined_true_odds(side):
-                """Compute consensus true probability via the VWAP engine,
-                using each book's per-side equivalent line.
+                """Compute the bet-decision probability for one side.
 
-                Returns (best_odds, final_true_prob, true_american_odds, market_width).
-                `market_width` is the sharpness-weighted overround across the
-                contributing books (None for single-source). The calibrator
-                uses it as a confidence weight on each observation."""
+                Returns (best_odds, final_true_prob, true_american_odds,
+                market_width, sharp_missing).
+
+                SHARP ANCHOR mode (config.USE_SHARP_ANCHOR): the decision
+                probability is the devigged two-sided Pinnacle price and
+                nothing else. When Pinnacle doesn't price the market,
+                sharp_missing=True and the blend is used for DISPLAY only —
+                ev_calculator marks such legs halted so the auto-backtest
+                can never log them.
+
+                Legacy mode: worst-case blended consensus (min across devig
+                methods and books), later calibrated in BetResult."""
                 match_books = books_from_match_for_side(m, side)
                 if not match_books:
-                    return None, None, None, None
+                    return None, None, None, None, True
                 consensus_prob, worst_case_prob, meta = compute_true_probability(
                     match_books, side, league=m.pp.league, prop=m.pp.stat_type,
                 )
 
                 if consensus_prob is None:
-                    return None, None, None, None
+                    return None, None, None, None, True
+
+                sharp_missing = False
+                if cfg.USE_SHARP_ANCHOR:
+                    from engine.sharp_anchor import pinnacle_fair_from_books
+                    pin_fair = pinnacle_fair_from_books(match_books, side)
+                    if pin_fair is not None:
+                        worst_case_prob = pin_fair
+                    else:
+                        sharp_missing = True
 
                 # Find the best odds for display (includes derived complement odds)
                 odds_list = [
@@ -738,7 +754,8 @@ def _run_pipeline_body():
                 ]
                 best_odds = max(odds_list) if odds_list else None
 
-                # Use worst-case probability for EV decisions (most conservative)
+                # Decision probability: Pinnacle fair in sharp mode (or the
+                # worst-case blend for display when sharp_missing / legacy).
                 final_true_prob = worst_case_prob
                 market_width = meta.get("market_width") if isinstance(meta, dict) else None
                 return (
@@ -746,6 +763,7 @@ def _run_pipeline_body():
                     final_true_prob,
                     prob_to_american(final_true_prob) if final_true_prob else None,
                     market_width,
+                    sharp_missing,
                 )
 
             def _first_book_for_side(side: str):
@@ -760,7 +778,7 @@ def _run_pipeline_body():
 
             # Process Over side
             if pp_side in ("both", "over") and any_over:
-                best, prob, true, mw = get_combined_true_odds("over")
+                best, prob, true, mw, sharp_miss = get_combined_true_odds("over")
                 # Log to observatory whenever a probability was successfully
                 # computed — even when `best` is None (no displayable odds
                 # for the UI). Calibration cares about the consensus prob,
@@ -800,6 +818,7 @@ def _run_pipeline_body():
                             pp_player_id=m.pp.player_id,
                             market_width=mw,
                             team=getattr(m.pp, "team", "") or "",
+                            sharp_missing=sharp_miss,
                         )
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
@@ -813,7 +832,7 @@ def _run_pipeline_body():
 
             # Process Under side
             if pp_side in ("both", "under") and any_under:
-                best, prob, true, mw = get_combined_true_odds("under")
+                best, prob, true, mw, sharp_miss = get_combined_true_odds("under")
                 _observe(m, "under", prob, mw)
                 if best is not None:
                     base_under = _base_for_side("under")
@@ -849,6 +868,7 @@ def _run_pipeline_body():
                             pp_player_id=m.pp.player_id,
                             market_width=mw,
                             team=getattr(m.pp, "team", "") or "",
+                            sharp_missing=sharp_miss,
                         )
                         if res.individual_ev_pct >= min_ev:
                             bets.append(res)
@@ -1070,6 +1090,47 @@ def _run_pipeline_body():
                         n_legs = 6
                     n_legs = max(2, min(6, n_legs))
 
+                    raw_min = row.get("auto_slip_min_prob")
+                    try:
+                        user_min = float(raw_min) if raw_min is not None else None
+                    except (TypeError, ValueError):
+                        user_min = None
+
+                    if cfg.USE_SHARP_ANCHOR:
+                        # SHARP ANCHOR mode — the validated rule, nothing else:
+                        #   * Flex only, 4-6 legs (feasibility-constrained
+                        #     backtest: +40.8% ROI/slip on 4-6 Flex; Power
+                        #     was never validated and has higher break-evens).
+                        #   * Floor = max(user's min, SHARP_MIN_PROB=0.56).
+                        #   * Legs without a two-sided Pinnacle price never
+                        #     enter the pool (sharp_missing -> halted).
+                        # Tier routing and shade filters belong to the old
+                        # model and are intentionally bypassed.
+                        slip_type = "Flex"
+                        n_legs = max(4, min(6, n_legs))
+                        min_prob = max(user_min or 0.0, cfg.SHARP_MIN_PROB)
+                        pool = [
+                            b for b in bets
+                            if float(b.get("true_prob") or 0.0) >= min_prob
+                            and not b.get("sharp_missing")
+                            and not b.get("calibration_halted")
+                        ]
+                        logger.info(
+                            "auto_backtest    user=%s SHARP_ANCHOR pool=%d "
+                            "(floor=%.3f, flex-%d)",
+                            uid, len(pool), min_prob, n_legs,
+                        )
+                        from engine.backtest import BacktestLogger
+                        bl = BacktestLogger(user_id=uid, db_client=db)
+                        # Size fallback 6 -> 5 -> 4: thin slates carried real
+                        # volume in the feasibility backtest (9x5-leg + 4x4-leg
+                        # of the 25 placeable slips). Stop at first success.
+                        for try_n in range(n_legs, 3, -1):
+                            if bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=try_n):
+                                break
+                        continue
+
+                    # ── Legacy path (USE_SHARP_ANCHOR=false) ────────────────
                     # Per-leg min: tier-aware effective_min_prob respects
                     # the user's explicit override; otherwise routes to the
                     # tier floor that's eligible for this (slip_type, n_legs).
@@ -1079,11 +1140,6 @@ def _run_pipeline_body():
                     from engine.tier import (
                         effective_min_prob, filter_legs_for_slip, tier_summary,
                     )
-                    raw_min = row.get("auto_slip_min_prob")
-                    try:
-                        user_min = float(raw_min) if raw_min is not None else None
-                    except (TypeError, ValueError):
-                        user_min = None
                     min_prob = effective_min_prob(user_min, slip_type, n_legs)
 
                     pool = [b for b in bets if float(b.get("true_prob") or 0.0) >= min_prob]

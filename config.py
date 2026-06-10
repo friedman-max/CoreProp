@@ -98,6 +98,19 @@ DISABLE_PERSISTENCE   = os.getenv("DISABLE_PERSISTENCE",   "false").lower() in (
 # strategy comparison logger runs the same model with these flipped ON to
 # measure the experimental delta against the Holy Fix baseline.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# SHARP ANCHOR — the OddsJam method. When true, the decision path is ONLY:
+#   fair = devig(Pinnacle two-sided market); tradeable iff fair >= SHARP_MIN_PROB.
+# All calibrators (isotonic / RWBC / beta), sharpness weights, worst-case
+# minimums, and tier routing are BYPASSED for decisions. No Pinnacle price
+# means the leg is display-only and never auto-logged.
+# Validated on 40k settled rows: pin>=0.56 hits 60.5% (UNDER 65.6%) vs the
+# 54.2% 6-Flex break-even; pin>=0.54 hits 53.7% (below BE) — the floor is
+# load-bearing, never lower it for volume.
+# ---------------------------------------------------------------------------
+USE_SHARP_ANCHOR = os.getenv("USE_SHARP_ANCHOR", "true").lower() in ("true", "1", "yes")
+SHARP_MIN_PROB = float(os.getenv("SHARP_MIN_PROB", "0.56"))
+
 # C1: anti-public-side filter using the data/anti_public_cells.json deny-list.
 USE_SHADE_FILTER = os.getenv("USE_SHADE_FILTER", "false").lower() in ("true", "1", "yes")
 # C2: Beta calibration with shade conditioning, replacing isotonic on top of RWBC.
