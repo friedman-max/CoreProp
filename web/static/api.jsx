@@ -126,6 +126,12 @@
       line:     b.pp_line,
       side:     (b.side || "").toUpperCase(),
       truePct:  (b.true_prob || 0) * 100,
+      // Sharp-anchor engine: sharp_missing === false means TRUE % is a
+      // sharp-anchored fair (Pinnacle devig, or the conservative
+      // cross-book floor on UNDERs in hybrid mode) and the leg is
+      // eligible for auto-logging. Older cached payloads lack the field
+      // entirely -> undefined -> falsy -> no badge (correct: pre-update).
+      sharp:    b.sharp_missing === false,
       books,
       startTime: b.start_time,
       // bet_key is "player|YYYY-MM-DD" — the same key /api/backtest/keys

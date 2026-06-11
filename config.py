@@ -121,7 +121,12 @@ SHARP_MIN_PROB = float(os.getenv("SHARP_MIN_PROB", "0.56"))
 #                With under-gate off this is the any-side rule: 29.9 legs/d
 #                but 55.1% hit ~= exactly break-even -> realized -14.0u.
 #                Kept for experimentation; not a recommended default.
-ANCHOR_MODE = os.getenv("ANCHOR_MODE", "pinnacle").lower()
+# Default switched to "hybrid" (owner decision 2026-06-10): Pinnacle stays
+# the primary anchor; rows Pinnacle doesn't price fall back to the
+# worst-case cross-book floor, UNDER side only. Backtest: 11.2 legs/d at
+# 59.5% hit vs 7.1/d at 60.5% for pure pinnacle. Set ANCHOR_MODE=pinnacle
+# to revert to the strictest mode.
+ANCHOR_MODE = os.getenv("ANCHOR_MODE", "hybrid").lower()
 # Gate the worst-case fallback to UNDERs (PP shades OVERs; UNDER-only is what
 # kept the fallback +EV in the backtest: 59.8% vs 55.1% any-side).
 WORST_CASE_UNDER_ONLY = os.getenv("WORST_CASE_UNDER_ONLY", "true").lower() in ("true", "1", "yes")

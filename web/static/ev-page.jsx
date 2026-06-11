@@ -314,7 +314,15 @@ function EVPage() {
                 <span className="ev-prop">{b.prop}</span>
                 <span className="ev-line">{b.line}</span>
                 <span className={"ev-side " + (b.side === "OVER" ? "is-over" : "is-under")}>{b.side}</span>
-                <span><TruePct value={b.truePct} /></span>
+                <span>
+                  <TruePct value={b.truePct} />
+                  {b.sharp && (
+                    <span
+                      className="ev-sharp"
+                      title="Sharp-anchored: this probability is a devigged sharp price (Pinnacle, or the conservative cross-book floor on Unders). Eligible for auto-backtest."
+                    >SHARP</span>
+                  )}
+                </span>
                 <span className="ev-books">
                   {b.books.map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}
                 </span>
