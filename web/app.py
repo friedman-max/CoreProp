@@ -737,10 +737,13 @@ def _run_pipeline_body():
 
                 sharp_missing = False
                 if cfg.USE_SHARP_ANCHOR:
-                    from engine.sharp_anchor import pinnacle_fair_from_books
-                    pin_fair = pinnacle_fair_from_books(match_books, side)
-                    if pin_fair is not None:
-                        worst_case_prob = pin_fair
+                    # Mode-dispatched fair source (config.ANCHOR_MODE):
+                    # pinnacle / hybrid / worst_case. None = no tradeable
+                    # price source for this row -> display-only.
+                    from engine.sharp_anchor import fair_from_books
+                    sharp_fair = fair_from_books(match_books, side)
+                    if sharp_fair is not None:
+                        worst_case_prob = sharp_fair
                     else:
                         sharp_missing = True
 

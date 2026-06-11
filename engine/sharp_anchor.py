@@ -30,8 +30,8 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Optional
 
-from config import SHARP_MIN_PROB
-from engine.devig import devig_shin
+from config import SHARP_MIN_PROB, ANCHOR_MODE, WORST_CASE_UNDER_ONLY
+from engine.devig import devig_shin, devig_worst_case
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,75 @@ def pinnacle_fair_from_books(books: Iterable, side: str) -> Optional[float]:
         p = p_over if side == "over" else p_under
         return max(0.001, min(0.999, float(p)))
     return None
+
+
+def worst_case_fair_from_books(books: Iterable, side: str) -> Optional[float]:
+    """Most conservative fair probability across ALL two-sided books.
+
+    Two nested minimums (the OddsJam 'worst case' construction):
+      1. Per book: devig_worst_case runs four vig-removal models
+         (multiplicative, additive, power, Shin) and keeps the LOWEST fair
+         probability for our side — the most pessimistic assumption about
+         how the book distributed its margin.
+      2. Across books: take the lowest of those per-book worst cases —
+         the most conservative book wins.
+
+    If even this floor clears PP's break-even, the bet is +EV under every
+    devig assumption and every contributing book. One-sided books are
+    skipped — no synthetic complements, same contract as the Pinnacle path.
+    """
+    side = (side or "").lower()
+    if side not in ("over", "under"):
+        return None
+    vals: list[float] = []
+    for b in books:
+        if not getattr(b, "both_sided", False):
+            continue
+        over_odds = getattr(b, "over_odds", None)
+        under_odds = getattr(b, "under_odds", None)
+        if over_odds is None or under_odds is None:
+            continue
+        try:
+            p_over, p_under = devig_worst_case(over_odds, under_odds)
+        except Exception as exc:
+            logger.warning("sharp_anchor: worst-case devig failed (%s/%s): %s",
+                           over_odds, under_odds, exc)
+            continue
+        vals.append(p_over if side == "over" else p_under)
+    if not vals:
+        return None
+    return max(0.001, min(0.999, float(min(vals))))
+
+
+def fair_from_books(books: Iterable, side: str) -> Optional[float]:
+    """Mode dispatcher (config.ANCHOR_MODE). Returns the decision fair
+    probability, or None when this row has no tradeable price source.
+
+      pinnacle    Pinnacle two-sided devig or nothing.
+      hybrid      Pinnacle when present; rows Pinnacle doesn't price fall
+                  back to the worst-case fair (UNDER-gated by default).
+      worst_case  worst-case fair for everything (UNDER-gated by default;
+                  set WORST_CASE_UNDER_ONLY=false for the literal any-side
+                  rule — backtested at ~break-even, realized -14u; beware).
+    """
+    side_l = (side or "").lower()
+    wc_side_ok = (side_l == "under") or (not WORST_CASE_UNDER_ONLY)
+
+    if ANCHOR_MODE == "worst_case":
+        if not wc_side_ok:
+            return None
+        return worst_case_fair_from_books(books, side)
+
+    pin = pinnacle_fair_from_books(books, side)
+    if ANCHOR_MODE == "hybrid":
+        if pin is not None:
+            return pin
+        if wc_side_ok:
+            return worst_case_fair_from_books(books, side)
+        return None
+
+    # Default: pure Pinnacle.
+    return pin
 
 
 def is_tradeable(fair_prob: Optional[float]) -> bool:

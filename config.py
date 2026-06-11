@@ -111,6 +111,21 @@ DISABLE_PERSISTENCE   = os.getenv("DISABLE_PERSISTENCE",   "false").lower() in (
 USE_SHARP_ANCHOR = os.getenv("USE_SHARP_ANCHOR", "true").lower() in ("true", "1", "yes")
 SHARP_MIN_PROB = float(os.getenv("SHARP_MIN_PROB", "0.56"))
 
+# Fair-value source for the sharp engine. Backtested (29 days, placeable
+# 3-Power sim, real outcomes):
+#   "pinnacle"   pin devig only.            7.1 legs/d, 60.5% hit, +25.0u  (default)
+#   "hybrid"     pin first; rows Pinnacle doesn't price fall back to the
+#                worst-case-across-books fair, UNDER side only.
+#                11.2 legs/d, 59.5% hit, +11.0u  (more volume, diluted ROI)
+#   "worst_case" most conservative book + worst-case devig for everything.
+#                With under-gate off this is the any-side rule: 29.9 legs/d
+#                but 55.1% hit ~= exactly break-even -> realized -14.0u.
+#                Kept for experimentation; not a recommended default.
+ANCHOR_MODE = os.getenv("ANCHOR_MODE", "pinnacle").lower()
+# Gate the worst-case fallback to UNDERs (PP shades OVERs; UNDER-only is what
+# kept the fallback +EV in the backtest: 59.8% vs 55.1% any-side).
+WORST_CASE_UNDER_ONLY = os.getenv("WORST_CASE_UNDER_ONLY", "true").lower() in ("true", "1", "yes")
+
 # C1: anti-public-side filter using the data/anti_public_cells.json deny-list.
 USE_SHADE_FILTER = os.getenv("USE_SHADE_FILTER", "false").lower() in ("true", "1", "yes")
 # C2: Beta calibration with shade conditioning, replacing isotonic on top of RWBC.

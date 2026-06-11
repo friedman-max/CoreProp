@@ -85,6 +85,59 @@ def test_slip_shapes():
     assert sa.DEFAULT_SLIP_SIZE == 3
 
 
+# ── worst-case fair + mode dispatcher ───────────────────────────────────
+
+def test_worst_case_is_min_across_books():
+    # Two books price the same under: worst case must be the LOWER fair.
+    books = _books(pin=(-110, -110, True), fd=(-150, 120))
+    wc_under = sa.worst_case_fair_from_books(books, "under")
+    pin_under = sa.pinnacle_fair_from_books(books, "under")
+    assert wc_under is not None
+    assert wc_under <= pin_under + 1e-9
+
+
+def test_worst_case_at_most_shin_per_book():
+    # Single book: worst-case (min of 4 methods) <= Shin devig of same odds.
+    books = _books(pin=(110, -130, True))
+    wc = sa.worst_case_fair_from_books(books, "under")
+    shin = sa.pinnacle_fair_from_books(books, "under")
+    assert wc is not None and wc <= shin + 1e-9
+
+
+def test_worst_case_skips_one_sided():
+    books = _books(pin=(-115, None, False))
+    assert sa.worst_case_fair_from_books(books, "over") is None
+
+
+def test_mode_pinnacle_ignores_soft_books():
+    books = _books(fd=(-140, 110))  # FanDuel only
+    with patch.object(sa, "ANCHOR_MODE", "pinnacle"):
+        assert sa.fair_from_books(books, "under") is None
+
+
+def test_mode_hybrid_falls_back_to_worst_case_under_only():
+    books = _books(fd=(-140, 110))  # no Pinnacle
+    with patch.object(sa, "ANCHOR_MODE", "hybrid"), \
+         patch.object(sa, "WORST_CASE_UNDER_ONLY", True):
+        assert sa.fair_from_books(books, "under") is not None   # falls back
+        assert sa.fair_from_books(books, "over") is None        # OVER gated
+
+
+def test_mode_hybrid_prefers_pinnacle_when_present():
+    books = _books(pin=(-110, -110, True), fd=(-150, 120))
+    with patch.object(sa, "ANCHOR_MODE", "hybrid"):
+        fair = sa.fair_from_books(books, "under")
+        pin = sa.pinnacle_fair_from_books(books, "under")
+        assert abs(fair - pin) < 1e-12
+
+
+def test_mode_worst_case_any_side_when_flag_off():
+    books = _books(fd=(-140, 110))
+    with patch.object(sa, "ANCHOR_MODE", "worst_case"), \
+         patch.object(sa, "WORST_CASE_UNDER_ONLY", False):
+        assert sa.fair_from_books(books, "over") is not None
+
+
 # ── the calibration-bypass guarantee ────────────────────────────────────
 
 def _mk_bet(true_prob, sharp_missing=False):
