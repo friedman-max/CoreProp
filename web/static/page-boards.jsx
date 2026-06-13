@@ -9,7 +9,7 @@ function probToAmerican(p) {
   return Math.round(100 * (1 - p) / p);
 }
 
-const LEAGUE_ORDER = ["NBA", "WNBA", "NCAAB", "MLB", "NHL"];
+const LEAGUE_ORDER = ["NBA", "WNBA", "NCAAB", "MLB", "NHL", "SOCCER"];
 
 // Extended dataset used across all 3 boards. Real codebase shape:
 // player_name, league, stat_type, pp_line, side, true_prob, fd_line/fd_odds, dk_line/dk_odds, pin_line/pin_odds, start_time

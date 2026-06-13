@@ -108,6 +108,24 @@ LEAGUE_CONFIG = {
             "Pts+Rebs+Asts": "16483",
         }
     },
+    # Soccer / World Cup. The "id" is a comma-separated list of DK soccer
+    # league/eventGroup ids; the scraper fetches each and unknown ids return 0
+    # harmlessly. NOTE: DraftKings WAF-blocks non-US/datacenter IPs (HTTP 403),
+    # so these ids could not be re-verified live for the 2026 World Cup from the
+    # build environment — confirm against DK from the prod (US) IP and update
+    # the leading id if WC props don't appear. Subcategory ids are stable.
+    "SOCCER": {
+        "id": "40253,12513,12301,12290,12285,12286,12284,12283,12521",
+        "subcategories": {
+            "Goals": "53",
+            "Shots on Target": "130",
+            "Shots": "131",
+            "Passes Attempted": "153",
+            "Tackles": "154",
+            "Saves": "156",
+            "Assists": "132",
+        }
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -165,6 +183,15 @@ SUBCAT_TO_PROP_TYPE = {
         "Saves":            "Saves",
         "Power Play Points": "Power Play Points",
         "60 Mins Props":    "1st Period Goals",
+    },
+    "SOCCER": {
+        "Goals":            "Goals",
+        "Shots":            "Shots",
+        "Shots on Target":  "Shots On Target",
+        "Passes Attempted": "Passes Attempted",
+        "Tackles":          "Tackles",
+        "Assists":          "Assists",
+        "Saves":            "Goalie Saves",
     },
     "NCAAB": {
         "Points":           "Points",

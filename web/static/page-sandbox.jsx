@@ -2,7 +2,7 @@
 // through engine/strategy_tester via POST /api/sandbox/run (live wiring).
 const { useState: useStateS, useMemo: useMemoS, useRef: useRefS, useEffect: useEffectS } = React;
 
-const SB_LEAGUES = ["NBA", "WNBA", "MLB", "NHL", "NCAAB"];
+const SB_LEAGUES = ["NBA", "WNBA", "MLB", "NHL", "NCAAB", "SOCCER"];
 
 // Per-leg break-even probability (as a fraction) for each (type, size).
 // This MUST mirror engine/constants.py BREAK_EVEN exactly — it is the same

@@ -21,6 +21,7 @@ ACTIVE_LEAGUES = {
     "MLB":   os.getenv("LEAGUE_MLB", "true").lower()   == "true",
     "NHL":   os.getenv("LEAGUE_NHL", "true").lower()   == "true",
     "NCAAB": os.getenv("LEAGUE_NCAAB", "true").lower() == "true",
+    "SOCCER": os.getenv("LEAGUE_SOCCER", "true").lower() == "true",
 }
 
 # FanDuel URLs per league
@@ -39,6 +40,11 @@ PRIZEPICKS_LEAGUE_IDS = {
     "MLB":   2,
     "NHL":   8,
     "NCAAB": 20,   # PrizePicks calls this "CBB" (ID=20); 189 is a defunct alias that returns 0
+    # PrizePicks "WORLD CUP" league. The legacy "SOCCER" league (id=82) is now
+    # dormant (0 projections off-season); 241 is where the live 2026 World Cup
+    # player props are published. Re-point here if PP rotates the active soccer
+    # league (e.g. EPL=14, EUROCUP=287) — verify with /leagues before editing.
+    "SOCCER": 241,
 }
 
 # Fuzzy match threshold (0-100)

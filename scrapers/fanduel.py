@@ -55,6 +55,19 @@ def _normalize_prop_type(raw: str, league: str = "") -> Optional[str]:
     # 2. League-Specific substring matching (handles FanDuel's verbose market names)
     lkey = league.upper()
 
+    if lkey == "SOCCER":
+        # Order matters: "shots on target" must be checked before plain "shots".
+        if "shots on target" in raw_norm or "shots on goal" in raw_norm: return "Shots On Target"
+        if "total shots" in raw_norm or raw_norm.endswith(" - shots") or raw_norm.endswith(" shots"): return "Shots"
+        if "shots" in raw_norm: return "Shots"
+        if raw_norm.endswith(" - passes") or "passes completed" in raw_norm or "passes attempted" in raw_norm or "passes" in raw_norm: return "Passes Attempted"
+        if raw_norm.endswith(" - tackles") or "tackles" in raw_norm: return "Tackles"
+        if raw_norm.endswith(" - crosses") or "crosses" in raw_norm: return "Crosses"
+        if raw_norm.endswith(" - clearances") or "clearances" in raw_norm: return "Clearances"
+        if raw_norm.endswith(" - assists") or " assists" in raw_norm: return "Assists"
+        if raw_norm.endswith(" - saves") or "goalie saves" in raw_norm or "goalkeeper saves" in raw_norm or "saves" in raw_norm: return "Goalie Saves"
+        if "goals" in raw_norm or "to score" in raw_norm or "goal-scorer" in raw_norm or "goalscorer" in raw_norm: return "Goals"
+
     if lkey in ("NBA", "WNBA", "NCAAB"):
         if "made 3 point field goals" in raw_norm or "made threes" in raw_norm or " threes" in raw_norm: return "3-PT Made"
         if "points + rebounds + assists" in raw_norm or "pts + reb + ast" in raw_norm or "pts+reb+ast" in raw_norm: return "Pts+Rebs+Asts"
@@ -229,6 +242,26 @@ _MULTI_RUNNER_MAP = {
     "goalscorer":         "Goals",
     "goal scorer":        "Goals",
 
+    # Soccer (countable props). "shots"/"save(s)"/"goal(s)" keys are shared with
+    # NHL above and resolve to NHL labels by default; the league=="SOCCER"
+    # override in _parse_multi_runner_market rewrites those to soccer labels.
+    "shots on target":    "Shots On Target",
+    "shot on target":     "Shots On Target",
+    "sot":                "Shots On Target",
+    "total shots":        "Shots",
+    "total shot":         "Shots",
+    "goalie save":        "Goalie Saves",
+    "goalie saves":       "Goalie Saves",
+    "goalkeeper saves":   "Goalie Saves",
+    "pass":               "Passes Attempted",
+    "passes":             "Passes Attempted",
+    "tackle":             "Tackles",
+    "tackles":            "Tackles",
+    "cross":              "Crosses",
+    "crosses":            "Crosses",
+    "clearance":          "Clearances",
+    "clearances":         "Clearances",
+
     # Generic
     "points-assists":     "Pts+Asts",
 }
@@ -250,9 +283,73 @@ def _split_player_milestone(mkt_name: str) -> tuple[Optional[str], str]:
         return (player.strip(), suffix)
     return (None, mkt_name)
 
+# ── Soccer milestone ladders (FanDuel World Cup format) ──
+# FanDuel prices soccer player props as single-sided "N Or More" milestone
+# markets — "Player To Have 3 Or More Shots", "Player To Create 1 Or More
+# Shots" (chances created), "Player To Have 1 Or More Shots On Target". Each
+# runner is a player with one (Yes/over) price. "N Or More X" ⇒ over (N-0.5).
+_SOCCER_NORMORE_RE = re.compile(
+    r"^(?:a\s+|the\s+)?player\s+to\s+(have|create|make|record|win|save|commit|complete|get|score)\s+"
+    r"(\d+)\s+or\s+more\s+(.+?)$",
+    re.IGNORECASE,
+)
+
+
+def _soccer_milestone_stat(verb: str, phrase: str) -> Optional[str]:
+    """Map a soccer milestone (verb, stat-phrase) to a PrizePicks stat label.
+
+    The verb disambiguates the headline trap: "To CREATE N shots" is chances
+    created (PP "Shots Assisted"), NOT the player's own "Shots". Everything
+    else ("have"/"make"/...) is the stat itself.
+    """
+    p = phrase.lower().strip()
+    if verb.lower() == "create":
+        # Chances created — only the shots-based variant maps cleanly to PP.
+        return "Shots Assisted" if "shot" in p else None
+    if "shots on target" in p or "shot on target" in p or "shots on goal" in p:
+        return "Shots On Target"
+    if "shot" in p:        return "Shots"
+    if "save" in p:        return "Goalie Saves"
+    if "tackle" in p:      return "Tackles"
+    if "pass" in p:        return "Passes Attempted"
+    if "cross" in p:       return "Crosses"
+    if "clearance" in p:   return "Clearances"
+    if "dribble" in p:     return "Attempted Dribbles"
+    if "foul" in p:        return "Fouls"
+    if "offside" in p:     return "Offsides"
+    if "assist" in p:      return "Assists"
+    if "goal" in p:        return "Goals"
+    return None
+
+
+def _parse_soccer_milestone(mkt_name: str) -> Optional[tuple[str, float]]:
+    """Parse a FanDuel soccer "N Or More" milestone market into (stat, line).
+    Returns None for team markets / unrecognized stats so they're dropped."""
+    m = _SOCCER_NORMORE_RE.match(mkt_name.strip())
+    if not m:
+        return None
+    verb, n_str, phrase = m.group(1), m.group(2), m.group(3)
+    stat = _soccer_milestone_stat(verb, phrase)
+    if not stat:
+        return None
+    try:
+        n = int(n_str)
+    except ValueError:
+        return None
+    return (stat, n - 0.5)
+
+
 def _parse_multi_runner_market(mkt_name: str, league: str = "") -> Optional[tuple[str, float]]:
     """Parse a multi-runner milestone market name into (stat, line)."""
     s = mkt_name.strip()
+
+    # Soccer's "N Or More" ladders don't fit the generic milestone grammar
+    # below (verb "have"/"create", spelled-out "Or More"), so handle them first.
+    if league == "SOCCER":
+        soc = _parse_soccer_milestone(s)
+        if soc:
+            return soc
+
     # Strip optional "Player Name - " prefix if suffix looks milestone-y
     _, s = _split_player_milestone(s)
 
@@ -271,6 +368,13 @@ def _parse_multi_runner_market(mkt_name: str, league: str = "") -> Optional[tupl
                 stat_part = m3.group(1).strip()
                 threshold_str = m3.group(2)
             else:
+                # Binary soccer props (no numeric threshold): anytime-goalscorer
+                # style "to score" markets map to Goals over 0.5.
+                low = s.lower()
+                if low in ("anytime goalscorer", "anytime goal scorer",
+                           "goalscorer", "goal scorer", "player to score",
+                           "to score", "to score a goal"):
+                    return ("Goals", 0.5)
                 return None
 
     threshold = int(threshold_str) if threshold_str else 1
@@ -284,6 +388,14 @@ def _parse_multi_runner_market(mkt_name: str, league: str = "") -> Optional[tupl
             if key in stat_raw:
                 pp_stat = _MULTI_RUNNER_MAP[key]
                 break
+
+    # Soccer overrides: a generic "Shots" market means open shots (not on-goal),
+    # and "Saves" means goalie saves. The shared NHL keys above resolve to the
+    # NHL labels by default, so rewrite them for soccer here.
+    if league == "SOCCER" and pp_stat == "Shots on Goal":
+        pp_stat = "Shots"
+    if league == "SOCCER" and pp_stat == "Saves":
+        pp_stat = "Goalie Saves"
 
     if not pp_stat:
         return None
@@ -315,7 +427,12 @@ def _extract_props_from_json(data: dict, league: str) -> list[FanDuelProp]:
 
             if market_type in _GAME_LEVEL_TYPES:
                 continue
-                
+
+            # Team-level milestone markets ("Team To Have 20 Or More Shots") are
+            # not player props — drop them before normalization can mislabel them.
+            if market_type.startswith("TEAM_") or mkt_name.lower().startswith("team to "):
+                continue
+
             mkt_lower = mkt_name.lower()
             if any(x in mkt_lower for x in [
                 "1st period", "2nd period", "3rd period",
@@ -545,13 +662,27 @@ LEAGUE_TABS = {
         "pitcher-outs", "pitcher-hits-allowed", "pitcher-walks",
         "pitcher-earned-runs",
     ],
+    "SOCCER": [
+        "player-props", "goalscorer", "shots", "cards", "assists", "passes",
+        "shots-on-target", "tackles", "crosses", "clearances", "saves",
+        "player-shots", "player-goals", "player-assists",
+        "player-shots-on-target", "player-passes", "player-tackles",
+        "player-crosses", "player-saves", "to-score", "first-goalscorer",
+    ],
 }
 
 async def _scrape_league(client: httpx.AsyncClient, league: str) -> list[FanDuelProp]:
     all_props = []
 
     logger.info("FanDuel [%s]: fetching events (Phase 1)", league)
-    nav_urls = [f"https://sbapi.nj.sportsbook.fanduel.com/api/content-managed-page?page=CUSTOM&customPageId={league.lower()}&_ak={FD_AK_TOKEN}"]
+    if league == "SOCCER":
+        # FanDuel has no single "soccer" custom page; the World Cup (and other
+        # competitions) live under the SPORT eventType (eventTypeId=1 = Soccer).
+        nav_urls = [
+            f"https://sbapi.nj.sportsbook.fanduel.com/api/content-managed-page?page=SPORT&eventTypeId=1&_ak={FD_AK_TOKEN}"
+        ]
+    else:
+        nav_urls = [f"https://sbapi.nj.sportsbook.fanduel.com/api/content-managed-page?page=CUSTOM&customPageId={league.lower()}&_ak={FD_AK_TOKEN}"]
 
     event_ids = set()
     for nav_url in nav_urls:

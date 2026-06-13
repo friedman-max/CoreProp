@@ -80,7 +80,7 @@ def per_leg_break_even(slip_n: int = 6, slip_type: str = "power") -> float:
 #
 # Adding a league here is the single source of truth — `is_excluded_league`
 # below and the per-module filters that consult it.
-EXCLUDED_LEAGUES = frozenset({"SOCCER"})
+EXCLUDED_LEAGUES = frozenset()
 
 
 def is_excluded_league(league: str | None) -> bool:
@@ -209,5 +209,29 @@ PROP_TYPE_MAP = {
         "player total points":           "Points",
         "power play points":             "Power Play Points",
         "1st period goals":              "1st Period Goals",
+    },
+    # Soccer / World Cup. Values MUST match PrizePicks stat_type labels exactly
+    # (verified live against PP league 241 "WORLD CUP"). Keys are the lowercased
+    # book/PP labels we normalize FROM. "saves" intentionally lives ONLY under
+    # SOCCER here → "Goalie Saves" (NHL "saves" → "Saves" is a different key in
+    # its own nested map), so the league-aware lookup can't collide.
+    "SOCCER": {
+        "shots on target":               "Shots On Target",
+        "sot":                           "Shots On Target",
+        "shots":                         "Shots",
+        "goals":                         "Goals",
+        "anytime goalscorer":            "Goals",
+        "to score":                      "Goals",
+        "assists":                       "Assists",
+        "shots assisted":                "Shots Assisted",
+        "passes":                        "Passes Attempted",
+        "passes attempted":              "Passes Attempted",
+        "tackles":                       "Tackles",
+        "crosses":                       "Crosses",
+        "clearances":                    "Clearances",
+        "saves":                         "Goalie Saves",
+        "goalkeeper saves":              "Goalie Saves",
+        "goalie saves":                  "Goalie Saves",
+        "attempted dribbles":            "Attempted Dribbles",
     },
 }

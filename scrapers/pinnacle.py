@@ -31,6 +31,11 @@ LEAGUE_CONFIG = {
     "MLB": {"id": "246"},
     "NHL": {"id": "1456"},
     "NCAAB": {"id": "493"},
+    # "FIFA - World Cup" (Pinnacle soccer/sport 29). Pinnacle prices mostly
+    # goalscorer + booking specials for the WC (single-sided "To Score" etc.),
+    # not the countable Shots/Tackles/Saves props — those anchor off FD/DK via
+    # the hybrid fallback. Comma-separate to add club competitions off-season.
+    "SOCCER": {"id": "2686"},
 }
 
 # Map Pinnacle prop-type labels → our normalized names (league-aware)
@@ -124,6 +129,15 @@ _PROP_TYPE_MAP = {
         "assists":             "Assists",
         "power play points":   "Power Play Points",
     },
+    "SOCCER": {
+        "goals":               "Goals",
+        "shots":               "Shots",
+        "shots on target":     "Shots On Target",
+        "passes":              "Passes Attempted",
+        "tackles":             "Tackles",
+        "saves":               "Goalie Saves",
+        "assists":             "Assists",
+    },
 }
 
 _DESC_RE = re.compile(r"^(.+?)\s*\(([^)]+)\)")
@@ -137,17 +151,24 @@ def _parse_description(desc: str) -> Tuple[Optional[str], Optional[str]]:
     Parse Pinnacle player-prop descriptions into (player_name, raw_prop_type).
 
     Handles all observed formats:
-      • 'Player Name (Prop Type)'                 (NHL, MLB)
+      • 'Player Name (Prop Type)'                 (NHL, MLB, soccer countable)
       • 'Player Name (Prop Type)(must start)'     (MLB pitchers)
       • 'Player Name Total <Prop Type>'           (NBA new format, 2026+)
-    Returns (None, None) if the description doesn't match any known pattern.
+      • 'Player Name To Score'                    (soccer anytime-goalscorer)
+    Returns (None, None) if the description doesn't match any known pattern
+    (e.g. futures like 'First Goalscorer' / 'Tournament Top Goalscorer', which
+    have no single player subject and must not be matched).
     """
     # 1) Classic parens format — prefer this since MLB/NHL still use it.
     m = _DESC_RE.match(desc)
     if m:
         return m.group(1).strip(), m.group(2).strip()
 
-    # 2) NBA's new "Player Name Total <X>" format.
+    # 2) Soccer "anytime goalscorer" shorthand: 'Player Name To Score'.
+    if desc.endswith(" To Score"):
+        return desc[:-9].strip(), "goals"
+
+    # 3) NBA's new "Player Name Total <X>" format.
     m = _TOTAL_RE.match(desc)
     if m:
         return m.group(1).strip(), m.group(2).strip()

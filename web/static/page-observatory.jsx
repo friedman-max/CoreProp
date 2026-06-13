@@ -67,7 +67,7 @@ const FEED = [
 ];
 
 function ObservatoryPage() {
-  const [leagueChips, setLeagueChips] = useState(new Set(["NBA", "WNBA", "MLB", "NHL", "NCAAB"]));
+  const [leagueChips, setLeagueChips] = useState(new Set(["NBA", "WNBA", "MLB", "NHL", "NCAAB", "SOCCER"]));
   const [resultChips, setResultChips] = useState(new Set(["pending", "hit", "miss", "push", "dnp"]));
   const [multData, setMultData] = useState(null);
   const [heatData, setHeatData] = useState(null);
@@ -188,6 +188,7 @@ function ObservatoryPage() {
       NFL:   "#FBBF24",
       NCAAB: "#A78BFA",
       NCAAF: "#F87171",
+      SOCCER: "#10B981",
     };
     const fallback = ["#818cf8", "#22C55E", "#F59E0B", "#3DA9F0", "#A855F7", "#EC4899", "#14B8A6", "#FB7185"];
 
@@ -338,7 +339,7 @@ function ObservatoryPage() {
           <div className="bd-f">
             <span>Leagues</span>
             <div className="bd-chips">
-              {["NBA", "WNBA", "MLB", "NHL", "NCAAB"].map(l => (
+              {["NBA", "WNBA", "MLB", "NHL", "NCAAB", "SOCCER"].map(l => (
                 <button
                   key={l}
                   className={"bd-chip " + (leagueChips.has(l) ? "is-on" : "")}
