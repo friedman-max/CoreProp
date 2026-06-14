@@ -108,22 +108,24 @@ LEAGUE_CONFIG = {
             "Pts+Rebs+Asts": "16483",
         }
     },
-    # Soccer / World Cup. The "id" is a comma-separated list of DK soccer
-    # league/eventGroup ids; the scraper fetches each and unknown ids return 0
-    # harmlessly. NOTE: DraftKings WAF-blocks non-US/datacenter IPs (HTTP 403),
-    # so these ids could not be re-verified live for the 2026 World Cup from the
-    # build environment — confirm against DK from the prod (US) IP and update
-    # the leading id if WC props don't appear. Subcategory ids are stable.
+    # Soccer / World Cup. eventGroupId 209533 = DK "World Cup 2026" (soccer,
+    # sportId 1), verified live 2026-06-14. The subcategory ids below are the
+    # event-level player-prop categories for the WC (also verified live).
+    # NOTE: DK prices these as single-sided "N+" milestone ladders (e.g.
+    # "Haaland Shots: 3+ / 4+ / 5+"), NOT two-sided over/unders — so like
+    # FanDuel they're display/consensus only and do not provide a two-sided
+    # anchor for the sharp engine. If DK rotates the WC eventGroupId, re-pull
+    # it from the page state (key "eventGroupName":"World Cup 2026").
     "SOCCER": {
-        "id": "40253,12513,12301,12290,12285,12286,12284,12283,12521",
+        "id": "209533",
         "subcategories": {
-            "Goals": "53",
-            "Shots on Target": "130",
-            "Shots": "131",
-            "Passes Attempted": "153",
-            "Tackles": "154",
-            "Saves": "156",
-            "Assists": "132",
+            "Player Shots":     "16868",
+            "Player Assists":   "16863",
+            "Tackles":          "18345",
+            "Saves":            "18346",
+            "Fouls Committed":  "18348",
+            "Offsides":         "18351",
+            "Goalscorer":       "16604",
         }
     },
 }
@@ -185,13 +187,13 @@ SUBCAT_TO_PROP_TYPE = {
         "60 Mins Props":    "1st Period Goals",
     },
     "SOCCER": {
-        "Goals":            "Goals",
-        "Shots":            "Shots",
-        "Shots on Target":  "Shots On Target",
-        "Passes Attempted": "Passes Attempted",
+        "Player Shots":     "Shots",
+        "Player Assists":   "Assists",
         "Tackles":          "Tackles",
-        "Assists":          "Assists",
         "Saves":            "Goalie Saves",
+        "Fouls Committed":  "Fouls",
+        "Offsides":         "Offsides",
+        "Goalscorer":       "Goals",
     },
     "NCAAB": {
         "Points":           "Points",
