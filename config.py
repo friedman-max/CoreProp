@@ -137,6 +137,27 @@ ANCHOR_MODE = os.getenv("ANCHOR_MODE", "hybrid").lower()
 # kept the fallback +EV in the backtest: 59.8% vs 55.1% any-side).
 WORST_CASE_UNDER_ONLY = os.getenv("WORST_CASE_UNDER_ONLY", "true").lower() in ("true", "1", "yes")
 
+# ---------------------------------------------------------------------------
+# SOCCER_SINGLE_SIDED_ANCHOR — owner opt-in (2026-06-14). World Cup player
+# props are priced single-sided ("N+" milestone ladders) on BOTH FanDuel and
+# DraftKings, and Pinnacle doesn't list countable props at all — so NO book
+# offers a two-sided market. The validated sharp anchor (engine/sharp_anchor)
+# returns None for one-sided markets by design, which makes every soccer
+# countable leg `sharp_missing` → display-only → never auto-backtested.
+#
+# When true, the sharp engine falls back to a single-sided devig of the
+# available book price(s) for SOCCER ONLY, so those legs produce a fair and
+# become auto-backtest eligible. This is a deliberate departure from the
+# two-sided-only rule that was validated on 40k rows — there is NO soccer
+# backtest behind it. Unlike the worst-case path it is NOT under-gated (soccer
+# books only price the OVER, so under-gating would discard nearly all coverage
+# and lean entirely on complements); the over is the real book price and the
+# under is its safeguard-vetted complement. It still rides the longshot-
+# complement safeguard in engine/consensus, but the owner accepted the added
+# risk for World Cup coverage. Set false to revert soccer to two-sided-only
+# (display-only) behavior; no other league is affected.
+SOCCER_SINGLE_SIDED_ANCHOR = os.getenv("SOCCER_SINGLE_SIDED_ANCHOR", "true").lower() in ("true", "1", "yes")
+
 # C1: anti-public-side filter using the data/anti_public_cells.json deny-list.
 USE_SHADE_FILTER = os.getenv("USE_SHADE_FILTER", "false").lower() in ("true", "1", "yes")
 # C2: Beta calibration with shade conditioning, replacing isotonic on top of RWBC.

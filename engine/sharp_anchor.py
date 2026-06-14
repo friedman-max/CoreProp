@@ -30,8 +30,11 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Optional
 
-from config import SHARP_MIN_PROB, ANCHOR_MODE, WORST_CASE_UNDER_ONLY
-from engine.devig import devig_shin, devig_worst_case
+from config import (
+    SHARP_MIN_PROB, ANCHOR_MODE, WORST_CASE_UNDER_ONLY,
+    SOCCER_SINGLE_SIDED_ANCHOR,
+)
+from engine.devig import devig_shin, devig_worst_case, devig_single_sided_scaled
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +123,40 @@ def worst_case_fair_from_books(books: Iterable, side: str) -> Optional[float]:
     return max(0.001, min(0.999, float(min(vals))))
 
 
-def fair_from_books(books: Iterable, side: str) -> Optional[float]:
+def single_sided_fair_from_books(books: Iterable, side: str) -> Optional[float]:
+    """Conservative fair probability from SINGLE-SIDED books.
+
+    For markets that no book prices two-sided — World Cup player props are all
+    single-sided "N+" milestone ladders on FanDuel and DraftKings — every
+    two-sided anchor above returns None. This devigs each one-sided price with
+    the scaled single-sided model and keeps the LOWEST (worst-case) fair across
+    books, so a second corroborating book can only tighten the estimate, never
+    inflate it.
+
+    Deliberately OUTSIDE the validated two-sided rule. Reached only via the
+    SOCCER fallback in fair_from_books (config.SOCCER_SINGLE_SIDED_ANCHOR), and
+    only for legs that already cleared the longshot-complement safeguard in
+    engine/consensus.compute_true_probability upstream.
+    """
+    side = (side or "").lower()
+    if side not in ("over", "under"):
+        return None
+    vals: list[float] = []
+    for b in books:
+        over_odds = getattr(b, "over_odds", None)
+        under_odds = getattr(b, "under_odds", None)
+        if over_odds is not None:
+            p_over = devig_single_sided_scaled(over_odds)
+            vals.append(p_over if side == "over" else 1.0 - p_over)
+        elif under_odds is not None:
+            p_under = devig_single_sided_scaled(under_odds)
+            vals.append(p_under if side == "under" else 1.0 - p_under)
+    if not vals:
+        return None
+    return max(0.001, min(0.999, float(min(vals))))
+
+
+def fair_from_books(books: Iterable, side: str, league: Optional[str] = None) -> Optional[float]:
     """Mode dispatcher (config.ANCHOR_MODE). Returns the decision fair
     probability, or None when this row has no tradeable price source.
 
@@ -130,25 +166,41 @@ def fair_from_books(books: Iterable, side: str) -> Optional[float]:
       worst_case  worst-case fair for everything (UNDER-gated by default;
                   set WORST_CASE_UNDER_ONLY=false for the literal any-side
                   rule — backtested at ~break-even, realized -14u; beware).
+
+    SOCCER fallback: when the dispatch above returns None AND `league` is
+    SOCCER AND config.SOCCER_SINGLE_SIDED_ANCHOR is on, fall back to the
+    single-sided devig. Unlike the worst-case path this is NOT under-gated:
+    soccer books only price the OVER (the milestone), so the over is the
+    genuinely-priced side and the under is its complement — gating to unders
+    would discard nearly all coverage (and lean entirely on complements). This
+    is the owner opt-in that lets World Cup player props — which no book prices
+    two-sided — produce a fair and auto-backtest. Off the validated path.
     """
     side_l = (side or "").lower()
     wc_side_ok = (side_l == "under") or (not WORST_CASE_UNDER_ONLY)
 
     if ANCHOR_MODE == "worst_case":
-        if not wc_side_ok:
-            return None
-        return worst_case_fair_from_books(books, side)
-
-    pin = pinnacle_fair_from_books(books, side)
-    if ANCHOR_MODE == "hybrid":
+        result = worst_case_fair_from_books(books, side) if wc_side_ok else None
+    elif ANCHOR_MODE == "hybrid":
+        pin = pinnacle_fair_from_books(books, side)
         if pin is not None:
-            return pin
-        if wc_side_ok:
-            return worst_case_fair_from_books(books, side)
-        return None
+            result = pin
+        elif wc_side_ok:
+            result = worst_case_fair_from_books(books, side)
+        else:
+            result = None
+    else:
+        # Default: pure Pinnacle.
+        result = pinnacle_fair_from_books(books, side)
 
-    # Default: pure Pinnacle.
-    return pin
+    if result is not None:
+        return result
+
+    # SOCCER single-sided fallback (owner opt-in). Any side: the over is the
+    # real book price, the under its safeguard-vetted complement.
+    if SOCCER_SINGLE_SIDED_ANCHOR and (league or "").upper() == "SOCCER":
+        return single_sided_fair_from_books(books, side)
+    return None
 
 
 def is_tradeable(fair_prob: Optional[float]) -> bool:

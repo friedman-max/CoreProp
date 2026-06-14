@@ -741,7 +741,7 @@ def _run_pipeline_body():
                     # pinnacle / hybrid / worst_case. None = no tradeable
                     # price source for this row -> display-only.
                     from engine.sharp_anchor import fair_from_books
-                    sharp_fair = fair_from_books(match_books, side)
+                    sharp_fair = fair_from_books(match_books, side, league=m.pp.league)
                     if sharp_fair is not None:
                         worst_case_prob = sharp_fair
                     else:

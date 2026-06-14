@@ -20,11 +20,15 @@ to silently break:
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import config as cfg
 from engine.constants import PROP_TYPE_MAP, EXCLUDED_LEAGUES, is_excluded_league
+from engine.consensus import BookOdds
+from engine import sharp_anchor as sa
 from scrapers.fanduel import _parse_soccer_milestone, _soccer_milestone_stat, _normalize_prop_type
 from scrapers.pinnacle import _parse_description, LEAGUE_CONFIG as PIN_LEAGUE_CONFIG
+from scrapers.draftkings import LEAGUE_CONFIG as DK_LEAGUE_CONFIG, SUBCAT_TO_PROP_TYPE as DK_SUBCAT
 
 
 class SoccerConfigWiring(unittest.TestCase):
@@ -102,6 +106,63 @@ class PinnacleGoalscorerParsing(unittest.TestCase):
 
     def test_classic_parens_still_works(self):
         self.assertEqual(_parse_description("Granit Xhaka (Tackles)"), ("Granit Xhaka", "Tackles"))
+
+
+class DraftKingsWorldCupConfig(unittest.TestCase):
+    def test_world_cup_event_group(self):
+        self.assertEqual(DK_LEAGUE_CONFIG["SOCCER"]["id"], "209533")
+
+    def test_player_prop_subcats_map_to_pp_labels(self):
+        subs = DK_LEAGUE_CONFIG["SOCCER"]["subcategories"]
+        m = DK_SUBCAT["SOCCER"]
+        # every configured subcategory must have a prop-type mapping
+        for name in subs:
+            self.assertIn(name, m, f"DK subcat {name!r} missing from SUBCAT_TO_PROP_TYPE")
+        self.assertEqual(m["Player Shots"], "Shots")
+        self.assertEqual(m["Saves"], "Goalie Saves")
+        self.assertEqual(m["Goalscorer"], "Goals")
+
+
+def _ss(book, over=None, under=None):
+    """Single-sided BookOdds helper."""
+    return BookOdds(book_name=book, over_odds=over, under_odds=under, both_sided=False)
+
+
+class SoccerSingleSidedAnchor(unittest.TestCase):
+    """No book prices WC player props two-sided, so the owner-enabled
+    single-sided anchor is what lets soccer legs auto-backtest."""
+
+    def test_single_sided_devig_over_and_complement(self):
+        books = [_ss("fanduel", over=-150)]
+        p_over = sa.single_sided_fair_from_books(books, "over")
+        p_under = sa.single_sided_fair_from_books(books, "under")
+        self.assertIsNotNone(p_over)
+        self.assertGreater(p_over, 0.5)            # -150 favorite over
+        self.assertAlmostEqual(p_over + p_under, 1.0, places=6)
+
+    def test_two_books_take_worst_case_min(self):
+        # Two single-sided overs; consensus must be the LOWER (most conservative).
+        books = [_ss("fanduel", over=-200), _ss("draftkings", over=-120)]
+        p = sa.single_sided_fair_from_books(books, "over")
+        single = sa.single_sided_fair_from_books([_ss("draftkings", over=-120)], "over")
+        self.assertAlmostEqual(p, single, places=6)  # -120 is the lower fair → wins
+
+    def test_fair_from_books_soccer_anchors_single_sided(self):
+        books = [_ss("fanduel", over=-150)]
+        # league=SOCCER + flag on → both sides anchor (over is real, under complement)
+        self.assertIsNotNone(sa.fair_from_books(books, "over", league="SOCCER"))
+        self.assertIsNotNone(sa.fair_from_books(books, "under", league="SOCCER"))
+
+    def test_non_soccer_single_sided_still_none(self):
+        # The validated two-sided-only rule is untouched for other leagues.
+        books = [_ss("fanduel", over=-150)]
+        self.assertIsNone(sa.fair_from_books(books, "over", league="NBA"))
+        self.assertIsNone(sa.fair_from_books(books, "over"))  # no league passed
+
+    def test_flag_off_reverts_to_two_sided_only(self):
+        books = [_ss("fanduel", over=-150)]
+        with patch.object(sa, "SOCCER_SINGLE_SIDED_ANCHOR", False):
+            self.assertIsNone(sa.fair_from_books(books, "over", league="SOCCER"))
 
 
 if __name__ == "__main__":
