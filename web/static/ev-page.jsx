@@ -319,7 +319,7 @@ function EVPage() {
                   {b.sharp && (
                     <span
                       className="ev-sharp"
-                      title="Sharp-anchored: this probability is a devigged sharp price (Pinnacle, or the conservative cross-book floor on Unders). Eligible for auto-backtest."
+                      title="Sharp-anchored: this probability is a devigged price (Pinnacle two-sided, the conservative cross-book floor on Unders, or — for soccer, which no book prices two-sided — the single-sided book devig). Eligible for auto-backtest."
                     >SHARP</span>
                   )}
                 </span>
