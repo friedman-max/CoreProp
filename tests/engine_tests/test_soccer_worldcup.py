@@ -150,19 +150,24 @@ class SoccerSingleSidedAnchor(unittest.TestCase):
     def test_fair_from_books_soccer_anchors_single_sided(self):
         books = [_ss("fanduel", over=-150)]
         # league=SOCCER + flag on → both sides anchor (over is real, under complement)
-        self.assertIsNotNone(sa.fair_from_books(books, "over", league="SOCCER"))
-        self.assertIsNotNone(sa.fair_from_books(books, "under", league="SOCCER"))
+        with patch.object(sa, "SOCCER_SINGLE_SIDED_ANCHOR", True):
+            self.assertIsNotNone(sa.fair_from_books(books, "over", league="SOCCER"))
+            self.assertIsNotNone(sa.fair_from_books(books, "under", league="SOCCER"))
 
     def test_non_soccer_single_sided_still_none(self):
-        # The validated two-sided-only rule is untouched for other leagues.
+        # The validated two-sided-only rule is untouched for other leagues,
+        # even with the soccer flag forced on.
         books = [_ss("fanduel", over=-150)]
-        self.assertIsNone(sa.fair_from_books(books, "over", league="NBA"))
-        self.assertIsNone(sa.fair_from_books(books, "over"))  # no league passed
+        with patch.object(sa, "SOCCER_SINGLE_SIDED_ANCHOR", True):
+            self.assertIsNone(sa.fair_from_books(books, "over", league="NBA"))
+            self.assertIsNone(sa.fair_from_books(books, "over"))  # no league passed
 
-    def test_flag_off_reverts_to_two_sided_only(self):
+    def test_flag_off_is_default_and_reverts_to_two_sided_only(self):
+        # Default is now OFF (data-quality audit, 2026-06-14): single-sided
+        # soccer fairs are display-only until the FanDuel feed + devig are fixed.
+        self.assertFalse(sa.SOCCER_SINGLE_SIDED_ANCHOR)
         books = [_ss("fanduel", over=-150)]
-        with patch.object(sa, "SOCCER_SINGLE_SIDED_ANCHOR", False):
-            self.assertIsNone(sa.fair_from_books(books, "over", league="SOCCER"))
+        self.assertIsNone(sa.fair_from_books(books, "over", league="SOCCER"))
 
 
 if __name__ == "__main__":

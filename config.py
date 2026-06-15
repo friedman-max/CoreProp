@@ -153,10 +153,22 @@ WORST_CASE_UNDER_ONLY = os.getenv("WORST_CASE_UNDER_ONLY", "true").lower() in ("
 # books only price the OVER, so under-gating would discard nearly all coverage
 # and lean entirely on complements); the over is the real book price and the
 # under is its safeguard-vetted complement. It still rides the longshot-
-# complement safeguard in engine/consensus, but the owner accepted the added
-# risk for World Cup coverage. Set false to revert soccer to two-sided-only
-# (display-only) behavior; no other league is affected.
-SOCCER_SINGLE_SIDED_ANCHOR = os.getenv("SOCCER_SINGLE_SIDED_ANCHOR", "true").lower() in ("true", "1", "yes")
+# complement safeguard in engine/consensus. No other league is affected.
+#
+# DEFAULT FLIPPED BACK TO false (2026-06-14): a data audit found the
+# single-sided inputs are not trustworthy enough to auto-bet yet —
+#   (1) devig_single_sided_scaled under-corrects FAVORITES (flat ~5% hold;
+#       the longshot penalty only applies to the underdog side), so a -500
+#       milestone over devigs to ~0.79 when one-way props carry a much fatter
+#       hold — fairs are biased HIGH exactly where the soccer bets live; and
+#   (2) the FanDuel soccer shots feed is ~60% non-monotonic (P(2+) > P(1+) —
+#       impossible), i.e. corrupt, while DraftKings is clean. The worst-case
+#       min-across-books then picks the bad FanDuel value much of the time.
+# Re-enable (SOCCER_SINGLE_SIDED_ANCHOR=true) only after the FanDuel ladder bug
+# is fixed, the devig is made favorite-aware, and a monotonicity/cross-book
+# sanity gate is added. Until then soccer is display-only (still scraped,
+# matched, and shown on the boards for comparison).
+SOCCER_SINGLE_SIDED_ANCHOR = os.getenv("SOCCER_SINGLE_SIDED_ANCHOR", "false").lower() in ("true", "1", "yes")
 
 # C1: anti-public-side filter using the data/anti_public_cells.json deny-list.
 USE_SHADE_FILTER = os.getenv("USE_SHADE_FILTER", "false").lower() in ("true", "1", "yes")
