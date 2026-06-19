@@ -164,11 +164,24 @@ WORST_CASE_UNDER_ONLY = os.getenv("WORST_CASE_UNDER_ONLY", "true").lower() in ("
 #   (2) the FanDuel soccer shots feed is ~60% non-monotonic (P(2+) > P(1+) —
 #       impossible), i.e. corrupt, while DraftKings is clean. The worst-case
 #       min-across-books then picks the bad FanDuel value much of the time.
-# Re-enable (SOCCER_SINGLE_SIDED_ANCHOR=true) only after the FanDuel ladder bug
-# is fixed, the devig is made favorite-aware, and a monotonicity/cross-book
-# sanity gate is added. Until then soccer is display-only (still scraped,
-# matched, and shown on the boards for comparison).
-SOCCER_SINGLE_SIDED_ANCHOR = os.getenv("SOCCER_SINGLE_SIDED_ANCHOR", "false").lower() in ("true", "1", "yes")
+# RE-ENABLED (2026-06-19, owner-directed) after the two audit blockers were
+# addressed in engine/sharp_anchor.single_sided_fair_from_books:
+#   (1) devig is now favorite-aware (devig_single_sided_favorite_aware) — the
+#       fat hold on milestone OVER favorites is removed, not just on longshots;
+#   (2) book selection prefers clean DraftKings over the corrupt FanDuel feed
+#       (_SOCCER_BOOK_PRIORITY) instead of min-across-books.
+# Auto-bet is additionally gated to props CoreProp can actually SCORE (see
+# engine.results_checker.soccer_prop_scoreable) so we never log a soccer leg
+# that can't resolve. Honest caveat remains: single-sided fairs are a
+# heuristic with no two-sided market behind them — the now-working ESPN
+# scorer is the live validation. Set false to revert soccer to display-only.
+SOCCER_SINGLE_SIDED_ANCHOR = os.getenv("SOCCER_SINGLE_SIDED_ANCHOR", "true").lower() in ("true", "1", "yes")
+
+# API-Football (api-sports.io) key. ESPN stays the primary soccer scorer;
+# this is consulted ONLY as a fallback for stats ESPN's free World Cup feed
+# doesn't expose — tackles and shots-assisted (key passes). Empty = fallback
+# disabled (those two props stay pending). Free tier: 100 req/day.
+API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "").strip()
 
 # C1: anti-public-side filter using the data/anti_public_cells.json deny-list.
 USE_SHADE_FILTER = os.getenv("USE_SHADE_FILTER", "false").lower() in ("true", "1", "yes")

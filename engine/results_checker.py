@@ -54,6 +54,33 @@ GAME_DURATION_MINUTES = {
 
 FUZZY_THRESHOLD = 80   # Strict threshold for name matching
 
+# Soccer props CoreProp can actually grade. ESPN's free World Cup feed
+# exposes the first set; tackles + shots-assisted (key passes) only resolve
+# when the API-Football fallback is configured (config.API_FOOTBALL_KEY).
+# The auto-backtest worker consults soccer_prop_scoreable() so it never logs
+# a soccer leg that can never resolve (which is what left 45 legs stranded).
+ESPN_SOCCER_PROPS = frozenset({
+    "Shots", "Shots On Target", "Shots on Target", "Fouls",
+    "Goalie Saves", "Saves", "Goals", "Assists", "Offsides",
+})
+APIFOOTBALL_ONLY_SOCCER_PROPS = frozenset({"Tackles", "Shots Assisted"})
+
+
+def soccer_prop_scoreable(prop: str) -> bool:
+    """True if a soccer prop can be resolved by some configured source.
+
+    ESPN props are always scoreable. Tackles / Shots Assisted are scoreable
+    only when the API-Football fallback key is set."""
+    if prop in ESPN_SOCCER_PROPS:
+        return True
+    if prop in APIFOOTBALL_ONLY_SOCCER_PROPS:
+        try:
+            from config import API_FOOTBALL_KEY
+            return bool(API_FOOTBALL_KEY)
+        except Exception:
+            return False
+    return False
+
 # Suffixes that should be stripped before comparing last names. ESPN often
 # omits "Jr."/"Sr."/"III" while PrizePicks includes them (or vice versa).
 _NAME_SUFFIXES = {"jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"}
@@ -214,6 +241,12 @@ class ESPNResultsChecker:
                 if gl_stats is not None:
                     actual = self._compute_stat(gl_stats, prop_type, league)
 
+            # Soccer gap fallback: ESPN's WC feed lacks Tackles / Shots
+            # Assisted. When configured (API_FOOTBALL_KEY), consult
+            # API-Football for those specific props only.
+            if actual is None and league == "SOCCER" and prop_type in APIFOOTBALL_ONLY_SOCCER_PROPS:
+                actual = self._apifootball_gap(player_name, gs, prop_type)
+
             if actual is None:
                 # If the game ended over 6 hours ago and we still can't find
                 # the player, they almost certainly didn't play (DNP/injury).
@@ -337,6 +370,9 @@ class ESPNResultsChecker:
                 if gl_stats is not None:
                     actual = self._compute_stat(gl_stats, prop_type, league)
 
+            if actual is None and league == "SOCCER" and prop_type in APIFOOTBALL_ONLY_SOCCER_PROPS:
+                actual = self._apifootball_gap(player_name, gs, prop_type)
+
             if actual is None:
                 hours_since_end = (now_utc - likely_end).total_seconds() / 3600
                 is_completed = self._is_game_over(league, gs)
@@ -375,6 +411,19 @@ class ESPNResultsChecker:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _apifootball_gap(player_name: str, game_start: datetime, prop_type: str) -> Optional[float]:
+        """Resolve a soccer prop ESPN can't (Tackles / Shots Assisted) via the
+        API-Football fallback. Returns None when the key is unset or the lookup
+        fails — the leg then stays pending, never errors the run."""
+        try:
+            from engine.apifootball import score_soccer_gap
+            return score_soccer_gap(player_name, game_start, prop_type)
+        except Exception as exc:
+            logger.warning("API-Football gap lookup failed for %s/%s: %s",
+                           player_name, prop_type, exc)
+            return None
 
     def _get_player_stats(
         self, league: str, game_start: datetime, player_name: str

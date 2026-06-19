@@ -1121,11 +1121,21 @@ def _run_pipeline_body():
                             slip_type = DEFAULT_SLIP_TYPE
                             n_legs = DEFAULT_SLIP_SIZE
                         min_prob = max(user_min or 0.0, cfg.SHARP_MIN_PROB)
+                        from engine.results_checker import soccer_prop_scoreable
+                        def _scoreable(b):
+                            # Never auto-log a soccer leg we can't resolve
+                            # (Tackles / Shots Assisted unless API-Football is
+                            # configured) — those would strand as permanent
+                            # pending, the exact problem we're fixing.
+                            if (b.get("league") or "").upper() != "SOCCER":
+                                return True
+                            return soccer_prop_scoreable(b.get("prop_type") or b.get("prop") or "")
                         pool = [
                             b for b in bets
                             if float(b.get("true_prob") or 0.0) >= min_prob
                             and not b.get("sharp_missing")
                             and not b.get("calibration_halted")
+                            and _scoreable(b)
                         ]
                         logger.info(
                             "auto_backtest    user=%s SHARP_ANCHOR pool=%d "

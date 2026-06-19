@@ -162,12 +162,23 @@ class SoccerSingleSidedAnchor(unittest.TestCase):
             self.assertIsNone(sa.fair_from_books(books, "over", league="NBA"))
             self.assertIsNone(sa.fair_from_books(books, "over"))  # no league passed
 
-    def test_flag_off_is_default_and_reverts_to_two_sided_only(self):
-        # Default is now OFF (data-quality audit, 2026-06-14): single-sided
-        # soccer fairs are display-only until the FanDuel feed + devig are fixed.
-        self.assertFalse(sa.SOCCER_SINGLE_SIDED_ANCHOR)
-        books = [_ss("fanduel", over=-150)]
-        self.assertIsNone(sa.fair_from_books(books, "over", league="SOCCER"))
+    def test_flag_on_by_default_produces_soccer_fair(self):
+        # RE-ENABLED 2026-06-19 (owner-directed) after the two audit blockers
+        # were fixed: favorite-aware devig + DraftKings-preferred selection.
+        # Soccer single-sided markets now produce a fair and auto-backtest.
+        self.assertTrue(sa.SOCCER_SINGLE_SIDED_ANCHOR)
+        books = [_ss("draftkings", over=-150)]
+        fair = sa.fair_from_books(books, "over", league="SOCCER")
+        self.assertIsNotNone(fair)
+        # A non-soccer single-sided market is still None (the validated
+        # two-sided-only rule is unchanged for every other league).
+        self.assertIsNone(sa.fair_from_books(books, "over", league="MLB"))
+
+    def test_flag_can_be_forced_off(self):
+        # Owner can still revert to display-only via the env flag.
+        with patch.object(sa, "SOCCER_SINGLE_SIDED_ANCHOR", False):
+            books = [_ss("fanduel", over=-150)]
+            self.assertIsNone(sa.fair_from_books(books, "over", league="SOCCER"))
 
 
 if __name__ == "__main__":

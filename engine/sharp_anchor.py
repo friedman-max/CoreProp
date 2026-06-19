@@ -34,7 +34,16 @@ from config import (
     SHARP_MIN_PROB, ANCHOR_MODE, WORST_CASE_UNDER_ONLY,
     SOCCER_SINGLE_SIDED_ANCHOR,
 )
-from engine.devig import devig_shin, devig_worst_case, devig_single_sided_scaled
+from engine.devig import (
+    devig_shin, devig_worst_case, devig_single_sided_scaled,
+    devig_single_sided_favorite_aware,
+)
+
+# Soccer book-quality ranking. The 2026-06-14 audit found FanDuel's World
+# Cup shots ladders ~60% non-monotonic (corrupt) while DraftKings was
+# 878/878 clean. Prefer DraftKings; only fall back to FanDuel when DK
+# doesn't price the leg. Other books slot in between.
+_SOCCER_BOOK_PRIORITY = ("draftkings", "pinnacle", "betmgm", "caesars", "fanduel")
 
 logger = logging.getLogger(__name__)
 
@@ -141,19 +150,28 @@ def single_sided_fair_from_books(books: Iterable, side: str) -> Optional[float]:
     side = (side or "").lower()
     if side not in ("over", "under"):
         return None
-    vals: list[float] = []
-    for b in books:
+
+    # Book-quality preference (audit fix #2): use the single highest-priority
+    # book that prices this leg, NOT a min-across-all. The old min picked the
+    # corrupt FanDuel value whenever it undercut clean DraftKings. Ranking the
+    # books and taking the best available one keeps the trustworthy source.
+    def _rank(b) -> int:
+        nm = (getattr(b, "book_name", "") or "").lower()
+        return _SOCCER_BOOK_PRIORITY.index(nm) if nm in _SOCCER_BOOK_PRIORITY else len(_SOCCER_BOOK_PRIORITY)
+
+    for b in sorted(books, key=_rank):
         over_odds = getattr(b, "over_odds", None)
         under_odds = getattr(b, "under_odds", None)
+        # Favorite-aware devig (audit fix #1): single-sided milestones are
+        # mostly heavy OVER favorites; the favorite-aware model removes the
+        # fat hold the old scaled model left on the >0.5 side.
         if over_odds is not None:
-            p_over = devig_single_sided_scaled(over_odds)
-            vals.append(p_over if side == "over" else 1.0 - p_over)
-        elif under_odds is not None:
-            p_under = devig_single_sided_scaled(under_odds)
-            vals.append(p_under if side == "under" else 1.0 - p_under)
-    if not vals:
-        return None
-    return max(0.001, min(0.999, float(min(vals))))
+            p_over = devig_single_sided_favorite_aware(over_odds)
+            return max(0.001, min(0.999, float(p_over if side == "over" else 1.0 - p_over)))
+        if under_odds is not None:
+            p_under = devig_single_sided_favorite_aware(under_odds)
+            return max(0.001, min(0.999, float(p_under if side == "under" else 1.0 - p_under)))
+    return None
 
 
 def fair_from_books(books: Iterable, side: str, league: Optional[str] = None) -> Optional[float]:
