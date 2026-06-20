@@ -38,6 +38,9 @@ class PrizePickLine:
     start_time: str = "" # ISO timestamp of game start
     side: str = "both"   # "both", "over", or "under"
     team: str = ""       # PP team abbreviation (e.g. "MIN", "LAL")
+    odds_type: str = "standard"  # "standard" or "goblin" (green devil — a
+                                 # discounted, higher-hit-rate line). Demons
+                                 # are dropped at scrape time.
 
 
 @dataclass(slots=True)

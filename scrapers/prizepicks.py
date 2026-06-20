@@ -139,8 +139,10 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
                 odds_type = attrs.get("odds_type", "standard")
                 start_time = attrs.get("start_time", "")
 
-                # Only keep standard lines (filter out demons/goblins)
-                if odds_type != "standard":
+                # Keep standard lines AND goblins (green devils — discounted,
+                # higher-hit-rate lines used for "best bet" / bonus-max picks).
+                # Demons (the risky high-payout variant) are still dropped.
+                if odds_type not in ("standard", "goblin"):
                     continue
 
                 # ── Player name ──────────────────────────────────────────
@@ -176,6 +178,7 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
                         start_time=start_time or "",
                         side="both",
                         team=player_team_map.get(player_id, ""),
+                        odds_type=odds_type,
                     )
                 )
 

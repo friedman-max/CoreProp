@@ -32,6 +32,9 @@ class BetResult:
         "raw_true_prob", "true_prob", "true_odds", "edge", "individual_ev_pct",
         "over_odds", "under_odds", "both_sided",
         "pp_player_id", "start_time", "market_width", "team",
+        # "standard" or "goblin" (green devil). Drives the +EV-vs-green-devil
+        # split in the UI and the auto-backtest green-devil gate.
+        "odds_type",
     )
 
     def __init__(
@@ -51,6 +54,7 @@ class BetResult:
         start_time: str = "",
         market_width: Optional[float] = None,
         team: str = "",
+        odds_type: str = "standard",
     ):
         self.bet_id = bet_id
         self.player_name = player_name
@@ -66,6 +70,7 @@ class BetResult:
         self.start_time = start_time
         self.market_width = market_width
         self.team = team or ""
+        self.odds_type = odds_type or "standard"
 
         # simplify-v1: NO calibration. The incoming `true_prob` is already the
         # most-conservative devigged probability across books (the
@@ -110,6 +115,7 @@ class BetResult:
             "under_odds":        self.under_odds,
             "both_sided":        self.both_sided,
             "start_time":        self.start_time,
+            "odds_type":         self.odds_type,
         }
 
 

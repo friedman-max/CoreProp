@@ -126,6 +126,9 @@
       line:     b.pp_line,
       side:     (b.side || "").toUpperCase(),
       truePct:  (b.true_prob || 0) * 100,
+      oddsType: b.odds_type || "standard",
+      // Green devil = PrizePicks "goblin": a discounted, higher-hit-rate line.
+      isGreenDevil: (b.odds_type || "standard") === "goblin",
       books,
       startTime: b.start_time,
       // bet_key is "player|YYYY-MM-DD" — the same key /api/backtest/keys

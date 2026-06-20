@@ -22,6 +22,12 @@ function EVPage() {
   const [errMsg, setErrMsg] = useState("");
   const [saving, setSaving] = useState(false);
   const [autoBacktest, setAutoBacktest] = useState(false);
+  // Green devils (PrizePicks goblins) — discounted, higher-hit-rate lines.
+  // showGreenDevils switches the table to a green-devil-only view ranked by
+  // P(hit) ("best bets" for bonus maximization). autoBacktestGreenDevils opts
+  // them into auto-backtest (as their own separate slip).
+  const [showGreenDevils, setShowGreenDevils] = useState(false);
+  const [autoBacktestGreenDevils, setAutoBacktestGreenDevils] = useState(false);
   // User-overridable minimum True % per leg. `null` means "use computed BE
   // for the current (slipType, legs) combo"; a number overrides.
   const [minLegOverride, setMinLegOverride] = useState(null);
@@ -99,6 +105,9 @@ function EVPage() {
         if (typeof cfg.auto_backtest === "boolean") {
           setAutoBacktest(cfg.auto_backtest);
         }
+        if (typeof cfg.auto_backtest_green_devils === "boolean") {
+          setAutoBacktestGreenDevils(cfg.auto_backtest_green_devils);
+        }
       } catch (err) {
         console.warn("prefs load failed:", err.message);
       } finally {
@@ -125,6 +134,24 @@ function EVPage() {
     }).catch(err => console.warn("auto-backtest save failed:", err.message));
   }, [autoBacktest]);
 
+  // Persist the "auto-backtest green devils" opt-in whenever it changes.
+  // Sent via slip-prefs (the endpoint that owns auto_backtest_green_devils),
+  // alongside the current slip prefs so the row stays self-consistent.
+  React.useEffect(() => {
+    if (!prefsHydrated.current) return;
+    if (!window.cpApi || !window.cpApi.isLoggedIn()) return;
+    const minPct = (typeof minLegOverride === "number") ? minLegOverride : slipBE;
+    window.cpApi.apiFetch("/api/user/slip-prefs", {
+      method: "POST",
+      body: {
+        auto_slip_type: slipType,
+        auto_slip_legs: legs,
+        auto_slip_min_prob: Math.max(0.01, Math.min(0.99, minPct / 100)),
+        auto_backtest_green_devils: autoBacktestGreenDevils,
+      },
+    }).catch(err => console.warn("green-devil pref save failed:", err.message));
+  }, [autoBacktestGreenDevils]);
+
   // Whenever slipType / legs / minLegOverride changes, mark prefs as
   // unsaved so the Save button surfaces "Save preferences" again. Skip
   // during the initial hydration pass so loaded values don't show as
@@ -145,6 +172,7 @@ function EVPage() {
           auto_slip_type: slipType,
           auto_slip_legs: legs,
           auto_slip_min_prob: Math.max(0.01, Math.min(0.99, minPct / 100)),
+          auto_backtest_green_devils: autoBacktestGreenDevils,
         },
       });
       setPrefsSaveState("saved");
@@ -158,13 +186,20 @@ function EVPage() {
 
   const bets = useMemoE(() => {
     return allBets.filter(b => {
+      // Mode switch: green-devil view shows ONLY green devils; the default
+      // +EV view hides them. Both are sorted by P(hit) desc below, so the
+      // safest / "best" bets float to the top in either mode.
+      if (showGreenDevils ? !b.isGreenDevil : b.isGreenDevil) return false;
       if (league !== "All" && b.league !== league) return false;
       if (propQ && !(b.prop || "").toLowerCase().includes(propQ.toLowerCase())) return false;
       if (side !== "Both" && b.side !== side.toUpperCase()) return false;
       if ((b.truePct || 0) < minOdds) return false;
       return true;
     }).sort((a, b) => (b.truePct || 0) - (a.truePct || 0));
-  }, [allBets, league, propQ, minOdds, side]);
+  }, [allBets, league, propQ, minOdds, side, showGreenDevils]);
+
+  const greenDevilCount = useMemoE(
+    () => allBets.filter(b => b.isGreenDevil).length, [allBets]);
 
   const toggleBet = (b) => {
     const key = b.id || (b.player + b.prop + b.line);
@@ -263,11 +298,23 @@ function EVPage() {
               ))}
             </div>
           </div>
-          <button className="ev-clear" onClick={() => { setLeague("All"); setPropQ(""); setMinOdds(54); setSide("Both"); }}>Clear</button>
+          <div className="ev-filter">
+            <label>Green Devils</label>
+            <button
+              type="button"
+              className={"ev-chip " + (showGreenDevils ? "is-on" : "")}
+              onClick={() => setShowGreenDevils(v => !v)}
+              title="Green devils are PrizePicks goblins — discounted, higher-hit-rate lines. Toggle to see the safest 'just need to win' picks, ranked by hit probability."
+              style={showGreenDevils
+                ? { background: "#16a34a", borderColor: "#16a34a", color: "#fff" }
+                : { borderColor: "#16a34a", color: "#22c55e" }}
+            >😈 {showGreenDevils ? "On" : "Off"}{greenDevilCount ? ` · ${greenDevilCount}` : ""}</button>
+          </div>
+          <button className="ev-clear" onClick={() => { setLeague("All"); setPropQ(""); setMinOdds(55); setSide("Both"); }}>Clear</button>
         </div>
 
         <div className="ev-meta">
-          <span><b>{bets.length}</b> bets</span>
+          <span><b>{bets.length}</b> {showGreenDevils ? "green devils 😈" : "bets"}</span>
           <span className="ev-meta-dot">·</span>
           <span>
             {loadState === "loading" && "Loading…"}
@@ -308,6 +355,7 @@ function EVPage() {
               >
                 <span className="ev-player">
                   <span className="ev-player-n">{b.player}</span>
+                  {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>😈 GD</span>}
                   {b.inBacktest && <span className="ev-logged">LOGGED</span>}
                 </span>
                 <span><LeaguePill league={b.league} /></span>
@@ -365,6 +413,10 @@ function EVPage() {
           <label className="ev-auto">
             <input type="checkbox" checked={autoBacktest} onChange={e => setAutoBacktest(e.target.checked)} />
             Auto-Backtest
+          </label>
+          <label className="ev-auto" title="Also auto-backtest green devils — logged as their own separate slip, never mixed into +EV slips. Off = green devils are display-only.">
+            <input type="checkbox" checked={autoBacktestGreenDevils} onChange={e => setAutoBacktestGreenDevils(e.target.checked)} />
+            <span style={{ color: "#22c55e" }}>😈 Green devils</span>
           </label>
         </div>
         <div className="ev-slip-row">

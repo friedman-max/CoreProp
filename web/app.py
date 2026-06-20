@@ -713,7 +713,8 @@ def _run_pipeline_body():
                     # Also create +EV bet if applicable
                     first_bk = _first_book_for_side("over")
                     if prob is not None and first_bk:
-                        bet_id = f"{m.pp.player_id}_{m.pp.stat_type}_over"
+                        gd_tag = "" if getattr(m.pp, "odds_type", "standard") == "standard" else f"_{m.pp.odds_type}"
+                        bet_id = f"{m.pp.player_id}_{m.pp.stat_type}{gd_tag}_over"
                         res = BetResult(
                             bet_id=bet_id,
                             player_name=m.pp.player_name,
@@ -729,6 +730,7 @@ def _run_pipeline_body():
                             pp_player_id=m.pp.player_id,
                             market_width=mw,
                             team=getattr(m.pp, "team", "") or "",
+                            odds_type=getattr(m.pp, "odds_type", "standard"),
                         )
                         if res.true_prob >= cfg.DEFAULT_LEG_THRESHOLD:
                             bets.append(res)
@@ -761,7 +763,8 @@ def _run_pipeline_body():
                     # Also create +EV bet if applicable
                     first_bk = _first_book_for_side("under")
                     if prob is not None and first_bk:
-                        bet_id = f"{m.pp.player_id}_{m.pp.stat_type}_under"
+                        gd_tag = "" if getattr(m.pp, "odds_type", "standard") == "standard" else f"_{m.pp.odds_type}"
+                        bet_id = f"{m.pp.player_id}_{m.pp.stat_type}{gd_tag}_under"
                         res = BetResult(
                             bet_id=bet_id,
                             player_name=m.pp.player_name,
@@ -777,6 +780,7 @@ def _run_pipeline_body():
                             pp_player_id=m.pp.player_id,
                             market_width=mw,
                             team=getattr(m.pp, "team", "") or "",
+                            odds_type=getattr(m.pp, "odds_type", "standard"),
                         )
                         if res.true_prob >= cfg.DEFAULT_LEG_THRESHOLD:
                             bets.append(res)
@@ -942,13 +946,13 @@ def _run_pipeline_body():
                     # via dict keyed on user_id below.
                     flag_res = (
                         db.table("user_config")
-                        .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+                        .select("*")
                         .eq("auto_backtest", True)
                         .execute()
                     )
                     over_res = (
                         db.table("user_config")
-                        .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+                        .select("*")
                         .in_("user_id", _override_uids)
                         .execute()
                     )
@@ -967,7 +971,7 @@ def _run_pipeline_body():
                 else:
                     users_res = (
                         db.table("user_config")
-                        .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+                        .select("*")
                         .eq("auto_backtest", True)
                         .execute()
                     )
@@ -1003,24 +1007,45 @@ def _run_pipeline_body():
                             return True
                         return soccer_prop_scoreable(b.get("prop_type") or b.get("prop") or "")
 
-                    pool = [
-                        b for b in bets
-                        if float(b.get("true_prob") or 0.0) >= min_prob
-                        and _scoreable(b)
-                    ]
-                    logger.info(
-                        "auto_backtest    user=%s pool=%d (floor=%.3f, %s-%d)",
-                        uid, len(pool), min_prob, slip_type, n_legs,
-                    )
+                    def _eligible(b):
+                        return float(b.get("true_prob") or 0.0) >= min_prob and _scoreable(b)
+
                     from engine.backtest import BacktestLogger
                     bl = BacktestLogger(user_id=uid, db_client=db)
-                    # Flex keeps its thin-slate size fallback (6->5->4).
-                    if slip_type.lower() == "flex":
-                        for try_n in range(n_legs, 3, -1):
-                            if bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=try_n):
-                                break
-                    else:
-                        bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
+
+                    def _log_pool(pool, label=""):
+                        # Flex keeps its thin-slate size fallback (6->5->4).
+                        if slip_type.lower() == "flex":
+                            for try_n in range(n_legs, 3, -1):
+                                if bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=try_n):
+                                    break
+                        else:
+                            bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
+
+                    # Standard +EV pool. Green devils are EXCLUDED here — they
+                    # only auto-log when the user opts in, and then as their own
+                    # separate slip so they never contaminate +EV backtests.
+                    std_pool = [b for b in bets
+                                if (b.get("odds_type") or "standard") == "standard" and _eligible(b)]
+                    logger.info(
+                        "auto_backtest    user=%s pool=%d (floor=%.3f, %s-%d)",
+                        uid, len(std_pool), min_prob, slip_type, n_legs,
+                    )
+                    _log_pool(std_pool)
+
+                    # Green devils (PrizePicks goblins): opt-in only, ranked by
+                    # hit probability (the "best bet" / bonus-max use case).
+                    # Logged via the SAME BacktestLogger so its dedup keeps a
+                    # player out of both a standard and a green-devil slip.
+                    if bool(row.get("auto_backtest_green_devils")):
+                        gd_pool = [b for b in bets
+                                   if (b.get("odds_type") or "standard") == "goblin" and _eligible(b)]
+                        gd_pool.sort(key=lambda b: float(b.get("true_prob") or 0.0), reverse=True)
+                        logger.info(
+                            "auto_backtest    user=%s green_devil_pool=%d (floor=%.3f, %s-%d)",
+                            uid, len(gd_pool), min_prob, slip_type, n_legs,
+                        )
+                        _log_pool(gd_pool, "green_devil")
             except Exception as e:
                 logger.error("Auto-backtest background worker error: %s", e)
 
@@ -1381,6 +1406,7 @@ def _get_user_config(user: Optional[dict]) -> dict:
         "auto_slip_type": "Power",
         "auto_slip_legs": 6,
         "auto_slip_min_prob": None,
+        "auto_backtest_green_devils": False,
     }
     if not user:
         return base
@@ -1412,6 +1438,8 @@ def _get_user_config(user: Optional[dict]) -> dict:
                         base["auto_slip_min_prob"] = float(row["auto_slip_min_prob"])
                     except (TypeError, ValueError):
                         pass
+                # auto_backtest_green_devils may be missing pre-migration_015.
+                base["auto_backtest_green_devils"] = bool(row.get("auto_backtest_green_devils", False))
     except Exception as e:
         logger.warning(f"Failed to fetch user config for {user['id']}: {e}")
 
@@ -1673,6 +1701,8 @@ class SlipPrefsUpdate(BaseModel):
     auto_slip_type: str
     auto_slip_legs: int
     auto_slip_min_prob: Optional[float] = None
+    # Opt-in: also auto-backtest green devils (as their own separate slip).
+    auto_backtest_green_devils: Optional[bool] = None
 
 
 @app.post("/api/user/slip-prefs")
@@ -1701,17 +1731,34 @@ def update_slip_prefs(update: SlipPrefsUpdate, user: dict = Depends(get_current_
         "auto_slip_min_prob": update.auto_slip_min_prob,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if update.auto_backtest_green_devils is not None:
+        payload["auto_backtest_green_devils"] = bool(update.auto_backtest_green_devils)
     try:
         db.table("user_config").upsert(payload).execute()
-        return {
-            "status": "success",
-            "auto_slip_type": update.auto_slip_type,
-            "auto_slip_legs": update.auto_slip_legs,
-            "auto_slip_min_prob": update.auto_slip_min_prob,
-        }
     except Exception as e:
-        logger.error(f"Failed to update slip prefs for user {user['id']}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update slip preferences.")
+        # Pre-migration_015 the auto_backtest_green_devils column may not exist
+        # yet — retry without it so the core slip prefs still save.
+        if "auto_backtest_green_devils" in payload:
+            logger.warning(
+                "slip-prefs: retrying without auto_backtest_green_devils "
+                "(apply migration_015.sql to enable it): %s", e,
+            )
+            payload.pop("auto_backtest_green_devils", None)
+            try:
+                db.table("user_config").upsert(payload).execute()
+            except Exception as e2:
+                logger.error(f"Failed to update slip prefs for user {user['id']}: {e2}")
+                raise HTTPException(status_code=500, detail="Failed to update slip preferences.")
+        else:
+            logger.error(f"Failed to update slip prefs for user {user['id']}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to update slip preferences.")
+    return {
+        "status": "success",
+        "auto_slip_type": update.auto_slip_type,
+        "auto_slip_legs": update.auto_slip_legs,
+        "auto_slip_min_prob": update.auto_slip_min_prob,
+        "auto_backtest_green_devils": update.auto_backtest_green_devils,
+    }
 
 # ---------------------------------------------------------------------------
 # PrizePicks-only endpoints
@@ -2279,19 +2326,19 @@ def admin_trigger_auto_backtest():
     if _override_uids:
         flag_res = (
             db.table("user_config")
-              .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+              .select("*")
               .eq("auto_backtest", True).execute()
         )
         over_res = (
             db.table("user_config")
-              .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+              .select("*")
               .in_("user_id", _override_uids).execute()
         )
         users = {r["user_id"]: r for r in (flag_res.data or []) + (over_res.data or []) if r.get("user_id")}
         users = list(users.values())
     else:
         users = (db.table("user_config")
-                   .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
+                   .select("*")
                    .eq("auto_backtest", True).execute()).data or []
 
     from engine.backtest import BacktestLogger
@@ -2313,7 +2360,11 @@ def admin_trigger_auto_backtest():
         if min_prob is None:
             min_prob = cfg.DEFAULT_LEG_THRESHOLD
 
-        pool = [b for b in bets_payload if float(b.get("true_prob") or 0.0) >= min_prob]
+        # Standard only — green devils never auto-log via the admin trigger
+        # (they're an opt-in, separate-slip path in the real worker).
+        pool = [b for b in bets_payload
+                if float(b.get("true_prob") or 0.0) >= min_prob
+                and (b.get("odds_type") or "standard") == "standard"]
 
         bl = BacktestLogger(user_id=uid, db_client=db)
         n_logged = 0
