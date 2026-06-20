@@ -649,18 +649,20 @@ def _run_pipeline_body():
                 Returns (best_odds, final_true_prob, true_american_odds,
                 market_width).
 
-                simplify-v1: the decision probability is the most-conservative
-                devigged probability across books — the single lowest
-                worst-case line (engine.consensus worst_case_prob). No sharp
-                anchor, no calibration; the juice guardrail lives in consensus."""
+                The decision probability is the HONEST no-vig market consensus
+                across books (engine.consensus consensus_prob). We do NOT gate
+                on worst_case_prob: applied per-side it pushes both sides of a
+                balanced market below 50%, so near-50/50 PrizePicks lines would
+                never surface. No sharp anchor, no calibration; the single-sided
+                juice guardrail still lives in consensus."""
                 match_books = books_from_match_for_side(m, side)
                 if not match_books:
                     return None, None, None, None
-                _consensus_prob, worst_case_prob, meta = compute_true_probability(
+                consensus_prob, _worst_case_prob, meta = compute_true_probability(
                     match_books, side, league=m.pp.league, prop=m.pp.stat_type,
                 )
 
-                if worst_case_prob is None:
+                if consensus_prob is None:
                     return None, None, None, None
 
                 # Find the best odds for display (includes derived complement odds)
@@ -673,7 +675,7 @@ def _run_pipeline_body():
                 ]
                 best_odds = max(odds_list) if odds_list else None
 
-                final_true_prob = worst_case_prob
+                final_true_prob = consensus_prob
                 market_width = meta.get("market_width") if isinstance(meta, dict) else None
                 return (
                     best_odds,
@@ -732,7 +734,7 @@ def _run_pipeline_body():
                             team=getattr(m.pp, "team", "") or "",
                             odds_type=getattr(m.pp, "odds_type", "standard"),
                         )
-                        if res.true_prob >= cfg.DEFAULT_LEG_THRESHOLD:
+                        if res.true_prob >= cfg.MIN_DISPLAY_PROB:
                             bets.append(res)
                             bet_book_odds[bet_id] = {
                                 "fd_odds":    fd_o,
@@ -782,7 +784,7 @@ def _run_pipeline_body():
                             team=getattr(m.pp, "team", "") or "",
                             odds_type=getattr(m.pp, "odds_type", "standard"),
                         )
-                        if res.true_prob >= cfg.DEFAULT_LEG_THRESHOLD:
+                        if res.true_prob >= cfg.MIN_DISPLAY_PROB:
                             bets.append(res)
                             bet_book_odds[bet_id] = {
                                 "fd_odds":    fd_u,

@@ -60,14 +60,22 @@ FUZZY_THRESHOLD = 91
 SINGLE_SIDE_VIG = 0.070
 
 # ---------------------------------------------------------------------------
-# simplify-v1 decision knobs. The whole engine is now: true_prob = the most
-# conservative devigged probability across books (engine.consensus
-# worst_case_prob); recommend a leg iff true_prob >= the user's threshold.
+# Decision knobs. The engine computes each leg's HONEST no-vig probability —
+# engine.consensus consensus_prob, the vig-stripped market consensus across
+# books — and shows every leg whose chosen side is at least a coin flip,
+# ranked by probability. (We do NOT gate on the pessimistic worst_case min:
+# applied per-side it pushes BOTH sides of a balanced market below 50%, so
+# near-50/50 PrizePicks lines would never surface — see git history.)
 # ---------------------------------------------------------------------------
-# Server-side floor for which legs enter the +EV pool / are shown. This is the
-# DEFAULT for a user's own threshold when they haven't set one; the per-user
-# threshold (auto_slip_min_prob) is the real gate. ~0.55 sits just above the
-# 3-Power break-even (0.5503) so the default isn't -EV out of the box.
+# Server-side floor for which legs are SENT to the +EV tab. 0.50 = the favored
+# side of every matched line, so the client slider's 50%+ range actually has
+# data and "best bets above 50%" appear (sorted best-first).
+MIN_DISPLAY_PROB = float(os.getenv("MIN_DISPLAY_PROB", "0.50"))
+
+# DEFAULT per-leg floor for AUTO-BACKTEST when a user hasn't set their own
+# threshold (auto_slip_min_prob). Kept above the break-even so auto-logged
+# slips aren't -EV coin flips — distinct from MIN_DISPLAY_PROB, which only
+# controls what's shown.
 DEFAULT_LEG_THRESHOLD = float(os.getenv("DEFAULT_LEG_THRESHOLD", "0.55"))
 
 # Juice guardrail for single-sided / milestone lines (NHL goalscorer, NBA

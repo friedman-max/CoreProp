@@ -122,12 +122,16 @@ def _devig_book(book: BookOdds, side: str) -> Optional[float]:
         p_over, p_under = devig_shin(book.over_odds, book.under_odds)
         return p_over if side == "over" else p_under
 
-    # Single-sided: devig the side we have, derive the other via complement.
+    # Single-sided: same juice cutoff + credibility cap as the worst-case path,
+    # so the consensus number stays bounded for green-devil milestone lines.
+    if _single_sided_too_juiced(book):
+        return None
+    cap = cfg.SINGLE_SIDED_PROB_CAP
     if book.over_odds is not None:
-        p_over = devig_single_sided_scaled(book.over_odds)
+        p_over = min(devig_single_sided_scaled(book.over_odds), cap)
         return p_over if side == "over" else 1.0 - p_over
     if book.under_odds is not None:
-        p_under = devig_single_sided_scaled(book.under_odds)
+        p_under = min(devig_single_sided_scaled(book.under_odds), cap)
         return p_under if side == "under" else 1.0 - p_under
 
     return None

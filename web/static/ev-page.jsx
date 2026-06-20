@@ -11,7 +11,7 @@ function fmtGameTime(iso) {
 function EVPage() {
   const [league, setLeague] = useState("All");
   const [propQ, setPropQ] = useState("");
-  const [minOdds, setMinOdds] = useState(55);
+  const [minOdds, setMinOdds] = useState(50);
   const [side, setSide] = useState("Both");
   const [slipType, setSlipType] = useState("Power");
   const [legs, setLegs] = useState(6);
@@ -310,7 +310,7 @@ function EVPage() {
                 : { borderColor: "#16a34a", color: "#22c55e" }}
             >😈 {showGreenDevils ? "On" : "Off"}{greenDevilCount ? ` · ${greenDevilCount}` : ""}</button>
           </div>
-          <button className="ev-clear" onClick={() => { setLeague("All"); setPropQ(""); setMinOdds(55); setSide("Both"); }}>Clear</button>
+          <button className="ev-clear" onClick={() => { setLeague("All"); setPropQ(""); setMinOdds(50); setSide("Both"); }}>Clear</button>
         </div>
 
         <div className="ev-meta">

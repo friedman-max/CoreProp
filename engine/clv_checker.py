@@ -449,12 +449,14 @@ class CLVTracker:
                 books = books_from_match_for_side(m, side)
                 if not books:
                     continue
-                _consensus, worst_case, _meta = compute_true_probability(
+                consensus, _worst_case, _meta = compute_true_probability(
                     books, side,
                     league=getattr(m.pp, "league", None),
                     prop=getattr(m.pp, "stat_type", None),
                 )
-                if worst_case is not None:
-                    current_probs[(player, prop, side, line)] = worst_case
+                # Use the same number the leg was logged with (consensus), so
+                # CLV reflects line movement, not a devig-method gap.
+                if consensus is not None:
+                    current_probs[(player, prop, side, line)] = consensus
 
         return current_probs
