@@ -20,9 +20,6 @@ from typing import Any
 
 from engine.database import get_db
 from engine.consensus import books_from_match_for_side, compute_true_probability
-from engine.isotonic_calibration import (
-    load_isotonic_calibration, calibrate as _apply_calibration,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -40,23 +37,10 @@ MISSED_CUTOFF_HOURS = 1
 
 class CLVTracker:
     def __init__(self):
-        # CLV compares closing_prob against the true_prob stored at bet-log
-        # time. That stored value is ALREADY calibrated by BetResult.__init__
-        # (raw worst_case_prob -> isotonic curve), so the closing side must
-        # apply the identical calibration or CLV shows a phantom jump the
-        # size of the calibration gap the moment the bet is logged. The
-        # curves are reloaded at the start of each update pass so we never
-        # apply a stale calibration while ev_calculator is using a fresh one.
-        self._calibration_table = load_isotonic_calibration()
-
-    def _refresh_calibration(self) -> None:
-        """Reload the on-disk isotonic curves. Cheap (single JSON read);
-        called once per pipeline tick so closing-side calibration tracks
-        whatever ev_calculator is currently using."""
-        try:
-            self._calibration_table = load_isotonic_calibration()
-        except Exception as exc:
-            logger.warning("CLVTracker: calibration reload failed: %s", exc)
+        # simplify-v1: no calibration. The stored true_prob and the closing
+        # prob are both the raw worst_case devig, so CLV compares like with
+        # like — nothing to reload.
+        pass
 
     def update_closing_lines(self, matches: list[Any]) -> int:
         """
@@ -81,10 +65,6 @@ class CLVTracker:
         db = get_db()
         if not db:
             return 0
-
-        # Pick up any calibration refit that happened since the last tick so
-        # closing-side calibration matches what ev_calculator is using now.
-        self._refresh_calibration()
 
         # Fetch pending legs from Supabase
         try:
@@ -147,21 +127,10 @@ class CLVTracker:
                     except (ValueError, TypeError):
                         old_cp_val = None
 
-                # Apply the same calibration multiplier BetResult used at
-                # bet-log time, so closing_prob lives in the same space as the
-                # stored true_prob and CLV reflects only line movement.
-                league = row.get("league")
-                prop_for_cal = row.get("prop")
-                side_for_cal = (row.get("side") or "").lower()
-                _cp_raw = _apply_calibration(
-                    self._calibration_table, league, prop_for_cal,
-                    side_for_cal, new_cp_val,
-                )
-                # Same [0.001, 0.999] window BetResult uses on the live
-                # path; closing-side math must stay numerically symmetric
-                # with the stored true_prob or CLV % can read negative
-                # on degenerate edge cases.
-                calibrated_cp = max(0.001, min(0.999, _cp_raw))
+                # simplify-v1: closing prob is the raw worst_case devig — the
+                # same space as the stored true_prob — so CLV reflects only
+                # line movement. Same [0.001, 0.999] guard the live path uses.
+                calibrated_cp = max(0.001, min(0.999, new_cp_val))
 
                 # Update only when the calibrated value has moved materially
                 # from whatever was last written.

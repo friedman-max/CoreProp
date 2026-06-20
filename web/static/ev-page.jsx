@@ -11,7 +11,7 @@ function fmtGameTime(iso) {
 function EVPage() {
   const [league, setLeague] = useState("All");
   const [propQ, setPropQ] = useState("");
-  const [minOdds, setMinOdds] = useState(54);
+  const [minOdds, setMinOdds] = useState(55);
   const [side, setSide] = useState("Both");
   const [slipType, setSlipType] = useState("Power");
   const [legs, setLegs] = useState(6);
@@ -316,12 +316,6 @@ function EVPage() {
                 <span className={"ev-side " + (b.side === "OVER" ? "is-over" : "is-under")}>{b.side}</span>
                 <span>
                   <TruePct value={b.truePct} />
-                  {b.sharp && (
-                    <span
-                      className="ev-sharp"
-                      title="Sharp-anchored: this probability is a devigged price (Pinnacle two-sided, the conservative cross-book floor on Unders, or — for soccer, which no book prices two-sided — the single-sided book devig). Eligible for auto-backtest."
-                    >SHARP</span>
-                  )}
                 </span>
                 <span className="ev-books">
                   {b.books.map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}

@@ -37,7 +37,6 @@ from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from engine.ev_calculator import reload_calibration
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -573,74 +572,9 @@ def _run_pipeline_body():
         from engine.ev_calculator import BetResult
         from engine.consensus import compute_true_probability, books_from_match_for_side
 
-        with _lock:
-            min_ev = _state["min_ev_pct"]
         bets: list[BetResult] = []
         bet_book_odds: dict[str, dict] = {}  # bet_id -> {fd_odds, dk_odds, pin_odds}
         serialized_matches = []
-        # Observatory feed. Every priced side with raw consensus prob >= 0.30
-        # is logged regardless of EV filter. Using `bets` (the EV-filtered
-        # list) as the feed biased the calibrator toward markets where the
-        # consensus agreed with our model — a closed feedback loop that
-        # systematically under-represented sides where the book was sharp.
-        # Especially visible on low-volume leagues (NHL) where most matches
-        # ended up below the EV bar and never reached the observatory.
-        # The 0.30 floor is a sanity gate: extreme tails (<0.30 raw) get
-        # logged on the complement side anyway since that side is >=0.70.
-        # OBS_MIN_PROB lives in engine.observatory so the gate has a single
-        # source of truth — `_observe` reads it via `should_log_observation`.
-        from engine.observatory import (
-            build_observation_entry as _build_obs,
-            should_log_observation as _should_obs,
-        )
-        obs_entries: list[dict] = []
-
-        def _devigged_book_probs(_m, _side: str) -> dict:
-            """Snapshot each book's devigged probability for `_side`. Mirrors
-            `_per_book_probs` defined further down the loop, but available
-            outside the per-match closure so observatory rows can attach a
-            books dict for every priced side, not just the +EV ones."""
-            from engine.devig import devig_power as _dp, devig_single_sided_scaled as _dss
-            out: dict[str, float] = {}
-            for name, prefix in (("fanduel", "fd"), ("draftkings", "dk"), ("pinnacle", "pin")):
-                bk = getattr(_m, f"{prefix}_{_side}_equiv", None)
-                if bk is None:
-                    continue
-                prob = None
-                is_exact = bk.line == _m.pp.line_score
-                if is_exact and bk.both_sided and bk.over_odds is not None and bk.under_odds is not None:
-                    t_o, t_u = _dp(bk.over_odds, bk.under_odds)
-                    prob = t_o if _side == "over" else t_u
-                elif _side == "over" and bk.over_odds is not None:
-                    prob = _dss(bk.over_odds)
-                elif _side == "under" and bk.under_odds is not None:
-                    prob = _dss(bk.under_odds)
-                if prob is not None and 0.0 < prob < 1.0:
-                    out[name] = round(float(prob), 4)
-            return out
-
-        def _observe(_m, _side: str, raw_prob: float, mw):
-            """Capture an observatory entry for the given side if the raw
-            consensus prob clears the threshold. Threshold + entry shape
-            are owned by engine.observatory so this closure stays thin —
-            a single bug-fix surface for "what does a logged observation
-            look like?"."""
-            if not _should_obs(raw_prob):
-                return
-            entry = _build_obs(
-                player_name=_m.pp.player_name,
-                league=_m.pp.league,
-                prop=_m.pp.stat_type,
-                line=_m.pp.line_score,
-                side=_side,
-                raw_prob=raw_prob,
-                market_width=mw,
-                team=getattr(_m.pp, "team", "") or "",
-                start_time=_m.pp.start_time,
-                books_probs=_devigged_book_probs(_m, _side),
-            )
-            if entry is not None:
-                obs_entries.append(entry)
 
         for m in matches:
             # The matcher already populates per-side equivalents. A match
@@ -678,9 +612,8 @@ def _run_pipeline_body():
                 }
 
             def _per_book_probs(side: str) -> dict:
-                """Snapshot each book's devigged probability for `side` so the
-                sharpness fitter (engine/sharpness_calibration.py) can later
-                compare each book's price to the eventual closing line.
+                """Snapshot each book's devigged probability for `side` for
+                display (the +EV row shows each book's implied number).
                 Returns e.g. {"fanduel": 0.62, "draftkings": 0.61}."""
                 from engine.devig import devig_power as _dp, devig_single_sided_scaled as _dss
                 out: dict[str, float] = {}
@@ -714,38 +647,21 @@ def _run_pipeline_body():
                 """Compute the bet-decision probability for one side.
 
                 Returns (best_odds, final_true_prob, true_american_odds,
-                market_width, sharp_missing).
+                market_width).
 
-                SHARP ANCHOR mode (config.USE_SHARP_ANCHOR): the decision
-                probability is the devigged two-sided Pinnacle price and
-                nothing else. When Pinnacle doesn't price the market,
-                sharp_missing=True and the blend is used for DISPLAY only —
-                ev_calculator marks such legs halted so the auto-backtest
-                can never log them.
-
-                Legacy mode: worst-case blended consensus (min across devig
-                methods and books), later calibrated in BetResult."""
+                simplify-v1: the decision probability is the most-conservative
+                devigged probability across books — the single lowest
+                worst-case line (engine.consensus worst_case_prob). No sharp
+                anchor, no calibration; the juice guardrail lives in consensus."""
                 match_books = books_from_match_for_side(m, side)
                 if not match_books:
-                    return None, None, None, None, True
-                consensus_prob, worst_case_prob, meta = compute_true_probability(
+                    return None, None, None, None
+                _consensus_prob, worst_case_prob, meta = compute_true_probability(
                     match_books, side, league=m.pp.league, prop=m.pp.stat_type,
                 )
 
-                if consensus_prob is None:
-                    return None, None, None, None, True
-
-                sharp_missing = False
-                if cfg.USE_SHARP_ANCHOR:
-                    # Mode-dispatched fair source (config.ANCHOR_MODE):
-                    # pinnacle / hybrid / worst_case. None = no tradeable
-                    # price source for this row -> display-only.
-                    from engine.sharp_anchor import fair_from_books
-                    sharp_fair = fair_from_books(match_books, side, league=m.pp.league)
-                    if sharp_fair is not None:
-                        worst_case_prob = sharp_fair
-                    else:
-                        sharp_missing = True
+                if worst_case_prob is None:
+                    return None, None, None, None
 
                 # Find the best odds for display (includes derived complement odds)
                 odds_list = [
@@ -757,8 +673,6 @@ def _run_pipeline_body():
                 ]
                 best_odds = max(odds_list) if odds_list else None
 
-                # Decision probability: Pinnacle fair in sharp mode (or the
-                # worst-case blend for display when sharp_missing / legacy).
                 final_true_prob = worst_case_prob
                 market_width = meta.get("market_width") if isinstance(meta, dict) else None
                 return (
@@ -766,7 +680,6 @@ def _run_pipeline_body():
                     final_true_prob,
                     prob_to_american(final_true_prob) if final_true_prob else None,
                     market_width,
-                    sharp_missing,
                 )
 
             def _first_book_for_side(side: str):
@@ -781,12 +694,7 @@ def _run_pipeline_body():
 
             # Process Over side
             if pp_side in ("both", "over") and any_over:
-                best, prob, true, mw, sharp_miss = get_combined_true_odds("over")
-                # Log to observatory whenever a probability was successfully
-                # computed — even when `best` is None (no displayable odds
-                # for the UI). Calibration cares about the consensus prob,
-                # not about whether a book chose to display this side.
-                _observe(m, "over", prob, mw)
+                best, prob, true, mw = get_combined_true_odds("over")
                 if best is not None:
                     base_over = _base_for_side("over")
                     fd_o  = _book_display_odds("over", "fd",  fd_margin)
@@ -821,9 +729,8 @@ def _run_pipeline_body():
                             pp_player_id=m.pp.player_id,
                             market_width=mw,
                             team=getattr(m.pp, "team", "") or "",
-                            sharp_missing=sharp_miss,
                         )
-                        if res.individual_ev_pct >= min_ev:
+                        if res.true_prob >= cfg.DEFAULT_LEG_THRESHOLD:
                             bets.append(res)
                             bet_book_odds[bet_id] = {
                                 "fd_odds":    fd_o,
@@ -835,8 +742,7 @@ def _run_pipeline_body():
 
             # Process Under side
             if pp_side in ("both", "under") and any_under:
-                best, prob, true, mw, sharp_miss = get_combined_true_odds("under")
-                _observe(m, "under", prob, mw)
+                best, prob, true, mw = get_combined_true_odds("under")
                 if best is not None:
                     base_under = _base_for_side("under")
                     fd_u  = _book_display_odds("under", "fd",  fd_margin)
@@ -871,9 +777,8 @@ def _run_pipeline_body():
                             pp_player_id=m.pp.player_id,
                             market_width=mw,
                             team=getattr(m.pp, "team", "") or "",
-                            sharp_missing=sharp_miss,
                         )
-                        if res.individual_ev_pct >= min_ev:
+                        if res.true_prob >= cfg.DEFAULT_LEG_THRESHOLD:
                             bets.append(res)
                             bet_book_odds[bet_id] = {
                                 "fd_odds":    fd_u,
@@ -883,24 +788,15 @@ def _run_pipeline_body():
                                 "books_probs": _per_book_probs("under"),
                             }
 
-        # Per-league observability: log how many priced sides each league
-        # contributed to obs_entries this cycle, and what fraction were
-        # >= the observatory threshold vs below it. Surfaces the
-        # difference between "the scrapers found no NHL games" (counts
-        # are 0) and "we matched NHL props but they all came back below
-        # 0.30" (matched > 0, obs == 0). Without this, the only way to
-        # diagnose a missing-league report was to scan the entire scrape
-        # log by hand.
+        # Per-league observability: how many props each league matched this
+        # cycle. Surfaces "the scrapers found no NHL games" (count 0) vs
+        # "we matched NHL props but none cleared the threshold".
         try:
             from collections import Counter
-            obs_counts = Counter()
-            for e in obs_entries:
-                lg = (e.get("league") or "UNKNOWN").upper()
-                obs_counts[lg] += 1
             match_counts = Counter((getattr(m.pp, "league", "") or "UNKNOWN").upper() for m in matches)
             league_summary = ", ".join(
-                f"{lg}: matched={match_counts.get(lg, 0)} obs={obs_counts.get(lg, 0)}"
-                for lg in sorted(set(match_counts) | set(obs_counts))
+                f"{lg}: matched={match_counts.get(lg, 0)}"
+                for lg in sorted(match_counts)
             )
             logger.info("Pipeline per-league: %s", league_summary)
         except Exception as exc:
@@ -915,11 +811,6 @@ def _run_pipeline_body():
 
         # Sort by individual EV% descending
         bets.sort(key=lambda b: b.individual_ev_pct, reverse=True)
-
-        # Per-book devigged prob attachment moved upstream: the observatory
-        # now feeds from `obs_entries` (built directly in the match loop),
-        # which already carries each side's `books_probs` dict. The
-        # sidecar map this scope used to maintain is no longer read.
 
         serialized_bets = []
         for b in bets:
@@ -1080,7 +971,6 @@ def _run_pipeline_body():
                         .eq("auto_backtest", True)
                         .execute()
                     )
-                from engine.constants import BREAK_EVEN
                 for row in (users_res.data or []):
                     uid = row.get("user_id")
                     if not uid:
@@ -1099,127 +989,38 @@ def _run_pipeline_body():
                     except (TypeError, ValueError):
                         user_min = None
 
-                    if cfg.USE_SHARP_ANCHOR:
-                        # SHARP ANCHOR mode — the validated rule, nothing else:
-                        #   * Default shape: 3-leg Power. Feasibility-
-                        #     constrained backtest: 44 placeable slips
-                        #     (1.52/day, +25.0u, +56.8%/slip) vs 29 for
-                        #     4-Flex and 12 for strict 6-Flex — 3 legs
-                        #     co-available is the easiest fill, so 3-Power
-                        #     converts sharp legs into the most placed bets.
-                        #     Users who explicitly configured a validated
-                        #     Flex shape (4/5/6) keep their choice.
-                        #   * Floor = max(user's min, SHARP_MIN_PROB=0.56).
-                        #   * Legs without a two-sided Pinnacle price never
-                        #     enter the pool (sharp_missing -> halted).
-                        # Tier routing and shade filters belong to the old
-                        # model and are intentionally bypassed.
-                        from engine.sharp_anchor import (
-                            slip_shape_allowed, DEFAULT_SLIP_TYPE, DEFAULT_SLIP_SIZE,
-                        )
-                        if not slip_shape_allowed(slip_type, n_legs):
-                            slip_type = DEFAULT_SLIP_TYPE
-                            n_legs = DEFAULT_SLIP_SIZE
-                        min_prob = max(user_min or 0.0, cfg.SHARP_MIN_PROB)
-                        from engine.results_checker import soccer_prop_scoreable
-                        def _scoreable(b):
-                            # Never auto-log a soccer leg we can't resolve
-                            # (Tackles / Shots Assisted unless API-Football is
-                            # configured) — those would strand as permanent
-                            # pending, the exact problem we're fixing.
-                            if (b.get("league") or "").upper() != "SOCCER":
-                                return True
-                            return soccer_prop_scoreable(b.get("prop_type") or b.get("prop") or "")
-                        pool = [
-                            b for b in bets
-                            if float(b.get("true_prob") or 0.0) >= min_prob
-                            and not b.get("sharp_missing")
-                            and not b.get("calibration_halted")
-                            and _scoreable(b)
-                        ]
-                        logger.info(
-                            "auto_backtest    user=%s SHARP_ANCHOR pool=%d "
-                            "(floor=%.3f, %s-%d)",
-                            uid, len(pool), min_prob, slip_type, n_legs,
-                        )
-                        from engine.backtest import BacktestLogger
-                        bl = BacktestLogger(user_id=uid, db_client=db)
-                        # Flex keeps its thin-slate size fallback (6->5->4);
-                        # Power-3 is already the minimum fill.
-                        if slip_type.lower() == "flex":
-                            for try_n in range(n_legs, 3, -1):
-                                if bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=try_n):
-                                    break
-                        else:
-                            bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
-                        continue
+                    # simplify-v1: eligibility is purely the user's threshold
+                    # plus "can we actually resolve this leg?" — no sharp
+                    # anchor, no tier routing, no calibration circuit breaker.
+                    min_prob = user_min if user_min is not None else cfg.DEFAULT_LEG_THRESHOLD
+                    from engine.results_checker import soccer_prop_scoreable
 
-                    # ── Legacy path (USE_SHARP_ANCHOR=false) ────────────────
-                    # Per-leg min: tier-aware effective_min_prob respects
-                    # the user's explicit override; otherwise routes to the
-                    # tier floor that's eligible for this (slip_type, n_legs).
-                    # See engine/tier.py for the routing table. The override
-                    # is still capped from below by the slip's break-even —
-                    # `effective_min_prob` handles the floor.
-                    from engine.tier import (
-                        effective_min_prob, filter_legs_for_slip, tier_summary,
+                    def _scoreable(b):
+                        # Never auto-log a leg we can't resolve. Soccer is
+                        # deferred in v1, but guard anyway so a stray
+                        # un-scoreable soccer prop can't strand as pending.
+                        if (b.get("league") or "").upper() != "SOCCER":
+                            return True
+                        return soccer_prop_scoreable(b.get("prop_type") or b.get("prop") or "")
+
+                    pool = [
+                        b for b in bets
+                        if float(b.get("true_prob") or 0.0) >= min_prob
+                        and _scoreable(b)
+                    ]
+                    logger.info(
+                        "auto_backtest    user=%s pool=%d (floor=%.3f, %s-%d)",
+                        uid, len(pool), min_prob, slip_type, n_legs,
                     )
-                    min_prob = effective_min_prob(user_min, slip_type, n_legs)
-
-                    pool = [b for b in bets if float(b.get("true_prob") or 0.0) >= min_prob]
-
                     from engine.backtest import BacktestLogger
                     bl = BacktestLogger(user_id=uid, db_client=db)
-
-                    # RWBC circuit-breaker filter — when USE_RWBC is on,
-                    # legs whose calibration cell has w_cell < threshold
-                    # are flagged with `calibration_halted=True` by
-                    # engine/ev_calculator.py. Skip them before the tier
-                    # filter so a halted leg can never sneak in via a
-                    # Tier-A probability assignment.
-                    n_before = len(pool)
-                    pool = [b for b in pool if not b.get("calibration_halted")]
-                    n_skipped = n_before - len(pool)
-                    if n_skipped > 0:
-                        logger.info(
-                            "auto_backtest    user=%s skipped_due_to_circuit_breaker=%d remaining_pool=%d",
-                            uid, n_skipped, len(pool),
-                        )
-
-                    # Phase 1A tier routing. Tier A enters any slip; Tier B
-                    # only 5/6-pick; Tier C never auto-logs. Filter against
-                    # the requested (slip_type, n_legs) so a 3-Power request
-                    # only sees Tier A legs.
-                    pre_tier = len(pool)
-                    pool = filter_legs_for_slip(pool, slip_type, n_legs)
-
-                    # Maybe Cool Fix C1: anti-public-side filter (OFF unless
-                    # USE_SHADE_FILTER=true). Drops legs in (league, side,
-                    # shade_bucket) cells flagged as historically anti-skill
-                    # at high shade. Refit by Phase 3 strategy logger.
-                    if cfg.USE_SHADE_FILTER:
-                        from engine.shade_signal import is_anti_public
-                        pre_shade = len(pool)
-                        pool = [b for b in pool if not is_anti_public(b)]
-                        n_dropped = pre_shade - len(pool)
-                        if n_dropped > 0:
-                            logger.info(
-                                "auto_backtest    user=%s shade_filter "
-                                "dropped=%d remaining=%d",
-                                uid, n_dropped, len(pool),
-                            )
-                    if pre_tier != len(pool):
-                        counts = tier_summary(pool)
-                        logger.info(
-                            "auto_backtest    user=%s tier_filter slip=%s-%d "
-                            "kept=%d (A=%d B=%d C=%d REJECT=%d) dropped=%d",
-                            uid, slip_type, n_legs, len(pool),
-                            counts["A"], counts["B"], counts["C"], counts["REJECT"],
-                            pre_tier - len(pool),
-                        )
-
-                    # Pass the top ~40 candidates from the filtered pool.
-                    bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
+                    # Flex keeps its thin-slate size fallback (6->5->4).
+                    if slip_type.lower() == "flex":
+                        for try_n in range(n_legs, 3, -1):
+                            if bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=try_n):
+                                break
+                    else:
+                        bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
             except Exception as e:
                 logger.error("Auto-backtest background worker error: %s", e)
 
@@ -1231,156 +1032,17 @@ def _run_pipeline_body():
         else:
             threading.Thread(target=_auto_log_bg, daemon=True).start()
 
-        # ── Market Observatory: log lines for global calibration ──
-        # Source: `obs_entries`, which is every priced side from the match
-        # loop with raw consensus prob >= 0.30. This is deliberately upstream
-        # of the EV filter and the bet-id dedup that shapes `serialized_bets`
-        # — both of those bias the calibration sample toward markets the
-        # current model already agrees with. Logging from `obs_entries`
-        # restores full coverage across leagues (the NHL gap was a
-        # downstream symptom of this filter) and gives the calibrator the
-        # representative sample it needs.
-        def _log_observatory_bg(entries=obs_entries):
-            try:
-                from engine.writer import writer as _writer
-                # All writes from the pipeline observatory feed flow through
-                # a single audited surface (see engine/writer.py). The
-                # underlying client is still the service-role one, but the
-                # surface is the seam where a future two-pod split can route
-                # writes to a separate process without touching this file.
-                obs_db = _writer("observatory.log")
-                if obs_db is None:
-                    return
-                rows_to_upsert = []
-                for e in entries:
-                    raw_tp_val = e.get("raw_true_prob")
-                    if raw_tp_val is None:
-                        continue
-                    raw_tp = float(raw_tp_val)
-                    tp_val = e.get("true_prob")
-                    tp = float(tp_val) if tp_val is not None else raw_tp
-                    mw_val = e.get("market_width")
-                    mw = float(mw_val) if mw_val is not None else None
-                    player = e.get("player_name", "")
-                    league = e.get("league", "")
-                    prop   = e.get("prop_type", "")
-                    line   = e.get("pp_line", "")
-                    side   = e.get("side", "")
-                    start  = e.get("start_time", "")
-                    market_key = f"{player}|{league}|{prop}|{line}|{side}|{start}"
-                    # Note: `result` is deliberately omitted. The DB default
-                    # is 'pending' on insert; on conflict the migration_009
-                    # trigger preserves the existing value. Including it
-                    # here would reset already-graded rows to 'pending' on
-                    # every re-scrape if the trigger isn't deployed yet.
-                    row = {
-                        "market_key":     market_key,
-                        "player":         player,
-                        "league":         league,
-                        "prop":           prop,
-                        "line":           float(line) if line != "" else 0,
-                        "side":           side,
-                        "true_prob":      round(tp, 4),
-                        "raw_true_prob":  round(raw_tp, 4),
-                        "game_start":     start if start else None,
-                    }
-                    if mw is not None:
-                        row["market_width"] = round(mw, 4)
-                    team_val = (e.get("team") or "").strip()
-                    if team_val:
-                        row["team"] = team_val
-                    bp = e.get("books_probs")
-                    if bp:
-                        row["books"] = bp
-                    rows_to_upsert.append(row)
-                if rows_to_upsert:
-                    # Try the full row first. If a column is missing on the
-                    # deployed schema (pre-migration_003 lacks `books`,
-                    # pre-migration_006 lacks `raw_true_prob` /
-                    # `market_width`), strip it and retry — keeps logging
-                    # working before the operator runs the new migration.
-                    _OPTIONAL_COLS = ("books", "raw_true_prob", "market_width", "team")
-                    def _strip(rows, col):
-                        for r in rows:
-                            r.pop(col, None)
-                    # ignore_duplicates=False so the conflict path fires an
-                    # UPDATE. The market_observatory_upsert_guard trigger
-                    # (migration_009) preserves first_seen_at + resolution
-                    # state and bumps last_seen_at to NOW(), so the sandbox
-                    # can later reconstruct which legs were live at each
-                    # historical scrape moment.
-                    try:
-                        obs_db.table("market_observatory").upsert(
-                            rows_to_upsert,
-                            on_conflict="market_key",
-                            ignore_duplicates=False
-                        ).execute()
-                        logger.info("Observatory: logged %d observations", len(rows_to_upsert))
-                    except Exception as upsert_exc:
-                        last_exc = upsert_exc
-                        succeeded = False
-                        # Strip optional columns one at a time, retrying after each.
-                        for col in _OPTIONAL_COLS:
-                            if not any(col in r for r in rows_to_upsert):
-                                continue
-                            _strip(rows_to_upsert, col)
-                            try:
-                                obs_db.table("market_observatory").upsert(
-                                    rows_to_upsert,
-                                    on_conflict="market_key",
-                                    ignore_duplicates=False
-                                ).execute()
-                                logger.info(
-                                    "Observatory: logged %d observations (stripped '%s' — apply pending migration to enable)",
-                                    len(rows_to_upsert), col,
-                                )
-                                succeeded = True
-                                break
-                            except Exception as retry_exc:
-                                last_exc = retry_exc
-                                continue
-                        if not succeeded:
-                            logger.error("Observatory logging error: %s", last_exc)
-            except Exception as e:
-                logger.error("Observatory logging error: %s", e)
-
-        threading.Thread(target=_log_observatory_bg, daemon=True).start()
-
         # ── CLV Tracker: update closing lines for pending bets non-blocking ──
         # Pass the precomputed probs dict only — not the full matches list —
         # so matches can be freed as soon as this scope exits.
-        #
-        # Phase 1A audit PR-3a: in addition to the legacy legs-driven path
-        # (which writes closing_prob only for the ~6.5k logged legs out of
-        # 47k observatory rows), we now also run a standalone observatory
-        # capture pass. That path writes closing_prob to ALL pending obs
-        # rows within a 4h pre-game window, raising the calibrator's CLV
-        # signal coverage from 4.7% toward the 60-80% range and unlocking
-        # the dynamic CLV-weight estimator that's currently bound by
-        # CLV_FIT_MIN_OBS=200.
-        # Build the obs-shaped key dict from the same source — the
-        # observatory join keys on (player, prop, side, line) without
-        # game_start (because the obs table is the source of truth for
-        # game_start), so we rekey here.
-        def _obs_keyed_probs(probs: dict) -> dict:
-            out: dict[tuple[str, str, str, float], float] = {}
-            for (player, prop, side, line), v in probs.items():
-                # Source dict uses (player_lower, prop_lower, side, line).
-                # Observatory match expects the same shape — no rekey needed.
-                out[(player, prop, side, float(line))] = float(v)
-            return out
-
         def _update_clv_bg(current_probs=clv_current_probs):
             try:
                 updated_legs = _clv_tracker.update_closing_lines_from_probs(current_probs)
                 finalized = _clv_tracker.finalize_missed()
-                updated_obs = _clv_tracker.update_observatory_closing_lines(
-                    _obs_keyed_probs(current_probs),
-                )
-                if updated_legs or updated_obs or finalized:
+                if updated_legs or finalized:
                     logger.info(
-                        "CLVTracker: legs=%d obs=%d finalized=%d (background)",
-                        updated_legs, updated_obs, finalized,
+                        "CLVTracker: legs=%d finalized=%d (background)",
+                        updated_legs, finalized,
                     )
             except Exception as clv_exc:
                 logger.warning("CLVTracker background error: %s", clv_exc)
@@ -1395,13 +1057,6 @@ def _run_pipeline_body():
                     logger.info("ResultsChecker: %d rows updated in background", updated)
             except Exception as rc_exc:
                 logger.warning("ResultsChecker background error: %s", rc_exc)
-            # Also resolve observatory rows (reuses ESPN cache from above)
-            try:
-                obs_updated = _results_checker.check_observatory_results()
-                if obs_updated:
-                    logger.info("Observatory: %d observations resolved in background", obs_updated)
-            except Exception as obs_exc:
-                logger.warning("Observatory resolution error: %s", obs_exc)
 
         threading.Thread(target=_check_results_bg, daemon=True).start()
 
@@ -1464,18 +1119,6 @@ def startup():
     _reschedule(_state["interval_min"])
     logger.info("Scheduler started. Auto-refresh every %d min.", _state["interval_min"])
 
-    # Warm the RWBC cell cache from calibration_cells so calibrate() works
-    # for the auto-backtester before the first hourly refit completes.
-    # Safe to call even if migration_010 hasn't been applied yet — the
-    # loader logs and returns 0.
-    try:
-        from engine import rwbc_calibration as _rwbc_boot
-        from engine.database import get_db as _get_db_boot
-        n_cells = _rwbc_boot.load_cell_cache_from_db(_get_db_boot())
-        logger.info("Startup: RWBC cell cache warmed with %d cells.", n_cells)
-    except Exception as exc:
-        logger.warning("Startup: RWBC cache warm failed (continuing): %s", exc)
-
     # ── Startup recovery: finalize any missed CLV rows from when the app was down ──
     def _startup_clv_recovery():
         try:
@@ -1487,129 +1130,12 @@ def startup():
 
     threading.Thread(target=_startup_clv_recovery, daemon=True).start()
 
-    # ── RWBC loader + Brier-decomp helpers (used by the hourly refit) ──
-    def _load_observations_for_rwbc(db):
-        """Pull settled observatory rows, group by (league, prop, side),
-        compute global hit rate, and return everything the RWBC fit
-        + history-recording path needs in one dict.
-
-        Recency-weighting: we use a flat weight=1.0 per observation here
-        because the existing isotonic refit's recency loader (60-day
-        half-life) feeds the persistence layer that's already aged the
-        sample; RWBC fitting from market_observatory directly means we
-        get the full population. If you want recency weighting in RWBC,
-        compute weight = exp(-Δdays/H) here. Keeping it flat for v1 so
-        the empirical match with probes 06-07 is exact.
-        """
-        if db is None:
-            return None
-        try:
-            from engine import rwbc_calibration as _rwbc
-            from engine.isotonic_calibration import (
-                calibrate as _apply_iso, load_isotonic_calibration as _load_iso,
-            )
-        except Exception as exc:
-            logger.error("RWBC.load: import failure %s", exc)
-            return None
-
-        # Page through settled observations. We deliberately cap at
-        # MAX_ROWS to avoid an unbounded scan as history grows; the
-        # 60-day half-life already saturates well before this cap.
-        MAX_ROWS = 80_000
-        PAGE = 1000
-        rows: list[dict] = []
-        offset = 0
-        try:
-            while offset < MAX_ROWS:
-                res = (
-                    db.table("market_observatory")
-                      .select("league, prop, side, true_prob, result, game_start, resolved_at")
-                      .neq("result", "pending")
-                      .in_("league", ["NBA", "WNBA", "MLB", "NHL"])
-                      .order("resolved_at", desc=True)
-                      .range(offset, offset + PAGE - 1)
-                      .execute()
-                )
-                chunk = res.data or []
-                if not chunk:
-                    break
-                rows.extend(chunk)
-                if len(chunk) < PAGE:
-                    break
-                offset += PAGE
-        except Exception as exc:
-            logger.error("RWBC.load: query failure %s", exc)
-            return None
-
-        # Convert outcome strings to binary y; drop pushes/dnp.
-        def _y(r):
-            s = str(r or "").lower()
-            if s in ("hit", "won", "win"):  return 1.0
-            if s in ("miss", "lost", "loss"): return 0.0
-            return None
-
-        settled = []
-        for r in rows:
-            y = _y(r.get("result"))
-            tp = r.get("true_prob")
-            if y is None or tp is None:
-                continue
-            try:
-                tp_f = float(tp)
-            except (TypeError, ValueError):
-                continue
-            side = str(r.get("side") or "").strip().lower()
-            if side not in ("over", "under"):
-                continue
-            settled.append({
-                "league": r.get("league"),
-                "prop":   r.get("prop"),
-                "side":   side,
-                "pred":   tp_f,
-                "y":      y,
-                "weight": 1.0,
-                "prob_bucket": _rwbc.bucket_of(tp_f),
-            })
-
-        if not settled:
-            return None
-
-        global_hit_rate = sum(o["y"] for o in settled) / len(settled)
-        by_cell: dict[tuple[str, str, str], list[dict]] = {}
-        for o in settled:
-            by_cell.setdefault((o["league"], o["prop"], o["side"]), []).append(o)
-
-        # Brier comparison: current isotonic vs RWBC, in-sample on the
-        # same population. RWBC is computed AFTER fitting (we'll do that
-        # in the caller), so here we only stage the current-isotonic
-        # Brier — it's free since the curves are already loaded.
-        try:
-            curves = _load_iso()
-        except Exception:
-            curves = None
-
-        brier_current = None
-        if curves:
-            sq_err = 0.0
-            for o in settled:
-                p_iso = _apply_iso(curves, o["league"], o["prop"], o["side"], o["pred"])
-                sq_err += (p_iso - o["y"]) ** 2
-            brier_current = sq_err / len(settled)
-
-        return {
-            "by_cell":         by_cell,
-            "global_hit_rate": global_hit_rate,
-            "n_settled":       len(settled),
-            "brier_current":   brier_current,
-            "brier_rwbc":      None,   # filled by caller post-fit
-            "settled":         settled,  # for post-fit Brier recompute
-        }
-
-    # ── Hourly calibration + correlation refit ──
-    # Updated from daily → hourly: calibration multipliers and leg-pair
-    # correlations both benefit from faster feedback as the backtest log
-    # grows. Each run is a single aggregation query on resolved observations
-    # (no scraping), so the load is negligible.
+    # ── Hourly correlation refit ──
+    # simplify-v1: the only model that still refits is leg-pair correlation
+    # (consumed by the slip-EV Monte Carlo). Calibration / RWBC / sharpness
+    # are gone — the decision number is the conservative min-across-books
+    # devig, which has nothing to learn. Each run is one aggregation query
+    # on resolved legs (no scraping), so the load is negligible.
     def _run_periodic_models():
         # Don't load full table dumps into RAM while a scrape is allocating
         # raw line lists — the overlap blew through the 512 MB tier.
@@ -1630,98 +1156,6 @@ def startup():
             return
 
         try:
-            from engine.isotonic_calibration import update_isotonic_calibration
-            from engine.ev_calculator import reload_calibration
-            curves = update_isotonic_calibration()
-            if curves:
-                reload_calibration()
-                logger.info(
-                    "Hourly refit: isotonic curves reloaded — %d leagues, %d (league,prop) buckets",
-                    len(curves.get("leagues") or {}), len(curves.get("props") or {}),
-                )
-            else:
-                logger.info("Hourly refit: calibration — no mature data yet")
-        except Exception as exc:
-            logger.error("Hourly refit: calibration error: %s", exc)
-
-        # ── RWBC refit ──────────────────────────────────────────────────
-        # Always run, regardless of USE_RWBC flag — that way calibration_cells
-        # stays warm and the Observatory monitoring panels have data even
-        # when the live calibrator is still isotonic. The flag only gates
-        # which calibrator engine/ev_calculator.py consults at scoring time.
-        try:
-            from engine import rwbc_calibration
-            from engine.database import get_db as _get_db
-            db = _get_db()
-            obs = _load_observations_for_rwbc(db)
-            if obs and obs.get("by_cell"):
-                fits = rwbc_calibration.fit_all_cells(
-                    obs["by_cell"], obs["global_hit_rate"],
-                )
-
-                # Compute RWBC Brier on the same population so the trend
-                # panel can plot side-by-side current vs RWBC.
-                if fits and obs.get("settled"):
-                    sq_err = 0.0
-                    for o in obs["settled"]:
-                        fit = fits.get((o["league"], o["prop"], o["side"]))
-                        if fit is None or fit["w_cell"] < rwbc_calibration.W_CELL_HALT_THRESHOLD:
-                            # Halted cell — fall back to raw model prob,
-                            # matching the auto-backtester's display path.
-                            p_rwbc = o["pred"]
-                        else:
-                            p_rwbc = (fit["w_cell"] * o["pred"]
-                                      + (1 - fit["w_cell"]) * fit["p_post"])
-                        sq_err += (p_rwbc - o["y"]) ** 2
-                    brier_rwbc = sq_err / len(obs["settled"])
-                else:
-                    brier_rwbc = None
-
-                pub, skip = rwbc_calibration.publish_if_delta_n_exceeded(db, fits)
-                # Prefer the DB-persisted cells (gives us recency-weighted
-                # historical state across restarts), but fall back to the
-                # in-memory fits if the DB load returns 0 — happens when
-                # migration_010 hasn't landed yet or the table is empty
-                # on first boot. Either way, calibrate() and the Observatory
-                # panels see real data immediately.
-                n_loaded = rwbc_calibration.load_cell_cache_from_db(db)
-                if n_loaded == 0 and fits:
-                    rwbc_calibration.set_cell_cache_from_fits(fits)
-                rwbc_calibration.record_history(
-                    db,
-                    scope="global",
-                    brier_current=obs.get("brier_current"),
-                    brier_rwbc=brier_rwbc,
-                    n_settled=obs.get("n_settled", 0),
-                    publish_skipped=(pub == 0 and skip > 0),
-                )
-                logger.info(
-                    "Hourly refit: RWBC — %d cells fit, %d published, %d gated; "
-                    "Brier current=%.5f rwbc=%.5f",
-                    len(fits), pub, skip,
-                    obs.get("brier_current") or 0.0, brier_rwbc or 0.0,
-                )
-            else:
-                logger.info("Hourly refit: RWBC — no observations available yet")
-        except Exception as exc:
-            logger.error("Hourly refit: RWBC error: %s", exc)
-
-        try:
-            from engine.sharpness_calibration import update_sharpness_weights
-            from engine.consensus import reload_sharpness
-            sharp = update_sharpness_weights()
-            if sharp:
-                n_books = reload_sharpness()
-                logger.info("Hourly refit: sharpness weights refit for %d books", n_books)
-            else:
-                logger.info(
-                    "Hourly refit: sharpness — no per-book CLV data yet "
-                    "(apply migration_003.sql once observations accumulate)",
-                )
-        except Exception as exc:
-            logger.error("Hourly refit: sharpness error: %s", exc)
-
-        try:
             from engine.correlation import update_correlation_map, reload_correlation, MIN_PAIR_OBS
             corr = update_correlation_map()
             if corr:
@@ -1734,24 +1168,6 @@ def startup():
                 logger.info("Hourly refit: correlation — no data yet")
         except Exception as exc:
             logger.error("Hourly refit: correlation error: %s", exc)
-
-        # Brier monitor runs *after* the calibration + sharpness refits so
-        # the snapshot reflects the post-refit state. WARNs if the
-        # calibrated probability is a worse predictor than the raw
-        # consensus over the rolling window — that's the operational
-        # signal that the calibrator regressed and needs attention.
-        try:
-            from engine.calibration_monitor import update_brier_monitor
-            snap = update_brier_monitor()
-            if snap.get("status") == "regression":
-                logger.warning(
-                    "Hourly refit: Brier monitor flagged a regression — "
-                    "raw=%s calibrated=%s n=%s",
-                    snap.get("brier_raw"), snap.get("brier_calibrated"),
-                    snap.get("n_obs"),
-                )
-        except Exception as exc:
-            logger.error("Hourly refit: brier monitor error: %s", exc)
 
     scheduler.add_job(
         _run_periodic_models,
@@ -2187,10 +1603,7 @@ def auto_build_slip(req: SlipRequest, user: Optional[dict] = Depends(get_current
     }
 
 
-# Sandbox endpoints, SandboxRequest, stat-types cache, simulation cache,
-# and per-config invalidation all moved to web/routers/sandbox.py during
-# the Phase-1 router split. The router is mounted at the bottom of this
-# file via `app.include_router(...)`.
+# (Sandbox / strategy-replay endpoints were removed in simplify-v1.)
 
 
 
@@ -2622,41 +2035,6 @@ def _run_pin_scrape():
 
 
 # ---------------------------------------------------------------------------
-# Calibration metrics endpoint
-# ---------------------------------------------------------------------------
-
-@app.get("/api/calibration")
-def get_calibration(user: dict = Depends(get_current_user)):
-    """Return Brier Score, Log-Loss, and calibration buckets from resolved backtest data."""
-    from engine.calibration import evaluate_calibration
-    return evaluate_calibration(user_jwt=user["jwt"])
-
-
-@app.get("/api/analytics")
-def get_analytics(user: dict = Depends(get_current_user)):
-    """
-    Richer analytics payload: calibration + per-league / per-prop performance,
-    cumulative P&L timeline, and slip outcome mix.
-
-    Per-user TTL cache (30s) because the frontend re-hits this on every tab
-    activation and status-poll refresh, but the underlying backtest state
-    rarely changes between those calls. Invalidated on add/delete slip.
-    """
-    uid = user["id"]
-    now = time.monotonic()
-    with _analytics_cache_lock:
-        cached = _analytics_cache.get(uid)
-        if cached and (now - cached[0]) < _ANALYTICS_TTL_SEC:
-            return cached[1]
-
-    from engine.calibration import evaluate_analytics
-    data = evaluate_analytics(user_jwt=user["jwt"])
-    with _analytics_cache_lock:
-        _analytics_cache[uid] = (now, data)
-    return data
-
-
-# ---------------------------------------------------------------------------
 # PrizePicks 1-click slip endpoints
 # ---------------------------------------------------------------------------
 
@@ -2870,9 +2248,9 @@ def admin_trigger_auto_backtest():
     that suppress it when the PrizePicks scrape fails (e.g. on a home IP
     where PP returns "Empty response" via Cloudflare).
 
-    Pairs with USE_RWBC=true + LOCAL_AUTO_BACKTEST_USER_IDS=<uid> to make
-    localhost the exclusive logger for a specific user while the cached
-    bet pool refreshes on each successful scrape cycle.
+    Pairs with LOCAL_AUTO_BACKTEST_USER_IDS=<uid> to make localhost the
+    exclusive logger for a specific user while the cached bet pool refreshes
+    on each successful scrape cycle.
 
     Gated by env: returns 404 unless ENABLE_ADMIN_TRIGGERS=true. NEVER
     enable this in production — it's an unauthenticated slip writer.
@@ -2890,43 +2268,9 @@ def admin_trigger_auto_backtest():
     if db is None:
         raise HTTPException(status_code=500, detail="DB unavailable")
 
-    # The state's serialized bets carry true_prob from whoever last
-    # serialized them (probably an isotonic-calibrated Render snapshot).
-    # Re-score live through the active calibrator path so the admin
-    # trigger reflects what THIS server's calibrator says now. Without
-    # this re-score, RWBC's halts wouldn't be visible on cached bets.
-    from engine import rwbc_calibration as _rwbc
-    use_rwbc = os.getenv("USE_RWBC", "false").lower() in ("true", "1", "yes")
-    rescored = []
-    n_rewritten = 0
-    n_halted_rescore = 0
-    for b in bets_payload:
-        nb = dict(b)
-        raw = b.get("raw_true_prob") or b.get("true_prob")
-        if raw is None:
-            rescored.append(nb)
-            continue
-        if use_rwbc:
-            p_cal = _rwbc.calibrate(float(raw), b.get("league"), b.get("prop_type"), b.get("side"))
-            if p_cal is None:
-                nb["calibration_halted"] = True
-                # Display value falls back to raw model output so this bet
-                # still appears in display contexts; auto-backtester
-                # filters on calibration_halted.
-                nb["true_prob"] = max(0.001, min(0.999, float(raw)))
-                n_halted_rescore += 1
-            else:
-                nb["calibration_halted"] = False
-                nb["true_prob"] = p_cal
-                n_rewritten += 1
-        elif cfg.USE_RAW_CONSENSUS_ONLY:
-            # Raw consensus mode — just use raw_true_prob as true_prob,
-            # bypassing any historical-correction layer. No halts.
-            nb["calibration_halted"] = False
-            nb["true_prob"] = max(0.001, min(0.999, float(raw)))
-            n_rewritten += 1
-        rescored.append(nb)
-    bets_payload = rescored
+    # The cached serialized bets already carry the conservative true_prob
+    # (the worst_case-devig min across books). simplify-v1 has no calibrator
+    # to re-score through, so we use them as-is.
 
     # Mirror the user-selection logic from _auto_log_bg, including the
     # LOCAL_AUTO_BACKTEST_USER_IDS override.
@@ -2950,7 +2294,6 @@ def admin_trigger_auto_backtest():
                    .select("user_id, auto_slip_type, auto_slip_legs, auto_slip_min_prob")
                    .eq("auto_backtest", True).execute()).data or []
 
-    from engine.constants import BREAK_EVEN
     from engine.backtest import BacktestLogger
     MAX_PER_USER = 20
     results = []
@@ -2968,12 +2311,9 @@ def admin_trigger_auto_backtest():
         except (TypeError, ValueError):
             min_prob = None
         if min_prob is None:
-            min_prob = BREAK_EVEN.get((str(n_legs), slip_type.lower()), 0.5407)
+            min_prob = cfg.DEFAULT_LEG_THRESHOLD
 
         pool = [b for b in bets_payload if float(b.get("true_prob") or 0.0) >= min_prob]
-        n_before = len(pool)
-        pool = [b for b in pool if not b.get("calibration_halted")]
-        n_skipped = n_before - len(pool)
 
         bl = BacktestLogger(user_id=uid, db_client=db)
         n_logged = 0
@@ -2988,45 +2328,35 @@ def admin_trigger_auto_backtest():
             "slip_type": slip_type,
             "n_legs": n_legs,
             "min_prob": min_prob,
-            "pool_before_halt": n_before,
-            "skipped_circuit_breaker": n_skipped,
-            "pool_after_halt": len(pool),
+            "pool": len(pool),
             "slips_logged": n_logged,
         })
         logger.info(
-            "auto_backtest    user=%s admin_trigger slips_logged=%d skipped_due_to_circuit_breaker=%d pool=%d",
-            uid, n_logged, n_skipped, len(pool),
+            "auto_backtest    user=%s admin_trigger slips_logged=%d pool=%d",
+            uid, n_logged, len(pool),
         )
 
-    # Diagnostic histogram so the operator can see WHERE the re-scored bets
-    # landed in probability space — explains zero-pool results when every
-    # bet got shrunk below the user threshold.
-    rescored_bin = {"<0.50": 0, "0.50-0.55": 0, "0.55-0.60": 0,
-                    "0.60-0.65": 0, "0.65-0.70": 0, ">=0.70": 0,
-                    "halted": 0, "no_raw": 0}
+    # Diagnostic histogram so the operator can see WHERE the bets land in
+    # probability space — explains zero-pool results when every bet sits
+    # below the user threshold.
+    prob_bin = {"<0.50": 0, "0.50-0.55": 0, "0.55-0.60": 0,
+                "0.60-0.65": 0, "0.65-0.70": 0, ">=0.70": 0, "no_prob": 0}
     for b in bets_payload:
-        if b.get("calibration_halted"):
-            rescored_bin["halted"] += 1; continue
         p = b.get("true_prob")
         if p is None:
-            rescored_bin["no_raw"] += 1; continue
+            prob_bin["no_prob"] += 1; continue
         p = float(p)
-        if   p < 0.50: rescored_bin["<0.50"]    += 1
-        elif p < 0.55: rescored_bin["0.50-0.55"] += 1
-        elif p < 0.60: rescored_bin["0.55-0.60"] += 1
-        elif p < 0.65: rescored_bin["0.60-0.65"] += 1
-        elif p < 0.70: rescored_bin["0.65-0.70"] += 1
-        else:          rescored_bin[">=0.70"]   += 1
+        if   p < 0.50: prob_bin["<0.50"]    += 1
+        elif p < 0.55: prob_bin["0.50-0.55"] += 1
+        elif p < 0.60: prob_bin["0.55-0.60"] += 1
+        elif p < 0.65: prob_bin["0.60-0.65"] += 1
+        elif p < 0.70: prob_bin["0.65-0.70"] += 1
+        else:          prob_bin[">=0.70"]   += 1
 
     return {
         "ok": True,
         "bets_in_state": len(bets_payload),
-        "use_rwbc": use_rwbc,
-        "rescore": {
-            "n_recalibrated":   n_rewritten,
-            "n_halted_by_RWBC": n_halted_rescore,
-            "histogram":        rescored_bin,
-        },
+        "histogram": prob_bin,
         "users": results,
     }
 
@@ -3334,379 +2664,6 @@ def delete_backtest_slip(slip_id: str, user: dict = Depends(get_current_user)):
 
 
 # ── Admin / diagnostics moved to web/routers/admin.py ─────────────────────
-
-
-# ── Market Observatory Endpoints ───────────────────────────────────────────
-
-# Per-league row caps. The earlier endpoint took the 100 newest resolved +
-# 100 newest pending GLOBALLY — which meant a high-volume league (NBA)
-# would crowd out every NHL row in-season and every NHL row would be
-# absent off-season too, since NHL never makes the global top-N by
-# created_at. The UI's Market Feed (Verified Lines) table then showed
-# "no NHL" not because the observatory wasn't logging NHL — it WAS — but
-# because the API capped the response before NHL could surface.
-#
-# Per-league fetch: each (league × result-bucket) gets its own cap, so
-# low-volume leagues are guaranteed visibility. Total ceiling is large
-# enough to be useful for the UI but bounded so a single endpoint hit
-# can't OOM the 512 MB tier.
-_OBS_PER_LEAGUE_PER_BUCKET_LIMIT = 200          # per league × {resolved, pending}
-_OBS_RESPONSE_HARD_CAP           = 3000         # overall safety net
-
-_OBS_TRACKED_LEAGUES = ("NBA", "WNBA", "MLB", "NHL", "NCAAB", "SOCCER")
-
-
-def _fetch_observatory_for_league(db, league: str, *, resolved: bool,
-                                  limit: int) -> list[dict]:
-    """One DB call: latest `limit` rows of (league, resolved-or-pending),
-    ordered most-recent first. Pulled into a helper so the per-league
-    loop is uniform across resolved/pending and easier to test."""
-    q = db.table("market_observatory").select("*").eq("league", league)
-    if resolved:
-        q = q.neq("result", "pending")
-    else:
-        q = q.eq("result", "pending")
-    res = q.order("created_at", desc=True).limit(limit).execute()
-    return res.data or []
-
-
-@app.get("/api/observatory")
-def get_observatory_data(league: Optional[str] = None):
-    """Returns the latest observations from the market_observatory table.
-
-    Per-league round-robin: each tracked league gets up to
-    `_OBS_PER_LEAGUE_PER_BUCKET_LIMIT` resolved AND that many pending
-    rows. Low-volume leagues (NHL off-season, WNBA off-season) thus
-    stay visible in the UI even when high-volume leagues dominate the
-    global recency ordering.
-
-    `?league=NHL` requests a single league at the full per-bucket cap —
-    useful for the UI to deep-dive one league without re-pulling the
-    others.
-    """
-    try:
-        from engine.database import get_db
-        db = get_db()
-        if not db:
-            return []
-
-        from engine.constants import is_excluded_league
-        if league and is_excluded_league(league):
-            # Excluded leagues (e.g. soccer) must never return rows even
-            # if an explicit query param requests them.
-            return []
-        leagues = [league.upper()] if league else list(_OBS_TRACKED_LEAGUES)
-        per_bucket = _OBS_PER_LEAGUE_PER_BUCKET_LIMIT
-
-        combined: list[dict] = []
-        for lg in leagues:
-            try:
-                resolved = _fetch_observatory_for_league(db, lg, resolved=True,  limit=per_bucket)
-                pending  = _fetch_observatory_for_league(db, lg, resolved=False, limit=per_bucket)
-            except Exception as exc:
-                logger.warning("Observatory: fetch failed for %s: %s", lg, exc)
-                continue
-            combined.extend(resolved)
-            combined.extend(pending)
-            if len(combined) >= _OBS_RESPONSE_HARD_CAP:
-                # Already over the cap from one verbose league; stop
-                # before doing more I/O we'll just throw away.
-                break
-
-        # Newest first across the union so the UI's "latest" ordering is
-        # preserved. Truncate to the hard cap *after* the round-robin so
-        # the cap doesn't bias against the last-iterated leagues.
-        combined.sort(key=lambda r: r.get("created_at") or "", reverse=True)
-        if len(combined) > _OBS_RESPONSE_HARD_CAP:
-            combined = combined[:_OBS_RESPONSE_HARD_CAP]
-        return combined
-    except Exception as e:
-        logger.error("API: observatory fetch error: %s", e)
-        return []
-
-
-@app.get("/api/observatory/coverage")
-def get_observatory_coverage():
-    """Per-league row counts for the observatory. Surfaces a simple
-    diagnostic the UI can use to tell the user "NHL has 0 rows logged"
-    vs "NHL has 47 rows logged but the API only returns 200 newest" —
-    the second was the long-standing source of the "no NHL" complaint.
-
-    Counts are CHEAP — Postgres handles `count='exact'` on a few
-    thousand rows in milliseconds — and run once per request. Cached
-    upstream by the dashboard tab so we're not hitting this every paint.
-
-    Returns:
-        {
-          "by_league": [
-            {"league": "NBA", "total": 12345, "resolved": 9000,
-             "pending": 3345, "newest_at": "2026-05-14T01:00:00Z"},
-            ...
-          ],
-          "total": 23456,
-        }
-    """
-    try:
-        from engine.database import get_db
-        db = get_db()
-        if not db:
-            return {"by_league": [], "total": 0}
-
-        by_league: list[dict] = []
-        grand_total = 0
-        for lg in _OBS_TRACKED_LEAGUES:
-            try:
-                # Three head-counts per league: total, resolved-only,
-                # pending-only. Each runs as a separate Postgres COUNT
-                # with the planner choosing an index — sub-ms on the
-                # current row volume.
-                total_res = (db.table("market_observatory")
-                             .select("id", count="exact")
-                             .eq("league", lg)
-                             .limit(1)
-                             .execute())
-                total = total_res.count or 0
-                pending_res = (db.table("market_observatory")
-                               .select("id", count="exact")
-                               .eq("league", lg)
-                               .eq("result", "pending")
-                               .limit(1)
-                               .execute())
-                pending = pending_res.count or 0
-                resolved = max(0, total - pending)
-
-                newest_at = None
-                if total > 0:
-                    newest_res = (db.table("market_observatory")
-                                  .select("created_at")
-                                  .eq("league", lg)
-                                  .order("created_at", desc=True)
-                                  .limit(1)
-                                  .execute())
-                    if newest_res.data:
-                        newest_at = newest_res.data[0].get("created_at")
-
-                by_league.append({
-                    "league":    lg,
-                    "total":     total,
-                    "resolved":  resolved,
-                    "pending":   pending,
-                    "newest_at": newest_at,
-                })
-                grand_total += total
-            except Exception as exc:
-                logger.warning("Observatory coverage: %s failed: %s", lg, exc)
-                by_league.append({
-                    "league": lg, "total": 0, "resolved": 0,
-                    "pending": 0, "newest_at": None,
-                    "error": str(exc)[:120],
-                })
-        return {"by_league": by_league, "total": grand_total}
-    except Exception as e:
-        logger.error("API: observatory coverage error: %s", e)
-        return {"by_league": [], "total": 0}
-
-@app.get("/api/observatory/multipliers")
-def get_calibration_map_api():
-    """Per-(league, prop, side) calibration summary for the Observatory tab.
-
-    For every fitted prop curve, reports the calibrated probability at the
-    DISPLAY_ANCHOR (currently 0.60) — i.e. exactly what `calibrate()` would
-    return for raw_prob = anchor. This is the calibration we *actually*
-    apply on the bet path, surfaced per (league, prop, side) so over and
-    under correction asymmetries are visible.
-
-    Shape:
-
-        {
-          "anchor": 0.60,
-          "fitted_at": "...",
-          "rows": [
-            {"league": "NBA", "prop": "Points",
-             "over":  {"q": 0.573, "delta_pp": -2.7, "n_eff": 120.0, "calibrated": true},
-             "under": {"q": 0.612, "delta_pp":  1.2, "n_eff":  95.0, "calibrated": true}}
-          ]
-        }
-
-    A side reports `calibrated: false` when its prop curve is too thin to
-    surface (the apply path then falls through to global, which is still
-    reflected by `q`).
-    """
-    try:
-        from engine.isotonic_calibration import (
-            load_isotonic_calibration, _interp, _shrink, DISPLAY_ANCHOR,
-        )
-        curves = load_isotonic_calibration()
-        global_level = curves.get("global")
-        q_global = _interp(global_level["curve"], DISPLAY_ANCHOR) if global_level else DISPLAY_ANCHOR
-
-        # Bucket prop curves into rows keyed by (league, prop), with over/under
-        # as siblings. Mirrors the heatmap's pairing so the two panels read
-        # the same way.
-        rows: dict[tuple[str, str], dict] = {}
-        for key, level in (curves.get("props") or {}).items():
-            if not level:
-                continue
-            parts = key.split("|")
-            if len(parts) != 3:
-                continue
-            league, prop, side = parts
-            if side not in ("over", "under"):
-                continue
-            q = _shrink(q_global, level, DISPLAY_ANCHOR)
-            rows.setdefault((league, prop), {"league": league, "prop": prop,
-                                             "over": None, "under": None})
-            rows[(league, prop)][side] = {
-                "q":          round(q, 4),
-                "delta_pp":   round((q - DISPLAY_ANCHOR) * 100, 2),
-                "n_eff":      round(float(level.get("n_eff") or 0.0), 2),
-                "calibrated": True,
-            }
-
-        out_rows = sorted(
-            rows.values(),
-            key=lambda r: (r["league"], r["prop"]),
-        )
-        return {
-            "anchor":    DISPLAY_ANCHOR,
-            "fitted_at": curves.get("fitted_at"),
-            "rows":      out_rows,
-        }
-    except Exception as e:
-        logger.error("API: calibration fetch error: %s", e)
-        return {"anchor": 0.60, "fitted_at": None, "rows": []}
-
-
-@app.get("/api/observatory/rwbc")
-def get_rwbc_observatory():
-    """Per-cell RWBC state for the Observatory monitoring panels.
-
-    Returns one row per (league, prop, side) cell currently in the
-    process-local cell cache, plus a small `summary` dict for the
-    headline numbers above the chart. Used by:
-      - Panel 2 (cell trust heatmap)  → rows[]
-      - Panel 1 (calibration curves)  → derived from rows[] + observatory hits
-
-    Mirrors what's persisted in calibration_cells; for fresh boots the
-    cache may be empty until the first refit completes. In that case
-    `rows` is [] and the panels render a "warming up" placeholder.
-    """
-    try:
-        from engine import rwbc_calibration as _rwbc
-        cells = _rwbc.all_cells()
-        summary = _rwbc.cache_stats()
-        rows = [{
-            "league":            c.league,
-            "prop":              c.prop,
-            "side":              c.side,
-            "w_cell":            round(c.w_cell, 4),
-            "p_post":            round(c.p_post, 4),
-            "n_eff":             round(c.n_eff, 1),
-            "resolution":        round(c.resolution, 6),
-            "reliability_error": round(c.reliability_error, 6),
-            "mean_pred":         round(c.mean_pred, 4),
-            "mean_obs":          round(c.mean_obs, 4),
-            "halted":            c.w_cell < _rwbc.W_CELL_HALT_THRESHOLD,
-            "last_fit_at":       c.last_fit_at.isoformat() if c.last_fit_at else None,
-            "last_publish_at":   c.last_publish_at.isoformat() if c.last_publish_at else None,
-        } for c in cells]
-        return {
-            "summary": summary,
-            "rows": rows,
-        }
-    except Exception as exc:
-        logger.error("API: RWBC observatory fetch error: %s", exc)
-        return {"summary": {}, "rows": []}
-
-
-@app.get("/api/observatory/rwbc/trend")
-def get_rwbc_brier_trend(days: int = 30):
-    """Brier-trend sparkline for Observatory Panel 3.
-
-    Pulls the last `days` of calibration_history rows for the 'global'
-    scope, returns aligned current-vs-RWBC Brier series. The plot is
-    a small sparkline; ~30 points (one per refit, ~hourly) is plenty.
-    """
-    try:
-        from engine.database import get_db as _get_db
-        db = _get_db()
-        if db is None:
-            return {"series": []}
-        # Bound the response — at hourly refits, 30 days is ~720 rows.
-        limit = max(50, min(days * 24 + 50, 1200))
-        res = (
-            db.table("calibration_history")
-              .select("fit_at, brier_current, brier_rwbc, n_settled, publish_skipped")
-              .eq("scope", "global")
-              .order("fit_at", desc=True)
-              .limit(limit)
-              .execute()
-        )
-        rows = list(reversed(res.data or []))  # chronological for plot
-        return {"series": rows}
-    except Exception as exc:
-        logger.error("API: RWBC trend fetch error: %s", exc)
-        return {"series": []}
-
-
-@app.get("/api/calibration/brier_monitor")
-def get_calibration_brier_monitor_api():
-    """Rolling Brier-score monitor history.
-
-    Each entry compares the calibrated probability vs the raw consensus
-    probability over the last 7 days of resolved observations. A
-    `status="regression"` entry means the calibrator made things worse
-    on that snapshot — investigate before acting on +EV signals.
-
-    Returns:
-        {
-          "history": [snapshot, ...],          # most recent last
-          "latest":  snapshot | None,
-        }
-    """
-    try:
-        from engine.calibration_monitor import load_brier_history
-        history = load_brier_history()
-        return {
-            "history": history,
-            "latest":  history[-1] if history else None,
-        }
-    except Exception as e:
-        logger.error("API: brier monitor fetch error: %s", e)
-        return {"history": [], "latest": None}
-
-
-@app.get("/api/calibration/heatmap")
-def get_calibration_heatmap_api():
-    """Per-(league, prop) actual hit rate sliced by 5% expected-probability
-    bands. Sourced from the incremental calibration sufficient statistics so
-    no extra database round-trip is needed."""
-    try:
-        from engine.isotonic_calibration import export_heatmap
-        return export_heatmap()
-    except Exception as e:
-        logger.error("API: calibration heatmap fetch error: %s", e)
-        return {"buckets": [], "rows": []}
-
-
-@app.get("/api/calibration/curves")
-def get_calibration_curves_api():
-    """Full hierarchical calibration state for diagnostics / debugging.
-
-    Returns the global, per-league, and per-(league, prop) curves with their
-    effective sample sizes, plus the empirical book sharpness weights when
-    available. Intended for power users; not currently surfaced in the UI.
-    """
-    try:
-        from engine.isotonic_calibration import load_isotonic_calibration
-        from engine.sharpness_calibration import load_sharpness_weights
-        return {
-            "isotonic":  load_isotonic_calibration(),
-            "sharpness": load_sharpness_weights(),
-        }
-    except Exception as e:
-        logger.error("API: calibration curves fetch error: %s", e)
-        return {"isotonic": {}, "sharpness": {}}
 
 
 # ===========================================================================
@@ -4017,8 +2974,6 @@ async def billing_webhook(request: Request):
 # from web/state.py only, never from this module. Mounted here so the
 # OpenAPI schema stays unified and the lifespan / scheduler stays one place.
 # ---------------------------------------------------------------------------
-from web.routers import sandbox as _r_sandbox
 from web.routers import admin as _r_admin
 
-app.include_router(_r_sandbox.router)
 app.include_router(_r_admin.router)

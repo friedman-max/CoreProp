@@ -12,49 +12,18 @@ from typing import Optional
 import numpy as np
 
 from engine.constants import (
-    OPTIMAL_BREAK_EVEN,
-    OPTIMAL_IMPLIED_DECIMAL,
     POWER_PAYOUTS,
     FLEX_PAYOUTS,
+    score_leg,
+    per_leg_break_even,
 )
 from engine.devig import prob_to_american
-from engine.isotonic_calibration import (
-    load_isotonic_calibration, calibrate as _apply_isotonic_calibration,
-)
-# RWBC drop-in alternative — only consulted when config.USE_RWBC=true.
-# Returns Optional[float]: a number means "calibrated prob", None means
-# "cell untradeable" (circuit breaker fired). The wrapper below picks
-# the calibrator at import time.
-from engine import rwbc_calibration as _rwbc
-# Beta calibration (Maybe Cool Fix C2) — when USE_BETA_CAL=true and the
-# cell has fitted params, beta-cal supersedes RWBC/isotonic. Returns None
-# when the cell isn't yet fit; the caller falls through to RWBC/isotonic.
-from engine import beta_calibration as _beta
-from engine.shade_signal import pp_shade as _pp_shade
-from config import (
-    USE_RWBC as _USE_RWBC,
-    USE_RAW_CONSENSUS_ONLY as _USE_RAW,
-    USE_BETA_CAL as _USE_BETA_CAL,
-    USE_SHARP_ANCHOR as _USE_SHARP,
-)
 from engine.correlation import build_correlation_matrix, legs_metadata_from_bets
-
-# Module-level calibration curves (refreshed on import or via reload_calibration).
-# We switched from the Beta-Binomial empirical table to the hierarchical
-# isotonic curves so a sparse (league, prop, side) bucket borrows strength
-# from neighbouring raw-prob bins instead of falling off a hard band edge.
-_calibration_curves: dict = load_isotonic_calibration()
 
 
 # ---------------------------------------------------------------------------
 # Individual bet result
 # ---------------------------------------------------------------------------
-
-def reload_calibration():
-    """Reload the isotonic calibration curves from disk (called after each refit)."""
-    global _calibration_curves
-    _calibration_curves = load_isotonic_calibration()
-
 
 class BetResult:
     __slots__ = (
@@ -63,13 +32,6 @@ class BetResult:
         "raw_true_prob", "true_prob", "true_odds", "edge", "individual_ev_pct",
         "over_odds", "under_odds", "both_sided",
         "pp_player_id", "start_time", "market_width", "team",
-        # RWBC: set True when the calibration cell halted this leg
-        # (w_cell < W_CELL_HALT_THRESHOLD or unknown cell). Auto-backtest
-        # worker filters legs with this=True from the slip pool.
-        "calibration_halted",
-        # Sharp anchor: True when Pinnacle has no two-sided price for this
-        # market. Display-only; the worker never logs sharp_missing legs.
-        "sharp_missing",
     )
 
     def __init__(
@@ -89,7 +51,6 @@ class BetResult:
         start_time: str = "",
         market_width: Optional[float] = None,
         team: str = "",
-        sharp_missing: bool = False,
     ):
         self.bet_id = bet_id
         self.player_name = player_name
@@ -98,7 +59,6 @@ class BetResult:
         self.pp_line = pp_line
         self.fd_line = fd_line
         self.side = side
-        self.raw_true_prob = true_prob
         self.over_odds = over_odds
         self.under_odds = under_odds
         self.both_sided = both_sided
@@ -107,78 +67,20 @@ class BetResult:
         self.market_width = market_width
         self.team = team or ""
 
-        # Calibration. Two code paths gated by config.USE_RWBC:
-        #
-        # USE_RWBC=false (default) — Hierarchical isotonic with Bayesian
-        #   shrinkage: global PAV curve combined with the (league, prop,
-        #   side) curve via κ-shrinkage. Strictly more flexible than the
-        #   Beta-Binomial bands because PAV borrows monotone signal across
-        #   neighbouring raw-prob bins instead of cliffing at hard band
-        #   edges. The [0.001, 0.999] window is a numerical guard for
-        #   downstream log-loss / EV math; the calibrated number is
-        #   allowed to push above or below raw_prob when the data warrants.
-        #
-        # USE_RWBC=true — Reliability-Weighted Bayesian Calibration. Per
-        #   (league, prop, side) cell with hard circuit breaker. A None
-        #   return from _rwbc.calibrate() means the cell is untradeable;
-        #   we still need to populate self.true_prob for display surfaces
-        #   (the Lines tab, +EV table tooltip), so we fall back to
-        #   raw_true_prob for display while setting calibration_halted=True
-        #   so the auto-backtester can filter the leg out of slip pools.
-        self.calibration_halted = False
-        self.sharp_missing = bool(sharp_missing)
-        # Beta-cal preempts when both USE_BETA_CAL=true AND the cell has
-        # fitted params; otherwise falls through to RWBC / isotonic in
-        # that order. Diagnostic mode (USE_RAW) supersedes everything.
-        # SHARP ANCHOR supersedes ALL OF IT: the incoming true_prob is
-        # already the devigged Pinnacle fair (or the display-only blend
-        # when sharp_missing) — no calibrator may touch it.
-        beta_calibrated_prob = None
-        if not _USE_RAW and not _USE_SHARP and _USE_BETA_CAL:
-            beta_calibrated_prob = _beta.calibrate(
-                league, prop_type, side, true_prob,
-                shade=_pp_shade(true_prob),
-            )
+        # simplify-v1: NO calibration. The incoming `true_prob` is already the
+        # most-conservative devigged probability across books (the
+        # engine.consensus worst_case_prob). We only clamp it for the
+        # downstream log-loss / EV math. There is no sharp-anchor, no isotonic,
+        # no RWBC, no beta — by design.
+        self.true_prob = max(0.001, min(0.999, true_prob))
+        self.raw_true_prob = self.true_prob
+        self.true_odds = prob_to_american(self.true_prob)
 
-        if _USE_SHARP:
-            # Sharp-anchor mode: live Pinnacle devig is the entire model.
-            # No isotonic, no RWBC, no beta, no shrinkage — by design.
-            # sharp_missing legs keep the blend for DISPLAY but are marked
-            # halted so the auto-backtest worker can never log them.
-            calibrated_prob = max(0.001, min(0.999, true_prob))
-            if self.sharp_missing:
-                self.calibration_halted = True
-        elif _USE_RAW:
-            # Diagnostic mode — bypass all calibrators. true_prob is set
-            # to the vig-stripped book consensus exactly. Useful for A/B
-            # against the calibrated paths. Halt flag is always False
-            # because there's no model layer that could halt.
-            calibrated_prob = max(0.001, min(0.999, true_prob))
-        elif beta_calibrated_prob is not None:
-            # Maybe Cool Fix C2: shade-conditioned beta calibration.
-            # When cell params exist, beta-cal output supersedes RWBC.
-            calibrated_prob = beta_calibrated_prob
-        elif _USE_RWBC:
-            _rwbc_prob = _rwbc.calibrate(true_prob, league, prop_type, side)
-            if _rwbc_prob is None:
-                # Cell halted — display surfaces see raw model output but
-                # auto-backtest skips. edge/individual_ev_pct stay at the
-                # raw values; the auto-backtest worker is the gate.
-                self.calibration_halted = True
-                calibrated_prob = max(0.001, min(0.999, true_prob))
-            else:
-                calibrated_prob = _rwbc_prob
-        else:
-            _raw_calibrated = _apply_isotonic_calibration(
-                _calibration_curves, league, prop_type, side, true_prob,
-            )
-            calibrated_prob = max(0.001, min(0.999, _raw_calibrated))
-
-        self.true_prob = calibrated_prob
-        self.true_odds = prob_to_american(calibrated_prob)
-
-        self.edge = round(calibrated_prob - OPTIMAL_BREAK_EVEN, 6)
-        self.individual_ev_pct = round((calibrated_prob * OPTIMAL_IMPLIED_DECIMAL) - 1.0, 6)
+        # Display EV vs the 6-Power break-even (for sorting / the UI only — the
+        # real recommendation gate is `true_prob >= the user's threshold`).
+        # Uses the canonical context-aware helper instead of a hardcoded const.
+        self.edge = round(self.true_prob - per_leg_break_even(6, "power"), 6)
+        self.individual_ev_pct = round(score_leg(self.true_prob, slip_n=6, slip_type="power"), 6)
 
     def score_for(self, slip_n: int = 6, slip_type: str = "power") -> float:
         """Context-aware per-leg EV%. Returns the leg's EV as a fraction of
@@ -187,11 +89,6 @@ class BetResult:
         assumes Power-6 and misranks legs intended for shorter slips."""
         from engine.constants import score_leg
         return score_leg(self.true_prob, slip_n=slip_n, slip_type=slip_type)
-
-    def tier(self) -> str:
-        """Phase 1A tier label for this leg. 'A' / 'B' / 'C' / 'REJECT'."""
-        from engine.tier import tier_for_prob
-        return tier_for_prob(self.true_prob, calibration_halted=self.calibration_halted)
 
     def to_dict(self) -> dict:
         return {
@@ -213,16 +110,6 @@ class BetResult:
             "under_odds":        self.under_odds,
             "both_sided":        self.both_sided,
             "start_time":        self.start_time,
-            # RWBC circuit breaker flag. True iff the calibration cell for
-            # this bet had w_cell < W_CELL_HALT_THRESHOLD at scoring time
-            # (auto-backtest worker filters legs with this=True).
-            "calibration_halted": bool(getattr(self, "calibration_halted", False)),
-            # Sharp anchor: True when Pinnacle had no two-sided price.
-            # Display-only legs; never auto-logged in sharp mode.
-            "sharp_missing": bool(getattr(self, "sharp_missing", False)),
-            # Phase 1A tier label. The auto-backtest worker reads this to
-            # decide which (slip_type, n_legs) combos this leg may enter.
-            "tier": self.tier(),
         }
 
 

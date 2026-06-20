@@ -1,22 +1,21 @@
 """Pin the BetResult invariants.
 
 BetResult is the value object that flows from the matching loop to the
-client. Two things must hold no matter what:
+client. In simplify-v1 there is NO calibration: the incoming `true_prob` is
+already the most-conservative devigged probability across books, and BetResult
+only clamps it to [0.001, 0.999] for the downstream log/EV math.
 
-  * EV math: individual_ev_pct == calibrated_prob * OPTIMAL_IMPLIED_DECIMAL - 1
-  * Calibrated prob is clipped to 0.999 (the downstream Kelly math depends
-    on log(1 - p) being finite).
-
-When the calibration system is empty (`_calibration_curves = {}` shape on
-cold start), `calibrate()` should return the raw probability — no shrinkage,
-no clipping unless required. We verify both regimes.
+  * EV math: individual_ev_pct == score_leg(true_prob, 6, "power")
+  * true_prob is clipped to 0.999 (downstream Kelly math depends on
+    log(1 - p) being finite).
+  * raw_true_prob == true_prob (kept for the wire format).
 """
 from __future__ import annotations
 
 import pytest
 
 from engine.ev_calculator import BetResult
-from engine.constants import OPTIMAL_IMPLIED_DECIMAL
+from engine.constants import score_leg, per_leg_break_even
 
 
 def _bet(prob: float, side: str = "over") -> BetResult:
@@ -36,36 +35,31 @@ def _bet(prob: float, side: str = "over") -> BetResult:
     )
 
 
-def test_ev_formula_matches_calibrated_prob():
-    """individual_ev_pct must be derived from the calibrated prob, never
-    from the raw. (The bug migration_006 fixed went the other way around
-    — calibrator training on its own output — but the EV math always read
-    the calibrated value.)"""
+def test_ev_formula_matches_true_prob():
+    """individual_ev_pct is the context-aware per-leg EV vs the 6-Power
+    break-even, derived from true_prob (no calibration in simplify-v1)."""
     b = _bet(0.60)
-    expected = round(b.true_prob * OPTIMAL_IMPLIED_DECIMAL - 1.0, 6)
+    expected = round(score_leg(b.true_prob, slip_n=6, slip_type="power"), 6)
     assert b.individual_ev_pct == pytest.approx(expected, abs=1e-6)
 
 
-def test_calibrated_prob_clipped_below_one():
-    """Sandbox / Kelly math needs log(1 - p) finite. Clip ceiling is 0.999."""
+def test_true_prob_clipped_below_one():
+    """Kelly math needs log(1 - p) finite. Clip ceiling is 0.999."""
     b = _bet(0.9999)
     assert b.true_prob <= 0.999
 
 
-def test_raw_true_prob_preserved():
-    """raw_true_prob keeps the input untouched; true_prob is the calibrated
-    value. This separation is migration_006's invariant."""
+def test_raw_true_prob_equals_true_prob():
+    """simplify-v1: with no calibration, raw_true_prob == true_prob (both the
+    clamped conservative devig)."""
     b = _bet(0.55)
     assert b.raw_true_prob == pytest.approx(0.55)
-    # On a fresh install with no calibration curves, calibrate is a no-op
-    # and true_prob == raw_true_prob. The constraint we can assert
-    # universally is that calibrated never exceeds the 0.999 ceiling.
+    assert b.true_prob == pytest.approx(b.raw_true_prob)
     assert b.true_prob <= 0.999
 
 
-def test_to_dict_carries_calibrated_and_raw():
-    """The wire format must serialize BOTH probabilities so the observatory
-    log can distinguish raw consensus from calibrated output."""
+def test_to_dict_carries_true_and_raw():
+    """The wire format serializes both probabilities."""
     b = _bet(0.55)
     d = b.to_dict()
     assert "true_prob" in d
@@ -74,7 +68,7 @@ def test_to_dict_carries_calibrated_and_raw():
 
 
 def test_edge_relative_to_break_even():
-    """edge = calibrated_prob - OPTIMAL_BREAK_EVEN. Sanity-bound for 50%."""
+    """edge = true_prob - per_leg_break_even(6, 'power'). Sanity-bound at 50%."""
     b = _bet(0.50)
-    # edge should be within (-0.1, 0.1) for a coin-flip after calibration.
+    assert b.edge == pytest.approx(0.50 - per_leg_break_even(6, "power"), abs=1e-6)
     assert -0.1 < b.edge < 0.1

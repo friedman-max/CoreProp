@@ -21,7 +21,13 @@ ACTIVE_LEAGUES = {
     "MLB":   os.getenv("LEAGUE_MLB", "true").lower()   == "true",
     "NHL":   os.getenv("LEAGUE_NHL", "true").lower()   == "true",
     "NCAAB": os.getenv("LEAGUE_NCAAB", "true").lower() == "true",
-    "SOCCER": os.getenv("LEAGUE_SOCCER", "true").lower() == "true",
+    # Soccer is DEFERRED in simplify-v1: its props are single-sided ("N+"
+    # milestone ladders) with no two-sided market, so conservative devig
+    # can't be trusted yet (this was the product's central failure mode).
+    # The scraper/parser/scoring code stays in the tree, dormant — set
+    # LEAGUE_SOCCER=true once a trustworthy single-sided decision path
+    # exists (v2). Defaulting OFF here is the whole "defer soccer" switch.
+    "SOCCER": os.getenv("LEAGUE_SOCCER", "false").lower() == "true",
 }
 
 # FanDuel URLs per league
@@ -53,43 +59,32 @@ FUZZY_THRESHOLD = 91
 # Single-sided vig assumption
 SINGLE_SIDE_VIG = 0.070
 
+# ---------------------------------------------------------------------------
+# simplify-v1 decision knobs. The whole engine is now: true_prob = the most
+# conservative devigged probability across books (engine.consensus
+# worst_case_prob); recommend a leg iff true_prob >= the user's threshold.
+# ---------------------------------------------------------------------------
+# Server-side floor for which legs enter the +EV pool / are shown. This is the
+# DEFAULT for a user's own threshold when they haven't set one; the per-user
+# threshold (auto_slip_min_prob) is the real gate. ~0.55 sits just above the
+# 3-Power break-even (0.5503) so the default isn't -EV out of the box.
+DEFAULT_LEG_THRESHOLD = float(os.getenv("DEFAULT_LEG_THRESHOLD", "0.55"))
+
+# Juice guardrail for single-sided / milestone lines (NHL goalscorer, NBA
+# double-double / first-basket alts, half-step alts). A book posting an
+# extreme price like -10000 isn't telling us the true probability — it's
+# protecting itself — so we refuse to derive a fair from it. If the only
+# available single-sided American price is more negative than this cutoff,
+# the book contributes nothing and the leg is dropped.
+MAX_SINGLE_SIDED_JUICE = float(os.getenv("MAX_SINGLE_SIDED_JUICE", "-1000"))
+
+# Hard credibility cap on any single-sided devigged probability — no one-way
+# market with no two-sided market behind it deserves more trust than this.
+SINGLE_SIDED_PROB_CAP = float(os.getenv("SINGLE_SIDED_PROB_CAP", "0.90"))
+
 # Server
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))
-
-# ---------------------------------------------------------------------------
-# RWBC (Reliability-Weighted Bayesian Calibration) — feature flag.
-#
-# When true, engine/ev_calculator.py routes the calibration step through
-# engine/rwbc_calibration.py instead of the hierarchical isotonic curve.
-# RWBC is per-(league, prop, side) cell with a hard circuit breaker
-# (w_cell < 0.20 → cell is untradeable, auto-backtester skips). When false
-# the existing isotonic code path is preserved verbatim.
-#
-# Refit cadence + recency half-life are unchanged: RWBC consumes the same
-# observation stream the isotonic refit already loads, so the existing
-# hourly scheduler in web/app.py drives both code paths.
-# ---------------------------------------------------------------------------
-# Default flipped to true after the Phase 1A audit. RWBC's 30 hard-halted
-# cells (NHL/NBA-UNDER/WNBA-UNDER) match FINDINGS.md's "destructive cells"
-# exactly. Leaving it off would re-introduce the auto-backtest's logged-leg
-# pollution from those cells. Set USE_RWBC=false to revert to isotonic-only.
-USE_RWBC = os.getenv("USE_RWBC", "true").lower() in ("true", "1", "yes")
-
-# ---------------------------------------------------------------------------
-# USE_RAW_CONSENSUS_ONLY — diagnostic mode. When true, engine/ev_calculator.py
-# bypasses *both* isotonic AND RWBC calibrators and sets
-#     true_prob = raw_true_prob
-# exactly — the vig-stripped, book-sharpness-weighted consensus from
-# engine.consensus.compute_true_probability(), with no model layer on top.
-#
-# Useful for A/B comparison against the calibrated paths: run two servers
-# side-by-side on different ports, one with USE_RWBC=true and one with
-# USE_RAW_CONSENSUS_ONLY=true, and diff the +EV tables.
-#
-# Takes precedence over USE_RWBC if both are set.
-# ---------------------------------------------------------------------------
-USE_RAW_CONSENSUS_ONLY = os.getenv("USE_RAW_CONSENSUS_ONLY", "false").lower() in ("true", "1", "yes")
 
 # Operational toggles for running a "display-only" comparison server that
 # shouldn't write to shared state. When both set, the server still scrapes
@@ -99,93 +94,8 @@ USE_RAW_CONSENSUS_ONLY = os.getenv("USE_RAW_CONSENSUS_ONLY", "false").lower() in
 DISABLE_AUTO_BACKTEST = os.getenv("DISABLE_AUTO_BACKTEST", "false").lower() in ("true", "1", "yes")
 DISABLE_PERSISTENCE   = os.getenv("DISABLE_PERSISTENCE",   "false").lower() in ("true", "1", "yes")
 
-# ---------------------------------------------------------------------------
-# Maybe Cool Fix experimental toggles. Each is OFF by default; the Phase 3
-# strategy comparison logger runs the same model with these flipped ON to
-# measure the experimental delta against the Holy Fix baseline.
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# SHARP ANCHOR — the OddsJam method. When true, the decision path is ONLY:
-#   fair = devig(Pinnacle two-sided market); tradeable iff fair >= SHARP_MIN_PROB.
-# All calibrators (isotonic / RWBC / beta), sharpness weights, worst-case
-# minimums, and tier routing are BYPASSED for decisions. No Pinnacle price
-# means the leg is display-only and never auto-logged.
-# Validated on 40k settled rows: pin>=0.56 hits 60.5% (UNDER 65.6%) vs the
-# 54.2% 6-Flex break-even; pin>=0.54 hits 53.7% (below BE) — the floor is
-# load-bearing, never lower it for volume.
-# ---------------------------------------------------------------------------
-USE_SHARP_ANCHOR = os.getenv("USE_SHARP_ANCHOR", "true").lower() in ("true", "1", "yes")
-SHARP_MIN_PROB = float(os.getenv("SHARP_MIN_PROB", "0.56"))
-
-# Fair-value source for the sharp engine. Backtested (29 days, placeable
-# 3-Power sim, real outcomes):
-#   "pinnacle"   pin devig only.            7.1 legs/d, 60.5% hit, +25.0u  (default)
-#   "hybrid"     pin first; rows Pinnacle doesn't price fall back to the
-#                worst-case-across-books fair, UNDER side only.
-#                11.2 legs/d, 59.5% hit, +11.0u  (more volume, diluted ROI)
-#   "worst_case" most conservative book + worst-case devig for everything.
-#                With under-gate off this is the any-side rule: 29.9 legs/d
-#                but 55.1% hit ~= exactly break-even -> realized -14.0u.
-#                Kept for experimentation; not a recommended default.
-# Default switched to "hybrid" (owner decision 2026-06-10): Pinnacle stays
-# the primary anchor; rows Pinnacle doesn't price fall back to the
-# worst-case cross-book floor, UNDER side only. Backtest: 11.2 legs/d at
-# 59.5% hit vs 7.1/d at 60.5% for pure pinnacle. Set ANCHOR_MODE=pinnacle
-# to revert to the strictest mode.
-ANCHOR_MODE = os.getenv("ANCHOR_MODE", "hybrid").lower()
-# Gate the worst-case fallback to UNDERs (PP shades OVERs; UNDER-only is what
-# kept the fallback +EV in the backtest: 59.8% vs 55.1% any-side).
-WORST_CASE_UNDER_ONLY = os.getenv("WORST_CASE_UNDER_ONLY", "true").lower() in ("true", "1", "yes")
-
-# ---------------------------------------------------------------------------
-# SOCCER_SINGLE_SIDED_ANCHOR — owner opt-in (2026-06-14). World Cup player
-# props are priced single-sided ("N+" milestone ladders) on BOTH FanDuel and
-# DraftKings, and Pinnacle doesn't list countable props at all — so NO book
-# offers a two-sided market. The validated sharp anchor (engine/sharp_anchor)
-# returns None for one-sided markets by design, which makes every soccer
-# countable leg `sharp_missing` → display-only → never auto-backtested.
-#
-# When true, the sharp engine falls back to a single-sided devig of the
-# available book price(s) for SOCCER ONLY, so those legs produce a fair and
-# become auto-backtest eligible. This is a deliberate departure from the
-# two-sided-only rule that was validated on 40k rows — there is NO soccer
-# backtest behind it. Unlike the worst-case path it is NOT under-gated (soccer
-# books only price the OVER, so under-gating would discard nearly all coverage
-# and lean entirely on complements); the over is the real book price and the
-# under is its safeguard-vetted complement. It still rides the longshot-
-# complement safeguard in engine/consensus. No other league is affected.
-#
-# DEFAULT FLIPPED BACK TO false (2026-06-14): a data audit found the
-# single-sided inputs are not trustworthy enough to auto-bet yet —
-#   (1) devig_single_sided_scaled under-corrects FAVORITES (flat ~5% hold;
-#       the longshot penalty only applies to the underdog side), so a -500
-#       milestone over devigs to ~0.79 when one-way props carry a much fatter
-#       hold — fairs are biased HIGH exactly where the soccer bets live; and
-#   (2) the FanDuel soccer shots feed is ~60% non-monotonic (P(2+) > P(1+) —
-#       impossible), i.e. corrupt, while DraftKings is clean. The worst-case
-#       min-across-books then picks the bad FanDuel value much of the time.
-# RE-ENABLED (2026-06-19, owner-directed) after the two audit blockers were
-# addressed in engine/sharp_anchor.single_sided_fair_from_books:
-#   (1) devig is now favorite-aware (devig_single_sided_favorite_aware) — the
-#       fat hold on milestone OVER favorites is removed, not just on longshots;
-#   (2) book selection prefers clean DraftKings over the corrupt FanDuel feed
-#       (_SOCCER_BOOK_PRIORITY) instead of min-across-books.
-# Auto-bet is additionally gated to props CoreProp can actually SCORE (see
-# engine.results_checker.soccer_prop_scoreable) so we never log a soccer leg
-# that can't resolve. Honest caveat remains: single-sided fairs are a
-# heuristic with no two-sided market behind them — the now-working ESPN
-# scorer is the live validation. Set false to revert soccer to display-only.
-SOCCER_SINGLE_SIDED_ANCHOR = os.getenv("SOCCER_SINGLE_SIDED_ANCHOR", "true").lower() in ("true", "1", "yes")
-
 # API-Football (api-sports.io) key. ESPN stays the primary soccer scorer;
 # this is consulted ONLY as a fallback for stats ESPN's free World Cup feed
 # doesn't expose — tackles and shots-assisted (key passes). Empty = fallback
 # disabled (those two props stay pending). Free tier: 100 req/day.
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "").strip()
-
-# C1: anti-public-side filter using the data/anti_public_cells.json deny-list.
-USE_SHADE_FILTER = os.getenv("USE_SHADE_FILTER", "false").lower() in ("true", "1", "yes")
-# C2: Beta calibration with shade conditioning, replacing isotonic on top of RWBC.
-USE_BETA_CAL = os.getenv("USE_BETA_CAL", "false").lower() in ("true", "1", "yes")
-# C3: Portfolio Kelly across same-day slips (joint optimization).
-USE_PORTFOLIO_KELLY = os.getenv("USE_PORTFOLIO_KELLY", "false").lower() in ("true", "1", "yes")

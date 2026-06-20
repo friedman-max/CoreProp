@@ -27,7 +27,7 @@ function Logo({ size = 32, animated = true }) {
 }
 
 // ───────── Top Nav ─────────
-const NAV_TABS = ["+EV Bets", "Combined Lines", "PrizePicks Lines", "Sportsbooks", "Backtest", "Analytics", "Observatory", "Sandbox"];
+const NAV_TABS = ["+EV Bets", "Combined Lines", "PrizePicks Lines", "Sportsbooks", "Backtest"];
 
 function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" }) {
   // Logo destination: signed-in users land on +EV Bets; signed-out goes to
