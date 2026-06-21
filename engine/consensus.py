@@ -366,8 +366,10 @@ def books_from_match_for_side(m, side: str) -> list[BookOdds]:
 
     if side == "over":
         fd_eq, dk_eq, pin_eq = m.fd_over_equiv, m.dk_over_equiv, m.pin_over_equiv
+        nv_eq = getattr(m, "nv_over_equiv", None)
     else:
         fd_eq, dk_eq, pin_eq = m.fd_under_equiv, m.dk_under_equiv, m.pin_under_equiv
+        nv_eq = getattr(m, "nv_under_equiv", None)
 
     books: list[BookOdds] = []
     pp_line = m.pp.line_score
@@ -403,4 +405,5 @@ def books_from_match_for_side(m, side: str) -> list[BookOdds]:
     _add("fanduel",    fd_eq)
     _add("draftkings", dk_eq)
     _add("pinnacle",   pin_eq)
+    _add("novig",      nv_eq)
     return books

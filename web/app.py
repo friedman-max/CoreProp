@@ -60,6 +60,7 @@ from scrapers.fanduel import scrape_fanduel
 from scrapers.prizepicks import scrape_prizepicks
 from scrapers.draftkings import scrape_draftkings
 from scrapers.pinnacle import scrape_pinnacle
+from scrapers.novig import scrape_novig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -441,11 +442,12 @@ def _run_pipeline_body():
         import concurrent.futures
         
         logger.info("Pipeline: kicking off scrapers concurrently...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             future_pp = executor.submit(scrape_prizepicks, active_leagues=leagues)
             future_fd = executor.submit(scrape_fanduel, active_leagues=leagues)
             future_dk = executor.submit(scrape_draftkings, active_leagues=leagues)
             future_pin = executor.submit(scrape_pinnacle, active_leagues=leagues)
+            future_nv = executor.submit(scrape_novig, active_leagues=leagues)
 
             try:
                 pp_lines = future_pp.result()
@@ -475,9 +477,16 @@ def _run_pipeline_body():
                 logger.error(f"Pinnacle scraper failed: {e}")
                 pin_props, errors["pinnacle"] = [], "Exception"
 
+            try:
+                nv_props = future_nv.result()
+                if len(nv_props) == 0: errors["novig"] = "Empty response"
+            except Exception as e:
+                logger.error(f"Novig scraper failed: {e}")
+                nv_props, errors["novig"] = [], "Exception"
+
         # If every source failed, skip the state update entirely so the UI
         # keeps the last good snapshot (avoids clearing screens on a bad cycle).
-        if not pp_lines and not fd_props and not dk_props and not pin_props:
+        if not pp_lines and not fd_props and not dk_props and not pin_props and not nv_props:
             logger.warning("Pipeline: all scrapers returned 0 — preserving previous state.")
             with _lock:
                 _state["scrape_errors"] = errors
@@ -558,15 +567,17 @@ def _run_pipeline_body():
         serialized_dk = _serialize_book(dk_props)
         serialized_pin = _serialize_book(pin_props)
 
-        logger.info("Pipeline: matching %d PP lines vs %d FD, %d DK, %d Pinnacle props...", len(pp_lines), len(fd_props), len(dk_props), len(pin_props))
-        matches = match_props(fd_props, dk_props, pp_lines, pin_props)
+        logger.info("Pipeline: matching %d PP lines vs %d FD, %d DK, %d Pinnacle, %d Novig props...",
+                    len(pp_lines), len(fd_props), len(dk_props), len(pin_props), len(nv_props))
+        matches = match_props(fd_props, dk_props, pp_lines, pin_props, nv_props)
 
         # Compute each book's median overround from its own both-sided lines
         fd_margin = _compute_book_overround(fd_props)
         dk_margin = _compute_book_overround(dk_props)
         pin_margin = _compute_book_overround(pin_props)
-        logger.info("Book overrounds: FD=%.2f%% DK=%.2f%% PIN=%.2f%%",
-                     fd_margin * 100, dk_margin * 100, pin_margin * 100)
+        nv_margin = _compute_book_overround(nv_props)
+        logger.info("Book overrounds: FD=%.2f%% DK=%.2f%% PIN=%.2f%% NV=%.2f%%",
+                     fd_margin * 100, dk_margin * 100, pin_margin * 100, nv_margin * 100)
 
         from engine.devig import prob_to_american
         from engine.ev_calculator import BetResult
@@ -608,6 +619,7 @@ def _run_pipeline_body():
                     "fd_line":     _line_for_side(side, "fd"),
                     "dk_line":     _line_for_side(side, "dk"),
                     "pin_line":    _line_for_side(side, "pin"),
+                    "nv_line":     _line_for_side(side, "nv"),
                     "start_time":  m.pp.start_time,
                 }
 
@@ -617,7 +629,7 @@ def _run_pipeline_body():
                 Returns e.g. {"fanduel": 0.62, "draftkings": 0.61}."""
                 from engine.devig import devig_power as _dp, devig_single_sided_scaled as _dss
                 out: dict[str, float] = {}
-                for name, prefix in (("fanduel", "fd"), ("draftkings", "dk"), ("pinnacle", "pin")):
+                for name, prefix in (("fanduel", "fd"), ("draftkings", "dk"), ("pinnacle", "pin"), ("novig", "nv")):
                     bk = _book_for_side(side, prefix)
                     if bk is None:
                         continue
@@ -671,6 +683,7 @@ def _run_pipeline_body():
                         _book_display_odds(side, "fd",  fd_margin),
                         _book_display_odds(side, "dk",  dk_margin),
                         _book_display_odds(side, "pin", pin_margin),
+                        _book_display_odds(side, "nv",  nv_margin),
                     ] if o is not None
                 ]
                 best_odds = max(odds_list) if odds_list else None
@@ -688,7 +701,7 @@ def _run_pipeline_body():
                 """Pick the first book that prices the given side. Used
                 only to fill BetResult.over_odds/under_odds/both_sided
                 with sensible representative values."""
-                for prefix in ("pin", "fd", "dk"):
+                for prefix in ("pin", "fd", "dk", "nv"):
                     bk = _book_for_side(side, prefix)
                     if bk is not None:
                         return bk
@@ -702,6 +715,7 @@ def _run_pipeline_body():
                     fd_o  = _book_display_odds("over", "fd",  fd_margin)
                     dk_o  = _book_display_odds("over", "dk",  dk_margin)
                     pin_o = _book_display_odds("over", "pin", pin_margin)
+                    nv_o  = _book_display_odds("over", "nv",  nv_margin)
                     serialized_matches.append({
                         **base_over,
                         "side": "over",
@@ -709,6 +723,7 @@ def _run_pipeline_body():
                         "fd_odds":  fd_o,
                         "dk_odds":  dk_o,
                         "pin_odds": pin_o,
+                        "nv_odds":  nv_o,
                         "true_odds": true,
                     })
 
@@ -740,6 +755,7 @@ def _run_pipeline_body():
                                 "fd_odds":    fd_o,
                                 "dk_odds":    dk_o,
                                 "pin_odds":   pin_o,
+                                "nv_odds":    nv_o,
                                 "start_time": base_over.get("start_time", ""),
                                 "books_probs": _per_book_probs("over"),
                             }
@@ -752,6 +768,7 @@ def _run_pipeline_body():
                     fd_u  = _book_display_odds("under", "fd",  fd_margin)
                     dk_u  = _book_display_odds("under", "dk",  dk_margin)
                     pin_u = _book_display_odds("under", "pin", pin_margin)
+                    nv_u  = _book_display_odds("under", "nv",  nv_margin)
                     serialized_matches.append({
                         **base_under,
                         "side": "under",
@@ -759,6 +776,7 @@ def _run_pipeline_body():
                         "fd_odds":  fd_u,
                         "dk_odds":  dk_u,
                         "pin_odds": pin_u,
+                        "nv_odds":  nv_u,
                         "true_odds": true,
                     })
 
@@ -790,6 +808,7 @@ def _run_pipeline_body():
                                 "fd_odds":    fd_u,
                                 "dk_odds":    dk_u,
                                 "pin_odds":   pin_u,
+                                "nv_odds":    nv_u,
                                 "start_time": base_under.get("start_time", ""),
                                 "books_probs": _per_book_probs("under"),
                             }
@@ -825,6 +844,7 @@ def _run_pipeline_body():
             d["fd_odds_book"] = extras.get("fd_odds")
             d["dk_odds_book"] = extras.get("dk_odds")
             d["pin_odds_book"] = extras.get("pin_odds")
+            d["nv_odds_book"] = extras.get("nv_odds")
             start_time = extras.get("start_time", "")
             d["start_time"] = start_time
             # Precompute the backtest-dedup key so the client can join

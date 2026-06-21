@@ -90,6 +90,12 @@ MAX_SINGLE_SIDED_JUICE = float(os.getenv("MAX_SINGLE_SIDED_JUICE", "-1000"))
 # market with no two-sided market behind it deserves more trust than this.
 SINGLE_SIDED_PROB_CAP = float(os.getenv("SINGLE_SIDED_PROB_CAP", "0.90"))
 
+# Novig (no-vig peer-to-peer exchange) scraper. Public odds API, no auth.
+NOVIG_ENABLED = os.getenv("NOVIG_ENABLED", "true").lower() in ("true", "1", "yes")
+# Drop a Novig market when its bid/ask spread (the amount its two ask prices
+# sum over 1.0) exceeds this — thin exchange liquidity = untrustworthy price.
+NOVIG_MAX_SPREAD = float(os.getenv("NOVIG_MAX_SPREAD", "0.12"))
+
 # Server
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))

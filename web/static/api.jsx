@@ -118,6 +118,7 @@
     if (b.fd_odds_book != null) books.push(["FD", b.fd_odds_book]);
     if (b.dk_odds_book != null) books.push(["DK", b.dk_odds_book]);
     if (b.pin_odds_book != null) books.push(["PIN", b.pin_odds_book]);
+    if (b.nv_odds_book != null) books.push(["NV", b.nv_odds_book]);
     return {
       id:       b.bet_id,
       player:   b.player_name,

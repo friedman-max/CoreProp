@@ -53,6 +53,7 @@ class MatchedProp:
     fd: Optional[FanDuelProp] = None
     dk: Optional[FanDuelProp] = None
     pin: Optional[FanDuelProp] = None
+    nv: Optional[FanDuelProp] = None   # Novig (exchange)
     # When pp.line_score is a whole number, "over PP-N" is mathematically
     # the same wager as "over book-(N+0.5)" under push-on-tie semantics
     # (player needs N+1+ to win in both); same for "under PP-N" vs "under
@@ -66,6 +67,8 @@ class MatchedProp:
     dk_under_equiv:   Optional[FanDuelProp] = None
     pin_over_equiv:   Optional[FanDuelProp] = None
     pin_under_equiv:  Optional[FanDuelProp] = None
+    nv_over_equiv:    Optional[FanDuelProp] = None
+    nv_under_equiv:   Optional[FanDuelProp] = None
 
 
 # ---------------------------------------------------------------------------
@@ -110,13 +113,15 @@ def match_props(
     dk_props: list[FanDuelProp],
     pp_lines: list[PrizePickLine],
     pin_props: list[FanDuelProp] | None = None,
+    nv_props: list[FanDuelProp] | None = None,
 ) -> list[MatchedProp]:
     """
     For each PrizePicks line, find the best matching FanDuel, DraftKings,
-    and Pinnacle prop.
+    Pinnacle, and Novig prop.
     Only returns matches where at least one book provides a line for that prop.
     """
     pin_props = pin_props or []
+    nv_props = nv_props or []
 
     # Build lookup: (league, prop_type_lower) → list of props per book
     fd_index: dict[tuple, list[FanDuelProp]] = {}
@@ -133,6 +138,11 @@ def match_props(
     for pin in pin_props:
         key = (pin.league.upper(), pin.prop_type.lower())
         pin_index.setdefault(key, []).append(pin)
+
+    nv_index: dict[tuple, list[FanDuelProp]] = {}
+    for nv in nv_props:
+        key = (nv.league.upper(), nv.prop_type.lower())
+        nv_index.setdefault(key, []).append(nv)
 
     # League-aware alias map: PrizePicks stat names that differ from book prop names.
     # Only apply aliases for specific leagues to avoid cross-league pollution
@@ -155,9 +165,10 @@ def match_props(
         fd_candidates = fd_index.get(key, [])
         dk_candidates = dk_index.get(key, [])
         pin_candidates = pin_index.get(key, [])
+        nv_candidates = nv_index.get(key, [])
 
         # We need at least one book to compare against
-        if not fd_candidates and not dk_candidates and not pin_candidates:
+        if not fd_candidates and not dk_candidates and not pin_candidates and not nv_candidates:
             continue
 
         norm_pp_name = normalize_name(pp.player_name)
@@ -250,18 +261,20 @@ def match_props(
         fd_exact,  fd_over,  fd_under,  fd_score  = _best_match(fd_candidates)
         dk_exact,  dk_over,  dk_under,  dk_score  = _best_match(dk_candidates)
         pin_exact, pin_over, pin_under, pin_score = _best_match(pin_candidates)
+        nv_exact,  nv_over,  nv_under,  nv_score  = _best_match(nv_candidates)
 
         # Keep a match when at least one book has either an exact-line
         # entry or a usable half-step equivalent for some side.
         any_book = (
             fd_exact  or fd_over  or fd_under  or
             dk_exact  or dk_over  or dk_under  or
-            pin_exact or pin_over or pin_under
+            pin_exact or pin_over or pin_under or
+            nv_exact  or nv_over  or nv_under
         )
         if not any_book:
             continue
 
-        scores = [s for s in (fd_score, dk_score, pin_score) if s >= FUZZY_THRESHOLD]
+        scores = [s for s in (fd_score, dk_score, pin_score, nv_score) if s >= FUZZY_THRESHOLD]
         if not scores:
             continue
 
@@ -270,12 +283,15 @@ def match_props(
             fd=fd_exact,
             dk=dk_exact,
             pin=pin_exact,
+            nv=nv_exact,
             fd_over_equiv=fd_over,
             fd_under_equiv=fd_under,
             dk_over_equiv=dk_over,
             dk_under_equiv=dk_under,
             pin_over_equiv=pin_over,
             pin_under_equiv=pin_under,
+            nv_over_equiv=nv_over,
+            nv_under_equiv=nv_under,
             name_score=max(scores),
         ))
 
