@@ -1085,6 +1085,7 @@ body::before{
 <script type="text/babel" src="/static/ev-page.jsx"></script>
 <script type="text/babel" src="/static/page-boards.jsx"></script>
 <script type="text/babel" src="/static/page-backtest.jsx"></script>
+<script type="text/babel" src="/static/page-analytics.jsx"></script>
 <script type="text/babel" src="/static/pricing.jsx"></script>
 
 <script type="text/babel">
@@ -1235,6 +1236,7 @@ function App() {
           "PrizePicks Lines": PrizePicksPage,
           "Sportsbooks":      SportsbooksPage,
           "Backtest":         BacktestPage,
+          "Analytics":        AnalyticsPage,
         };
         return Object.entries(TABS).map(([name, Comp]) =>
           visited.has(name) ? (

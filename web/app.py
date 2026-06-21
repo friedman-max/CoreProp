@@ -2084,6 +2084,44 @@ def _run_pin_scrape():
 
 
 # ---------------------------------------------------------------------------
+# Analytics endpoints — Brier / hit-rate / CLV / cumulative P&L over the
+# user's logged slips. Read-only over the legs+slips tables; the stored
+# true_prob is now the honest consensus probability, so Brier here measures
+# how well-calibrated our consensus is (diagnostic only — nothing feeds back).
+# ---------------------------------------------------------------------------
+
+@app.get("/api/calibration")
+def get_calibration(user: dict = Depends(get_current_user)):
+    """Return Brier Score, Log-Loss, and calibration buckets from resolved backtest data."""
+    from engine.calibration import evaluate_calibration
+    return evaluate_calibration(user_jwt=user["jwt"])
+
+
+@app.get("/api/analytics")
+def get_analytics(user: dict = Depends(get_current_user)):
+    """
+    Richer analytics payload: calibration + per-league / per-prop performance,
+    cumulative P&L timeline, and slip outcome mix.
+
+    Per-user TTL cache because the frontend re-hits this on every tab
+    activation and status-poll refresh, but the underlying backtest state
+    rarely changes between those calls. Invalidated on add/delete slip.
+    """
+    uid = user["id"]
+    now = time.monotonic()
+    with _analytics_cache_lock:
+        cached = _analytics_cache.get(uid)
+        if cached and (now - cached[0]) < _ANALYTICS_TTL_SEC:
+            return cached[1]
+
+    from engine.calibration import evaluate_analytics
+    data = evaluate_analytics(user_jwt=user["jwt"])
+    with _analytics_cache_lock:
+        _analytics_cache[uid] = (now, data)
+    return data
+
+
+# ---------------------------------------------------------------------------
 # PrizePicks 1-click slip endpoints
 # ---------------------------------------------------------------------------
 
