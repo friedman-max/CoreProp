@@ -44,6 +44,26 @@ NOVIG_LEAGUE = {
     "NCAAB": "NCAAB",
 }
 
+# Basketball (NBA + WNBA share identical stat types on both Novig and
+# PrizePicks). Only the countable, genuinely TWO-SIDED props are mapped —
+# Novig also lists single-sided milestone markets (DOUBLE_DOUBLE,
+# TRIPLE_DOUBLE, FIRST_BASKET) and futures (MVP_WINNER), which are deliberately
+# left out: their phantom +EV is exactly the failure mode this tool avoids, and
+# FIRST_BASKET in particular sometimes prices both sides (~0.085/0.981), so it
+# would slip past the spread guard if it were ever mapped.
+_BASKETBALL_PROP_MAP = {
+    "POINTS":                   "Points",
+    "REBOUNDS":                 "Rebounds",
+    "ASSISTS":                  "Assists",
+    "THREE_POINTERS_MADE":      "3-PT Made",
+    "POINTS_REBOUNDS_ASSISTS":  "Pts+Rebs+Asts",
+    "POINTS_REBOUNDS":          "Pts+Rebs",
+    # Forward-looking: not seen live yet, but Novig's naming pattern makes these
+    # the expected keys; harmless if absent (only mapped types are emitted).
+    "POINTS_ASSISTS":           "Pts+Asts",
+    "REBOUNDS_ASSISTS":         "Rebs+Asts",
+}
+
 # Novig market `type` -> PrizePicks stat_type label (must match exactly so the
 # matcher can join Novig lines to PP lines). Only mapped types are emitted, so
 # futures/awards are dropped. BATTING_* are hitter stats; plain pitcher-walk
@@ -67,6 +87,10 @@ NOVIG_PROP_MAP = {
         "PITCHER_OUTS":        "Pitching Outs",
         "EARNED_RUNS":         "Earned Runs Allowed",
     },
+    # WNBA confirmed live (873 open markets, 2026-06-24). NBA shares the same
+    # map and is wired for when its season returns (no open Novig NBA markets now).
+    "WNBA": _BASKETBALL_PROP_MAP,
+    "NBA":  _BASKETBALL_PROP_MAP,
 }
 
 _HEADERS = {

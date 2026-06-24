@@ -9,6 +9,7 @@ from __future__ import annotations
 from scrapers.novig import _market_to_prop, _to_float, NOVIG_PROP_MAP
 
 MLB = NOVIG_PROP_MAP["MLB"]
+WNBA = NOVIG_PROP_MAP["WNBA"]
 
 
 def _market(mtype, strike, over_ask, under_ask, player="Test Player", team="DET"):
@@ -77,3 +78,33 @@ def test_one_sided_skipped():
 def test_out_of_range_price_skipped():
     # available must be a probability in (0, 1).
     assert _market_to_prop(_market("HITS", 0.5, 1.2, 0.4), "MLB", MLB) is None
+
+
+# ── WNBA (basketball) ─────────────────────────────────────────────────────
+def test_wnba_points_maps_to_pp_label():
+    p = _market_to_prop(_market("POINTS", 18.5, 0.52, 0.535), "WNBA", WNBA)
+    assert p is not None
+    assert p.league == "WNBA"
+    assert p.prop_type == "Points"        # POINTS -> exact PrizePicks label
+    assert p.line == 18.5
+    assert p.both_sided is True
+
+
+def test_wnba_combo_maps_to_pp_label():
+    p = _market_to_prop(_market("POINTS_REBOUNDS_ASSISTS", 23.5, 0.54, 0.53), "WNBA", WNBA)
+    assert p is not None
+    assert p.prop_type == "Pts+Rebs+Asts"
+
+
+def test_wnba_milestone_props_excluded():
+    # DOUBLE_DOUBLE / FIRST_BASKET are single-sided milestone markets (the
+    # phantom-+EV trap). They must stay OUT of the map so they're dropped even
+    # when Novig happens to price both sides (FIRST_BASKET often does, ~.085/.981).
+    assert _market_to_prop(_market("DOUBLE_DOUBLE", 0.5, 0.20, 0.84), "WNBA", WNBA) is None
+    assert _market_to_prop(_market("FIRST_BASKET", 0.0, 0.085, 0.981), "WNBA", WNBA) is None
+    assert _market_to_prop(_market("MVP_WINNER", 0.0, 0.05, 0.96), "WNBA", WNBA) is None
+
+
+def test_nba_shares_basketball_map():
+    # NBA reuses the identical basketball map (wired for when its season returns).
+    assert NOVIG_PROP_MAP["NBA"] is NOVIG_PROP_MAP["WNBA"]
