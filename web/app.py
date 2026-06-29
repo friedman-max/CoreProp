@@ -587,6 +587,13 @@ def _run_pipeline_body():
         bet_book_odds: dict[str, dict] = {}  # bet_id -> {fd_odds, dk_odds, pin_odds}
         serialized_matches = []
 
+        # Observatory feed (revived in migration_016): log EVERY priced side
+        # with raw consensus prob >= OBS_MIN_PROB — not just the +EV bets — so
+        # the CLV/ML dataset includes the markets we skipped (with their
+        # eventual outcomes), which is what a "which bets to take" model needs.
+        from engine.observatory import build_observation_entry as _build_obs
+        obs_entries: list[dict] = []
+
         for m in matches:
             # The matcher already populates per-side equivalents. A match
             # is kept when any book has a usable line for at least one
@@ -727,6 +734,23 @@ def _run_pipeline_body():
                         "true_odds": true,
                     })
 
+                    # Observatory: log this priced side (gated at >= OBS_MIN_PROB
+                    # inside _build_obs), independent of the +EV display gate.
+                    # Defensive: never let observatory collection break the +EV
+                    # pipeline for one malformed match.
+                    try:
+                        _obs = _build_obs(
+                            player_name=m.pp.player_name, league=m.pp.league,
+                            prop=m.pp.stat_type, line=m.pp.line_score, side="over",
+                            raw_prob=prob, market_width=mw,
+                            team=getattr(m.pp, "team", "") or "",
+                            start_time=m.pp.start_time, books_probs=_per_book_probs("over"),
+                        )
+                        if _obs is not None:
+                            obs_entries.append(_obs)
+                    except Exception as _obs_exc:
+                        logger.debug("Observatory entry (over) skipped: %s", _obs_exc)
+
                     # Also create +EV bet if applicable
                     first_bk = _first_book_for_side("over")
                     if prob is not None and first_bk:
@@ -779,6 +803,23 @@ def _run_pipeline_body():
                         "nv_odds":  nv_u,
                         "true_odds": true,
                     })
+
+                    # Observatory: log this priced side (gated at >= OBS_MIN_PROB
+                    # inside _build_obs), independent of the +EV display gate.
+                    # Defensive: never let observatory collection break the +EV
+                    # pipeline for one malformed match.
+                    try:
+                        _obs = _build_obs(
+                            player_name=m.pp.player_name, league=m.pp.league,
+                            prop=m.pp.stat_type, line=m.pp.line_score, side="under",
+                            raw_prob=prob, market_width=mw,
+                            team=getattr(m.pp, "team", "") or "",
+                            start_time=m.pp.start_time, books_probs=_per_book_probs("under"),
+                        )
+                        if _obs is not None:
+                            obs_entries.append(_obs)
+                    except Exception as _obs_exc:
+                        logger.debug("Observatory entry (under) skipped: %s", _obs_exc)
 
                     # Also create +EV bet if applicable
                     first_bk = _first_book_for_side("under")
@@ -865,9 +906,11 @@ def _run_pipeline_body():
         # FanDuel/DK/Pinnacle prop) before launching the background threads.
         try:
             clv_current_probs = _clv_tracker._build_current_probs(matches)
+            clv_current_book_probs = _clv_tracker._build_current_book_probs(matches)
         except Exception as clv_pre_exc:
             logger.warning("CLV precompute error: %s", clv_pre_exc)
             clv_current_probs = {}
+            clv_current_book_probs = {}
 
         with _lock:
             _state["bets"]         = serialized_bets
@@ -1079,17 +1122,119 @@ def _run_pipeline_body():
         else:
             threading.Thread(target=_auto_log_bg, daemon=True).start()
 
-        # ── CLV Tracker: update closing lines for pending bets non-blocking ──
-        # Pass the precomputed probs dict only — not the full matches list —
-        # so matches can be freed as soon as this scope exits.
-        def _update_clv_bg(current_probs=clv_current_probs):
+        # ── Observatory feed: log every priced side (revived migration_016) ──
+        # Daemon thread so the Supabase upsert never blocks the scrape.
+        def _log_observatory_bg(entries=obs_entries):
             try:
-                updated_legs = _clv_tracker.update_closing_lines_from_probs(current_probs)
+                from engine.writer import writer as _writer
+                obs_db = _writer("observatory.log")
+                if obs_db is None:
+                    return
+                rows_to_upsert = []
+                for e in entries:
+                    raw_tp_val = e.get("raw_true_prob")
+                    if raw_tp_val is None:
+                        continue
+                    raw_tp = float(raw_tp_val)
+                    tp_val = e.get("true_prob")
+                    tp = float(tp_val) if tp_val is not None else raw_tp
+                    mw_val = e.get("market_width")
+                    mw = float(mw_val) if mw_val is not None else None
+                    player = e.get("player_name", "")
+                    league = e.get("league", "")
+                    prop   = e.get("prop_type", "")
+                    line   = e.get("pp_line", "")
+                    side   = e.get("side", "")
+                    start  = e.get("start_time", "")
+                    market_key = f"{player}|{league}|{prop}|{line}|{side}|{start}"
+                    row = {
+                        "market_key":     market_key,
+                        "player":         player,
+                        "league":         league,
+                        "prop":           prop,
+                        "line":           float(line) if line != "" else 0,
+                        "side":           side,
+                        "true_prob":      round(tp, 4),
+                        "raw_true_prob":  round(raw_tp, 4),
+                        "game_start":     start if start else None,
+                    }
+                    if mw is not None:
+                        row["market_width"] = round(mw, 4)
+                    team_val = (e.get("team") or "").strip()
+                    if team_val:
+                        row["team"] = team_val
+                    bp = e.get("books_probs")
+                    if bp:
+                        row["books"] = bp
+                    rows_to_upsert.append(row)
+                if not rows_to_upsert:
+                    return
+                # ignore_duplicates=True ON PURPOSE: the FIRST scrape of a
+                # market freezes `books` as the ENTRY per-book snapshot and is
+                # never overwritten on re-scrape. The closing per-book snapshot
+                # is written separately by update_observatory_closing_lines via
+                # an .update() (which is unaffected by this flag), so each row
+                # ends up with both an entry (`books`) and a close
+                # (`closing_books`) — the entry→close pair the CLV dataset needs.
+                # If a column is missing on the deployed schema, strip and retry
+                # so logging survives a pending migration.
+                _OPTIONAL_COLS = ("books", "raw_true_prob", "market_width", "team")
+                def _strip(rows, col):
+                    for r in rows:
+                        r.pop(col, None)
+                try:
+                    obs_db.table("market_observatory").upsert(
+                        rows_to_upsert, on_conflict="market_key", ignore_duplicates=True
+                    ).execute()
+                    logger.info("Observatory: logged %d observations", len(rows_to_upsert))
+                except Exception as upsert_exc:
+                    last_exc = upsert_exc
+                    succeeded = False
+                    for col in _OPTIONAL_COLS:
+                        if not any(col in r for r in rows_to_upsert):
+                            continue
+                        _strip(rows_to_upsert, col)
+                        try:
+                            obs_db.table("market_observatory").upsert(
+                                rows_to_upsert, on_conflict="market_key", ignore_duplicates=True
+                            ).execute()
+                            logger.info(
+                                "Observatory: logged %d observations (stripped '%s' — apply pending migration)",
+                                len(rows_to_upsert), col,
+                            )
+                            succeeded = True
+                            break
+                        except Exception as retry_exc:
+                            last_exc = retry_exc
+                            continue
+                    if not succeeded:
+                        logger.error("Observatory logging error: %s", last_exc)
+            except Exception as e:
+                logger.error("Observatory logging error: %s", e)
+
+        threading.Thread(target=_log_observatory_bg, daemon=True).start()
+
+        # ── CLV Tracker: update closing lines for pending bets non-blocking ──
+        # Pass the precomputed probs dicts only — not the full matches list —
+        # so matches can be freed as soon as this scope exits.
+        def _update_clv_bg(current_probs=clv_current_probs,
+                            current_book_probs=clv_current_book_probs):
+            try:
+                updated_legs = _clv_tracker.update_closing_lines_from_probs(
+                    current_probs, current_book_probs)
+                # Broad observatory close: write closing_prob + per-book close to
+                # ALL pending markets near tip, not only the ones we bet.
+                try:
+                    obs_closed = _clv_tracker.update_observatory_closing_lines(
+                        current_probs, current_book_probs)
+                except Exception as obs_clv_exc:
+                    obs_closed = 0
+                    logger.warning("CLVTracker observatory close error: %s", obs_clv_exc)
                 finalized = _clv_tracker.finalize_missed()
-                if updated_legs or finalized:
+                if updated_legs or finalized or obs_closed:
                     logger.info(
-                        "CLVTracker: legs=%d finalized=%d (background)",
-                        updated_legs, finalized,
+                        "CLVTracker: legs=%d obs=%d finalized=%d (background)",
+                        updated_legs, obs_closed, finalized,
                     )
             except Exception as clv_exc:
                 logger.warning("CLVTracker background error: %s", clv_exc)

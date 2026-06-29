@@ -54,7 +54,9 @@ class CLVTracker:
         return self.update_closing_lines_from_probs(current_probs)
 
     def update_closing_lines_from_probs(
-        self, current_probs: dict[tuple[str, str, str, float], float]
+        self,
+        current_probs: dict[tuple[str, str, str, float], float],
+        current_book_probs: dict[tuple[str, str, str, float], dict[str, float]] | None = None,
     ) -> int:
         """
         Same as `update_closing_lines` but takes the precomputed
@@ -153,6 +155,11 @@ class CLVTracker:
                             "closing_captured_at": now_utc.isoformat(),
                             "closing_lead_min":    round(mins_to_start, 2),
                         }
+                        # Per-book close for placed bets is captured on the
+                        # matching market_observatory row (same market_key) —
+                        # the legs table has no jsonb column to hold it and we
+                        # cannot add one (no DDL access). Join legs→observatory
+                        # on market_key to recover per-book entry/close.
                         try:
                             db.table("legs").update(update_payload).eq(
                                 "slip_id", sid).eq("leg_num", l_num).execute()
@@ -219,6 +226,7 @@ class CLVTracker:
     def update_observatory_closing_lines(
         self,
         current_probs: dict[tuple[str, str, str, float], float],
+        current_book_probs: dict[tuple[str, str, str, float], dict[str, float]] | None = None,
         *,
         capture_window_minutes: int = 240,
     ) -> int:
@@ -272,7 +280,7 @@ class CLVTracker:
             try:
                 res = (
                     db.table("market_observatory")
-                      .select("id, player, prop, side, line, game_start, closing_prob")
+                      .select("id, player, prop, side, line, game_start, closing_prob, books")
                       .eq("result", "pending")
                       .gte("game_start", now_iso)
                       .lte("game_start", window_end_iso)
@@ -314,21 +322,57 @@ class CLVTracker:
                     except (TypeError, ValueError):
                         pass
 
+                payload = {"closing_prob": round(new_val, 4)}
+
+                # Per-book close + capture lead are stored INSIDE the existing
+                # `books` jsonb (no DDL access to add dedicated columns). The
+                # entry per-book devigs are the plain book keys (frozen at the
+                # first scrape via ignore_duplicates); the close lives under
+                # reserved "_close*" keys so an export can split them cleanly:
+                #   {"fanduel":0.61,"pinnacle":0.62,        # entry
+                #    "_close":{"fanduel":0.59,"pinnacle":0.60},
+                #    "_close_lead_min":25.0,"_close_at":"2026-..."}
+                entry_books = row.get("books")
+                if not isinstance(entry_books, dict):
+                    entry_books = {}
+                merged = {
+                    k: v for k, v in entry_books.items()
+                    if not (isinstance(k, str) and k.startswith("_close"))
+                }
+                cb = current_book_probs.get(key) if current_book_probs else None
+                if cb:
+                    merged["_close"] = cb
+                gs_str = row.get("game_start") or ""
+                try:
+                    gs = datetime.fromisoformat(gs_str.replace("Z", "+00:00"))
+                    if gs.tzinfo is None:
+                        gs = gs.replace(tzinfo=timezone.utc)
+                    merged["_close_lead_min"] = round((gs - now_utc).total_seconds() / 60.0, 2)
+                except Exception:
+                    pass
+                merged["_close_at"] = now_iso
+                payload["books"] = merged
+
                 try:
                     (db.table("market_observatory")
-                       .update({"closing_prob": round(new_val, 4)})
+                       .update(payload)
                        .eq("id", row["id"])
                        .execute())
                     updated += 1
-                except Exception as exc:
-                    # Mirror the legacy logger's swallow-after-first behavior
-                    # so a missing column / migration gap doesn't spam the
-                    # log on every iteration. Break out of the page loop too.
-                    logger.warning(
-                        "CLVTracker.observatory: write failed at obs_id=%s: %s",
-                        row.get("id"), exc,
-                    )
-                    return updated
+                except Exception:
+                    # Fallback: at least persist the scalar consensus close.
+                    try:
+                        (db.table("market_observatory")
+                           .update({"closing_prob": round(new_val, 4)})
+                           .eq("id", row["id"])
+                           .execute())
+                        updated += 1
+                    except Exception as exc2:
+                        logger.warning(
+                            "CLVTracker.observatory: write failed at obs_id=%s: %s",
+                            row.get("id"), exc2,
+                        )
+                        return updated
 
             if len(rows) < page_size:
                 break
@@ -460,3 +504,46 @@ class CLVTracker:
                     current_probs[(player, prop, side, line)] = consensus
 
         return current_probs
+
+    def _build_current_book_probs(
+        self, matches: list[Any]
+    ) -> dict[tuple[str, str, str, float], dict[str, float]]:
+        """Like `_build_current_probs`, but PER BOOK:
+        (player, prop, side, line) -> {book_name: devigged_prob}.
+
+        Mirrors `_per_book_probs` in the +EV pipeline (web/app.py): two-sided
+        exact lines use Power devig, single sides use the scaled single-sided
+        devig. Captured at the closing pass so each book's close can be
+        compared to its OWN entry (same instrument, same devig) — the only way
+        the resulting CLV reflects genuine line movement rather than a
+        book-composition or devig-method artifact.
+        """
+        from engine.devig import devig_power, devig_single_sided_scaled
+
+        out: dict[tuple[str, str, str, float], dict[str, float]] = {}
+        for m in matches:
+            if not getattr(m, "pp", None):
+                continue
+            player = m.pp.player_name.lower().strip()
+            prop = m.pp.stat_type.lower().strip()
+            line = float(m.pp.line_score)
+            sides = ["over", "under"] if getattr(m.pp, "side", "both") == "both" else [m.pp.side]
+            for side in sides:
+                books = books_from_match_for_side(m, side)
+                if not books:
+                    continue
+                bp: dict[str, float] = {}
+                for bk in books:
+                    prob = None
+                    if bk.both_sided and bk.over_odds is not None and bk.under_odds is not None:
+                        t_o, t_u = devig_power(bk.over_odds, bk.under_odds)
+                        prob = t_o if side == "over" else t_u
+                    elif side == "over" and bk.over_odds is not None:
+                        prob = devig_single_sided_scaled(bk.over_odds)
+                    elif side == "under" and bk.under_odds is not None:
+                        prob = devig_single_sided_scaled(bk.under_odds)
+                    if prob is not None and 0.0 < prob < 1.0:
+                        bp[bk.book_name] = round(float(prob), 4)
+                if bp:
+                    out[(player, prop, side, line)] = bp
+        return out
