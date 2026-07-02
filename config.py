@@ -97,15 +97,21 @@ DEFAULT_LEG_THRESHOLD = float(os.getenv("DEFAULT_LEG_THRESHOLD", "0.55"))
 #      EV-negative; the model only has real edge in its top slice.
 # ---------------------------------------------------------------------------
 SIDE_BIAS_ENABLED = os.getenv("SIDE_BIAS_ENABLED", "true").lower() in ("true", "1", "yes")
+# Only corrections whose SIGN replicated on out-of-sample data are applied.
+# Out-of-sample check 2026-07-02 (10,976 settled rows from Jun29-Jul2 games,
+# fully disjoint from the May FINDINGS fit):
+#   MLB under: May +0.054, fresh +0.020  -> sign replicated; shrunk to the
+#              conservative fresh estimate.
+#   WNBA under: May +0.083, fresh -0.022 -> SIGN REVERSED. Zeroed.
+#   WNBA over:  May -0.005, fresh +0.078 -> SIGN REVERSED. Zeroed.
+#   NBA/NHL: off-season — no validation data possible until the seasons
+#            resume; May-fit values zeroed rather than trusted blind. The
+#            CELL_DROPS rails below still cover the catastrophic cells.
+# Missing keys mean 0.0 (no correction). Refit via
+# analysis/12_side_bias_refit.py — apply a cell only when its sign is stable
+# across two disjoint time windows.
 SIDE_BIAS = {
-    ("MLB",  "under"): +0.054,
-    ("NBA",  "under"): +0.075,
-    ("NHL",  "under"): +0.061,
-    ("WNBA", "under"): +0.083,
-    ("MLB",  "over"):   0.000,
-    ("NBA",  "over"):  -0.031,
-    ("NHL",  "over"):  -0.019,
-    ("WNBA", "over"):  -0.005,
+    ("MLB", "under"): +0.025,
 }
 
 CELL_DROPS_ENABLED = os.getenv("CELL_DROPS_ENABLED", "true").lower() in ("true", "1", "yes")

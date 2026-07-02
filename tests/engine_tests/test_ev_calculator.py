@@ -64,21 +64,25 @@ def test_true_prob_clipped_below_one():
 
 def test_raw_true_prob_preserved_and_decision_biased():
     """raw_true_prob is the untouched consensus; true_prob carries the
-    FINDINGS side-bias (NBA over: -0.031)."""
-    b = _bet(0.55, side="over", league="NBA")
+    side-bias correction for whatever cells the table currently holds."""
+    b = _bet(0.55, side="under", league="MLB")
     assert b.raw_true_prob == pytest.approx(0.55)
-    assert b.true_prob == pytest.approx(_expected_decision(0.55, "NBA", "over"))
+    assert b.true_prob == pytest.approx(_expected_decision(0.55, "MLB", "under"))
     assert b.true_prob <= 0.999
 
 
-def test_side_bias_boosts_unders_docks_overs():
-    """The correction moves UNDERs up and (most) OVERs down, per league."""
+def test_side_bias_applied_per_table():
+    """Data-driven: every (league, side) entry in cfg.SIDE_BIAS shifts the
+    decision prob by exactly its delta (so refits can change the table
+    without touching this test)."""
     if not cfg.SIDE_BIAS_ENABLED:
         pytest.skip("side bias disabled via env")
-    under = _bet(0.55, side="under", league="NBA")
-    over = _bet(0.55, side="over", league="NBA")
-    assert under.true_prob > under.raw_true_prob
-    assert over.true_prob < over.raw_true_prob
+    assert cfg.SIDE_BIAS, "table unexpectedly empty"
+    for (league, side), delta in cfg.SIDE_BIAS.items():
+        b = _bet(0.55, side=side, league=league)
+        assert b.true_prob == pytest.approx(
+            max(0.001, min(0.999, 0.55 + delta))
+        ), f"bias not applied for {(league, side)}"
 
 
 def test_side_bias_unknown_league_neutral():
