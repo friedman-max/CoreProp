@@ -1249,6 +1249,16 @@ def _run_pipeline_body():
                     logger.info("ResultsChecker: %d rows updated in background", updated)
             except Exception as rc_exc:
                 logger.warning("ResultsChecker background error: %s", rc_exc)
+            # Observatory resolution: grade market_observatory rows so the CLV
+            # dataset gets outcomes. check_observatory_results was defined but
+            # never called anywhere (dead since ~May 23) — the same
+            # defined-but-unwired bug as the observatory closing pass.
+            try:
+                obs_updated = _results_checker.check_observatory_results()
+                if obs_updated:
+                    logger.info("ResultsChecker: %d observatory rows resolved", obs_updated)
+            except Exception as rc_exc:
+                logger.warning("ResultsChecker observatory background error: %s", rc_exc)
 
         threading.Thread(target=_check_results_bg, daemon=True).start()
 

@@ -322,7 +322,21 @@ class ESPNResultsChecker:
             return 0
 
         try:
-            res = db.table("market_observatory").select("*").eq("result", "pending").execute()
+            # Only rows whose games have plausibly ended, newest first, so the
+            # fresh capture (which still has ESPN coverage) resolves ahead of
+            # stale backlog. PostgREST silently caps unbounded selects at 1000
+            # rows; the explicit limit makes the per-run budget deliberate —
+            # the 5-minute pipeline cadence drains any backlog quickly.
+            cutoff_iso = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+            res = (
+                db.table("market_observatory")
+                  .select("*")
+                  .eq("result", "pending")
+                  .lt("game_start", cutoff_iso)
+                  .order("game_start", desc=True)
+                  .limit(2000)
+                  .execute()
+            )
             rows = res.data or []
         except Exception as exc:
             logger.error("Observatory: cannot read pending rows: %s", exc)
