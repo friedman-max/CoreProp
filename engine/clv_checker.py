@@ -137,7 +137,14 @@ class CLVTracker:
                 # Update only when the calibrated value has moved materially
                 # from whatever was last written.
                 if old_cp_val is None or abs(calibrated_cp - old_cp_val) > 1e-4:
-                    orig_true_prob = float(row.get("true_prob", 0))
+                    # CLV is measured raw-vs-raw: the closing prob is the raw
+                    # consensus, so the entry must be raw_true_prob (pre-
+                    # side-bias). Falling back to true_prob keeps legacy rows
+                    # (which stored the same number in both) working.
+                    try:
+                        orig_true_prob = float(row.get("raw_true_prob") or row.get("true_prob", 0))
+                    except (TypeError, ValueError):
+                        orig_true_prob = float(row.get("true_prob", 0))
                     closing_prob = calibrated_cp
                     clv_pct = closing_prob - orig_true_prob
 
@@ -407,7 +414,7 @@ class CLVTracker:
         try:
             # Only the partial-write recovery path uses these fields — full
             # leg rows were 3x bigger and the rest is unused.
-            cols = "slip_id, leg_num, closing_prob, clv_pct, true_prob, game_start"
+            cols = "slip_id, leg_num, closing_prob, clv_pct, true_prob, raw_true_prob, game_start"
             res = db.table("legs").select(cols).execute()
             rows = res.data or []
         except Exception as exc:
@@ -442,7 +449,8 @@ class CLVTracker:
 
             try:
                 cp = float(row["closing_prob"])
-                orig_true_prob = float(row.get("true_prob", 0))
+                # Raw-vs-raw, same as the live path above.
+                orig_true_prob = float(row.get("raw_true_prob") or row.get("true_prob", 0))
                 clv_pct = round(cp - orig_true_prob, 4)
             except (ValueError, TypeError):
                 continue

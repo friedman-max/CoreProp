@@ -78,6 +78,46 @@ MIN_DISPLAY_PROB = float(os.getenv("MIN_DISPLAY_PROB", "0.50"))
 # controls what's shown.
 DEFAULT_LEG_THRESHOLD = float(os.getenv("DEFAULT_LEG_THRESHOLD", "0.55"))
 
+# ---------------------------------------------------------------------------
+# FINDINGS.md prescriptions (analysis/FINDINGS.md, 38,788-row selection-bias
+# study). Three results-validated corrections, each env-killable:
+#
+#   A. CELL_DROPS  — (league, side) cells where selection was proven worse
+#      than random (NBA OVER -7pp, NHL OVER -26pp, NHL UNDER -19pp, WNBA
+#      OVER -4pp). Never auto-logged.
+#   B. SIDE_BIAS   — constant additive correction per (league, side). PP
+#      shades lines toward OVERs and the devig doesn't undo it; UNDERs beat
+#      their predicted prob by 5-8pp in every league, OVERs undershoot.
+#      Applied to the DECISION prob only (BetResult.true_prob); the raw
+#      consensus is preserved in raw_true_prob so CLV and the observatory
+#      training data stay uncorrected (one ruler). Refit cadence: monthly,
+#      from settled observatory rows.
+#   C. AUTO_SLIP_MIN_PROB_FLOOR — hard floor under every user's auto-slip
+#      threshold. FINDINGS: at the old default (0.5407) every slip size was
+#      EV-negative; the model only has real edge in its top slice.
+# ---------------------------------------------------------------------------
+SIDE_BIAS_ENABLED = os.getenv("SIDE_BIAS_ENABLED", "true").lower() in ("true", "1", "yes")
+SIDE_BIAS = {
+    ("MLB",  "under"): +0.054,
+    ("NBA",  "under"): +0.075,
+    ("NHL",  "under"): +0.061,
+    ("WNBA", "under"): +0.083,
+    ("MLB",  "over"):   0.000,
+    ("NBA",  "over"):  -0.031,
+    ("NHL",  "over"):  -0.019,
+    ("WNBA", "over"):  -0.005,
+}
+
+CELL_DROPS_ENABLED = os.getenv("CELL_DROPS_ENABLED", "true").lower() in ("true", "1", "yes")
+CELL_DROPS = {
+    ("NBA",  "over"),
+    ("NHL",  "over"),
+    ("NHL",  "under"),
+    ("WNBA", "over"),
+}
+
+AUTO_SLIP_MIN_PROB_FLOOR = float(os.getenv("AUTO_SLIP_MIN_PROB_FLOOR", "0.65"))
+
 # Juice guardrail for single-sided / milestone lines (NHL goalscorer, NBA
 # double-double / first-basket alts, half-step alts). A book posting an
 # extreme price like -10000 isn't telling us the true probability — it's

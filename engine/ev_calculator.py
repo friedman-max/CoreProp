@@ -11,6 +11,7 @@ from typing import Optional
 
 import numpy as np
 
+import config as cfg
 from engine.constants import (
     POWER_PAYOUTS,
     FLEX_PAYOUTS,
@@ -72,13 +73,24 @@ class BetResult:
         self.team = team or ""
         self.odds_type = odds_type or "standard"
 
-        # simplify-v1: NO calibration. The incoming `true_prob` is already the
-        # most-conservative devigged probability across books (the
-        # engine.consensus worst_case_prob). We only clamp it for the
-        # downstream log-loss / EV math. There is no sharp-anchor, no isotonic,
-        # no RWBC, no beta — by design.
-        self.true_prob = max(0.001, min(0.999, true_prob))
-        self.raw_true_prob = self.true_prob
+        # The incoming `true_prob` is the raw no-vig market consensus. It is
+        # preserved untouched in `raw_true_prob` — CLV, the observatory
+        # training corpus, and any future refit all measure against the raw
+        # number (one ruler).
+        raw = max(0.001, min(0.999, true_prob))
+        self.raw_true_prob = raw
+
+        # FINDINGS.md change B: side-specific bias correction. PP shades
+        # lines toward OVERs and the devig doesn't undo it — UNDERs
+        # empirically beat their raw prob by 5-8pp in every league, OVERs
+        # undershoot. The DECISION number gets the additive correction;
+        # green devils are exempt (the table was fit on standard lines).
+        adj = raw
+        if cfg.SIDE_BIAS_ENABLED and (self.odds_type == "standard"):
+            adj = raw + cfg.SIDE_BIAS.get(
+                ((league or "").upper(), (side or "").lower()), 0.0
+            )
+        self.true_prob = max(0.001, min(0.999, adj))
         self.true_odds = prob_to_american(self.true_prob)
 
         # Display EV vs the 6-Power break-even (for sorting / the UI only — the

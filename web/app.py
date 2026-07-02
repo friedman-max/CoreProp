@@ -1058,10 +1058,13 @@ def _run_pipeline_body():
                     except (TypeError, ValueError):
                         user_min = None
 
-                    # simplify-v1: eligibility is purely the user's threshold
-                    # plus "can we actually resolve this leg?" — no sharp
-                    # anchor, no tier routing, no calibration circuit breaker.
+                    # Eligibility: user threshold (hard-floored by FINDINGS
+                    # change C — at the old 0.5407 default every slip size was
+                    # EV-negative, the model only has edge in its top slice),
+                    # minus the FINDINGS change A cell drops, plus "can we
+                    # actually resolve this leg?".
                     min_prob = user_min if user_min is not None else cfg.DEFAULT_LEG_THRESHOLD
+                    min_prob = max(min_prob, cfg.AUTO_SLIP_MIN_PROB_FLOOR)
                     from engine.results_checker import soccer_prop_scoreable
 
                     def _scoreable(b):
@@ -1072,8 +1075,23 @@ def _run_pipeline_body():
                             return True
                         return soccer_prop_scoreable(b.get("prop_type") or b.get("prop") or "")
 
+                    def _cell_ok(b):
+                        # FINDINGS change A: never log the four (league, side)
+                        # cells where selection is proven worse than random
+                        # (NBA OVER -7pp, NHL OVER -26pp, NHL UNDER -19pp,
+                        # WNBA OVER -4pp selection edge vs random legs).
+                        if not cfg.CELL_DROPS_ENABLED:
+                            return True
+                        cell = ((b.get("league") or "").upper(),
+                                (b.get("side") or "").lower())
+                        return cell not in cfg.CELL_DROPS
+
                     def _eligible(b):
-                        return float(b.get("true_prob") or 0.0) >= min_prob and _scoreable(b)
+                        return (
+                            float(b.get("true_prob") or 0.0) >= min_prob
+                            and _cell_ok(b)
+                            and _scoreable(b)
+                        )
 
                     from engine.backtest import BacktestLogger
                     bl = BacktestLogger(user_id=uid, db_client=db)
@@ -2574,12 +2592,22 @@ def admin_trigger_auto_backtest():
             min_prob = None
         if min_prob is None:
             min_prob = cfg.DEFAULT_LEG_THRESHOLD
+        # FINDINGS change C: same hard floor as the live worker.
+        min_prob = max(min_prob, cfg.AUTO_SLIP_MIN_PROB_FLOOR)
+
+        def _admin_cell_ok(b):
+            # FINDINGS change A: mirror the live worker's cell drops.
+            if not cfg.CELL_DROPS_ENABLED:
+                return True
+            return ((b.get("league") or "").upper(),
+                    (b.get("side") or "").lower()) not in cfg.CELL_DROPS
 
         # Standard only — green devils never auto-log via the admin trigger
         # (they're an opt-in, separate-slip path in the real worker).
         pool = [b for b in bets_payload
                 if float(b.get("true_prob") or 0.0) >= min_prob
-                and (b.get("odds_type") or "standard") == "standard"]
+                and (b.get("odds_type") or "standard") == "standard"
+                and _admin_cell_ok(b)]
 
         bl = BacktestLogger(user_id=uid, db_client=db)
         n_logged = 0
