@@ -392,11 +392,11 @@ class ESPNResultsChecker:
                 is_completed = self._is_game_over(league, gs)
                 if is_completed or hours_since_end >= 6:
                     try:
-                        db.table("market_observatory").update({
+                        self._write_observatory_result(db, row, {
                             "result": "dnp",
                             "stat_actual": None,
                             "resolved_at": datetime.now(timezone.utc).isoformat(),
-                        }).eq("id", row["id"]).execute()
+                        })
                         updated += 1
                     except Exception as db_exc:
                         logger.error("Observatory DB update failed: %s", db_exc)
@@ -405,11 +405,11 @@ class ESPNResultsChecker:
             result = grade_leg(actual, line, side)
 
             try:
-                db.table("market_observatory").update({
+                self._write_observatory_result(db, row, {
                     "result": result,
                     "stat_actual": actual,
                     "resolved_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", row["id"]).execute()
+                })
                 updated += 1
             except Exception as db_exc:
                 logger.error("Observatory DB update failed: %s", db_exc)
@@ -425,6 +425,44 @@ class ESPNResultsChecker:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _write_observatory_result(db, row: dict, updates: dict) -> None:
+        """Persist a grading outcome onto a market_observatory row.
+
+        A plain UPDATE does NOT work: migration_009's BEFORE UPDATE trigger
+        (market_observatory_upsert_guard) freezes result / stat_actual /
+        resolved_at on EVERY update to protect graded rows from scraper
+        upserts — but it cannot distinguish writers, so it silently reverts
+        the results checker's grading too. That trigger is why observatory
+        resolution has been dead since ~2026-05-24 (the day migration_009
+        landed). We have no DDL access to fix the trigger (migration_017.sql
+        documents the proper fix), so grade by DELETE + re-INSERT: BEFORE
+        UPDATE triggers don't fire on INSERT, and `row` came from
+        select("*") so every column is preserved verbatim.
+
+        Safe for graded rows because their games ended >= 2h ago — the
+        scraper no longer upserts those market_keys (lines are off the
+        board), so the delete/insert window can't race a re-scrape.
+        If the insert fails, the original row is restored so nothing is
+        lost.
+        """
+        full = dict(row)
+        full.update(updates)
+        db.table("market_observatory").delete().eq("id", row["id"]).execute()
+        try:
+            db.table("market_observatory").insert(full).execute()
+        except Exception:
+            # Restore the original row so a transient insert failure can't
+            # drop data; the next run will retry the grade.
+            try:
+                db.table("market_observatory").insert(dict(row)).execute()
+            except Exception as restore_exc:
+                logger.error(
+                    "Observatory: RESTORE failed for id=%s after insert error: %s",
+                    row.get("id"), restore_exc,
+                )
+            raise
 
     @staticmethod
     def _apifootball_gap(player_name: str, game_start: datetime, prop_type: str) -> Optional[float]:
