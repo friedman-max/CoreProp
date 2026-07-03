@@ -9,9 +9,44 @@ consensus_prob (the vig-stripped market mean) instead.
 """
 from __future__ import annotations
 
+import config as cfg
 from engine.consensus import BookOdds, compute_true_probability
 
 MIN_DISPLAY = 0.50
+
+
+def test_consensus_weighting_pulls_toward_fanduel():
+    """Research change (2026-07): the decision consensus is a per-book
+    weighted mean favoring FanDuel (sharp prop maker) over Pinnacle (weakest
+    for props). When FanDuel favors a side and Pinnacle is neutral, the
+    weighted consensus must sit closer to FanDuel than the plain mean does."""
+    books = [BookOdds("fanduel", -160, 135, True),
+             BookOdds("pinnacle", -105, -115, True)]
+    prev = cfg.CONSENSUS_WEIGHTS_ENABLED
+    try:
+        cfg.CONSENSUS_WEIGHTS_ENABLED = True
+        weighted, _, meta = compute_true_probability(books, "over", league="NBA", prop="Points")
+        cfg.CONSENSUS_WEIGHTS_ENABLED = False
+        plain, _, _ = compute_true_probability(books, "over", league="NBA", prop="Points")
+    finally:
+        cfg.CONSENSUS_WEIGHTS_ENABLED = prev
+    assert weighted > plain + 0.01          # pulled toward FanDuel's higher prob
+    assert meta["devig_method"] == "weighted_consensus"
+
+
+def test_consensus_weighting_disabled_is_plain_mean():
+    """Kill switch: disabling weights reproduces the old unweighted mean."""
+    books = [BookOdds("fanduel", -150, 125, True),
+             BookOdds("draftkings", -120, 100, True),
+             BookOdds("pinnacle", -110, -110, True)]
+    prev = cfg.CONSENSUS_WEIGHTS_ENABLED
+    try:
+        cfg.CONSENSUS_WEIGHTS_ENABLED = False
+        plain, _, meta = compute_true_probability(books, "over", league="NBA", prop="Points")
+    finally:
+        cfg.CONSENSUS_WEIGHTS_ENABLED = prev
+    assert meta["devig_method"] == "unweighted_mean"
+    assert 0.0 < plain < 1.0
 
 
 def _both(over, under, n=3, book="fanduel"):

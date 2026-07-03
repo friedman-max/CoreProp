@@ -244,7 +244,7 @@ def compute_true_probability(
     if not has_any_direct:
         return None, None, {"n_books": 0, "devig_method": "no_direct_odds"}
 
-    # Collect per-book data as tuples: (power_prob, worst_prob, width, odds).
+    # Collect per-book data: (book_name, power_prob, worst_prob, width, odds).
     entries: list[tuple] = []
     for book in books:
         # Drop extremely juiced one-way prices outright (e.g. -10000): they
@@ -259,7 +259,7 @@ def compute_true_probability(
             continue
 
         width = _get_market_width(book)
-        entries.append((power_prob, worst_prob, width, odds))
+        entries.append((book.book_name, power_prob, worst_prob, width, odds))
 
     if not entries:
         return None, None, {"n_books": 0, "devig_method": "none"}
@@ -270,7 +270,7 @@ def compute_true_probability(
     # Single-source fallback
     # ------------------------------------------------------------------
     if n_books == 1:
-        power_prob, worst_prob, width, odds = entries[0]
+        _book_name, power_prob, worst_prob, width, odds = entries[0]
         prob = worst_prob if worst_prob is not None else power_prob
 
         # Apply the scaled single-source uncertainty discount
@@ -289,26 +289,36 @@ def compute_true_probability(
     # ------------------------------------------------------------------
     # Multi-source aggregation
     # ------------------------------------------------------------------
-    # The DECISION number is `worst_case_prob` — the single lowest worst-case
-    # devigged probability across books (most conservative line + most
-    # conservative devig). `consensus_prob` is kept only as a plain unweighted
-    # display mean; min ≤ mean always, so worst_case ≤ consensus by construction.
-    prob_sum = 0.0
+    # `consensus_prob` (the live DECISION number — see get_combined_true_odds)
+    # is a per-book WEIGHTED mean of the power-devigged probs. Weights encode
+    # each book's player-prop sharpness (config.CONSENSUS_BOOK_WEIGHTS):
+    # FanDuel is the sharp prop maker, Pinnacle the weakest for props
+    # (outsourced/low-limit) — the opposite of main-market intuition. With
+    # weights disabled the weighted mean reduces to the plain unweighted mean.
+    # `worst_case_prob` (min worst-case devig) is unchanged and unweighted.
+    prob_wsum = 0.0
+    weight_sum = 0.0
     width_sum = 0.0
     worst_case_prob: Optional[float] = None
 
-    for power_prob, worst_prob, width, _odds in entries:
-        prob_sum += power_prob
+    for book_name, power_prob, worst_prob, width, _odds in entries:
+        w = 1.0
+        if cfg.CONSENSUS_WEIGHTS_ENABLED:
+            w = cfg.CONSENSUS_BOOK_WEIGHTS.get(
+                (book_name or "").lower(), cfg.CONSENSUS_DEFAULT_WEIGHT
+            )
+        prob_wsum += power_prob * w
+        weight_sum += w
         width_sum += width
         if worst_prob is not None and (worst_case_prob is None or worst_prob < worst_case_prob):
             worst_case_prob = worst_prob
 
-    consensus_prob = prob_sum / n_books if n_books > 0 else None
+    consensus_prob = prob_wsum / weight_sum if weight_sum > 0 else None
     consensus_width = width_sum / n_books if n_books > 0 else None
 
     metadata = {
         "n_books":      n_books,
-        "devig_method": "worst_case_min",
+        "devig_method": "weighted_consensus" if cfg.CONSENSUS_WEIGHTS_ENABLED else "unweighted_mean",
         "market_width": consensus_width,
     }
 

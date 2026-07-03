@@ -124,6 +124,29 @@ CELL_DROPS = {
 
 AUTO_SLIP_MIN_PROB_FLOOR = float(os.getenv("AUTO_SLIP_MIN_PROB_FLOOR", "0.65"))
 
+# ---------------------------------------------------------------------------
+# Per-book consensus weights (research-driven, 2026-07). The decision prob is
+# a weighted mean of the per-book devigged probs. Player-prop research
+# converges — from independent sources (Pikkit, Unabated, Sharp App's
+# Proptimizer, Outlier) — on FanDuel being the SHARPEST US player-prop
+# market-maker, and on Pinnacle being NOT the sharp anchor for props that it
+# is for main markets: Pinnacle outsources its prop lines (to Swish
+# Analytics), runs low limits, and charges 3-5% prop vig. CoreProp previously
+# used a PLAIN UNWEIGHTED mean, which diluted FanDuel's signal with Pinnacle's
+# weaker prop line. These are EDUCATED-GUESS starting weights (the "FanDuel
+# 100 / others 25" recipe those tools publish, with DraftKings and the Novig
+# exchange bumped for genuine US prop liquidity / no-vig pricing). VALIDATE
+# against per-book CLV once settled data accrues (analysis probe), then refit.
+# Kill switch: CONSENSUS_WEIGHTS_ENABLED=false reverts to the plain mean.
+CONSENSUS_WEIGHTS_ENABLED = os.getenv("CONSENSUS_WEIGHTS_ENABLED", "true").lower() in ("true", "1", "yes")
+CONSENSUS_BOOK_WEIGHTS = {
+    "fanduel":    1.00,   # sharpest US player-prop maker (highest prop volume)
+    "draftkings": 0.50,   # major US prop market, high volume
+    "novig":      0.35,   # p2p exchange: no-vig by construction, but thin
+    "pinnacle":   0.25,   # outsourced props, low limits, 3-5% vig — weakest here
+}
+CONSENSUS_DEFAULT_WEIGHT = float(os.getenv("CONSENSUS_DEFAULT_WEIGHT", "0.25"))
+
 # Juice guardrail for single-sided / milestone lines (NHL goalscorer, NBA
 # double-double / first-basket alts, half-step alts). A book posting an
 # extreme price like -10000 isn't telling us the true probability — it's

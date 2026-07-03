@@ -1045,7 +1045,11 @@ def _run_pipeline_body():
                     if not uid:
                         continue
 
-                    slip_type = row.get("auto_slip_type") or "Power"
+                    # Default to Flex, not Power: PP-optimizer research is
+                    # unanimous that 5-6 leg Flex (break-even ~54.2%) is the
+                    # efficient slip type vs Power (2-pick needs 57.7%). Only
+                    # the fallback for users who never set a preference.
+                    slip_type = row.get("auto_slip_type") or "Flex"
                     try:
                         n_legs = int(row.get("auto_slip_legs") or 6)
                     except (TypeError, ValueError):
@@ -2579,7 +2583,7 @@ def admin_trigger_auto_backtest():
     results = []
     for row in users:
         uid = row["user_id"]
-        slip_type = row.get("auto_slip_type") or "Power"
+        slip_type = row.get("auto_slip_type") or "Flex"  # Flex default (see worker)
         try:
             n_legs = int(row.get("auto_slip_legs") or 6)
         except (TypeError, ValueError):
