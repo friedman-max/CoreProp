@@ -138,7 +138,19 @@ AUTO_SLIP_MIN_PROB_FLOOR = float(os.getenv("AUTO_SLIP_MIN_PROB_FLOOR", "0.65"))
 # exchange bumped for genuine US prop liquidity / no-vig pricing). VALIDATE
 # against per-book CLV once settled data accrues (analysis probe), then refit.
 # Kill switch: CONSENSUS_WEIGHTS_ENABLED=false reverts to the plain mean.
-CONSENSUS_WEIGHTS_ENABLED = os.getenv("CONSENSUS_WEIGHTS_ENABLED", "true").lower() in ("true", "1", "yes")
+#
+# DEFAULT FLIPPED TO false (odds-audit, 2026-07-09): the 0.65 auto-slip floor,
+# the SIDE_BIAS table, and the CELL_DROPS were ALL fit against the plain
+# UNWEIGHTED consensus (the May FINDINGS study). The FanDuel-heavy weighting
+# was added in July on top of that calibration WITHOUT re-fitting those anchors,
+# so production was gating/bias-correcting on a different ruler than the one
+# every threshold was validated on — a "stale ruler" that contributes to
+# realized < predicted. Reverting to the unweighted mean restores the ruler the
+# thresholds were earned on (invents no new numbers). Re-enable the weighting
+# ONLY after re-deriving the threshold + SIDE_BIAS on the weighted prob across
+# two disjoint settled windows (analysis/12_side_bias_refit.py), the same
+# sign-stability bar SIDE_BIAS already requires.
+CONSENSUS_WEIGHTS_ENABLED = os.getenv("CONSENSUS_WEIGHTS_ENABLED", "false").lower() in ("true", "1", "yes")
 CONSENSUS_BOOK_WEIGHTS = {
     "fanduel":    1.00,   # sharpest US player-prop maker (highest prop volume)
     "draftkings": 0.50,   # major US prop market, high volume

@@ -1308,8 +1308,13 @@ def _run_pipeline_body():
 def _reschedule(interval_min: int):
     """Reschedule the auto-refresh job with a new interval.
 
-    Only touches the auto_refresh job; leaves other jobs (e.g. daily_calibration)
-    intact so a user config change doesn't silently cancel the calibration cron.
+    Only touches the auto_refresh job so a user config change doesn't disturb
+    other scheduled jobs. NOTE: there is NO decision-probability calibration
+    cron — the SIDE_BIAS table is a manual, out-of-band fit (re-run
+    analysis/12_side_bias_refit.py monthly and paste its table into config.py).
+    The only automated refit is the leg-pair correlation map (see the hourly
+    job below and web/routers/admin.py). An earlier comment here referenced a
+    "daily_calibration" cron that never existed.
     """
     try:
         scheduler.remove_job("auto_refresh")
