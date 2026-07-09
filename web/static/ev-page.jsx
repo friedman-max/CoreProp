@@ -375,6 +375,11 @@ function EVPage() {
               </div>
             );
           })}
+          {loadState === "ok" && bets.length === 0 && (
+            <div className="ev-row" style={{ display: "block", textAlign: "center", padding: "40px 18px", color: "var(--text-3)", fontSize: 13 }}>
+              {showGreenDevils ? "No green devils available right now." : "No bets match your filters."}
+            </div>
+          )}
         </div>
 
         {/* Big Save-preferences bar at the bottom of the +EV main column.
