@@ -291,10 +291,13 @@ async def _fetch_subcategory(
             league, subcat_name, len(markets), len(selections),
         )
 
-        # Build market lookup and event lookup
-        market_map = {m["id"]: m for m in markets}
+        # Build market lookup and event lookup. Use .get("id") and skip rows
+        # without one: a single id-less market/event otherwise raises KeyError,
+        # which the broad except below turns into voiding the WHOLE subcategory
+        # (all its props lost), not just skipping the one malformed row.
+        market_map = {m["id"]: m for m in markets if m.get("id")}
         events = data.get("events", [])
-        event_map = {e["id"]: e.get("startEventDate") for e in events}
+        event_map = {e["id"]: e.get("startEventDate") for e in events if e.get("id")}
 
         # Group selections by market to find Over/Under pairs
         by_market: Dict[tuple, Dict] = {}

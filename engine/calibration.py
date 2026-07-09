@@ -227,7 +227,7 @@ def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows:
     hit_rate = n_won / n if n > 0 else None
     avg_pred = sum(r["true_prob"] for r in rows) / n
 
-    # Build calibration buckets (2% wide ranges: 30-31, 32-33, ..., 98-99)
+    # Build calibration buckets (2% wide ranges: 30-32, 32-34, ..., 98-100)
     buckets = []
     for bucket_start in range(30, 100, 2):
         lo = bucket_start / 100.0
@@ -243,7 +243,7 @@ def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows:
             actual_avg = None
 
         buckets.append({
-            "bucket": f"{bucket_start}-{bucket_start+1}%",
+            "bucket": f"{bucket_start}-{bucket_start+2}%",
             "predicted_avg": round(pred_avg, 4) if pred_avg is not None else None,
             "actual_avg": round(actual_avg, 4) if actual_avg is not None else None,
             "count": count,

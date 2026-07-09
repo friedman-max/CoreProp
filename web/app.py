@@ -33,7 +33,7 @@ def _intern(s):
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.jobstores.base import JobLookupError
-from fastapi import FastAPI, HTTPException, Depends, Request, Response
+from fastapi import FastAPI, HTTPException, Depends, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -732,6 +732,10 @@ def _run_pipeline_body():
                         "pin_odds": pin_o,
                         "nv_odds":  nv_o,
                         "true_odds": true,
+                        # Emit the consensus probability too: the Combined Lines
+                        # board's default sort is keyed on truePct (from
+                        # true_prob), which was otherwise always null here.
+                        "true_prob": prob,
                     })
 
                     # Observatory: log this priced side (gated at >= OBS_MIN_PROB
@@ -770,6 +774,12 @@ def _run_pipeline_body():
                             both_sided=first_bk.both_sided,
                             pp_player_id=m.pp.player_id,
                             market_width=mw,
+                            # Stamp start_time so calculate_slip can group legs by
+                            # game and apply correlation-aware EV. Without it the
+                            # bet_map objects carry start_time="" -> every leg gets
+                            # a blank game_key -> the correlation matrix is identity
+                            # -> same-game legs are (wrongly) treated as independent.
+                            start_time=m.pp.start_time,
                             team=getattr(m.pp, "team", "") or "",
                             odds_type=getattr(m.pp, "odds_type", "standard"),
                         )
@@ -802,6 +812,7 @@ def _run_pipeline_body():
                         "pin_odds": pin_u,
                         "nv_odds":  nv_u,
                         "true_odds": true,
+                        "true_prob": prob,  # see over-side note
                     })
 
                     # Observatory: log this priced side (gated at >= OBS_MIN_PROB
@@ -840,6 +851,9 @@ def _run_pipeline_body():
                             both_sided=first_bk.both_sided,
                             pp_player_id=m.pp.player_id,
                             market_width=mw,
+                            # See over-side note: start_time is required for
+                            # correlation-aware slip EV (game grouping).
+                            start_time=m.pp.start_time,
                             team=getattr(m.pp, "team", "") or "",
                             odds_type=getattr(m.pp, "odds_type", "standard"),
                         )
@@ -1645,11 +1659,17 @@ def _get_user_config(user: Optional[dict]) -> dict:
     return base
 
 @app.get("/api/bets")
-def get_bets(request: Request):
+def get_bets(request: Request, user: Optional[dict] = Depends(get_current_user_optional)):
     """Serve the pre-serialized bets payload. Per-user filtering (min_ev_pct,
     active_leagues, in_backtest) now happens client-side via `/api/backtest/keys`
     — this removes the per-request dict-copy (~one full payload of allocations)
-    and the Supabase round-trip that used to block the hot path."""
+    and the Supabase round-trip that used to block the hot path.
+
+    Gated identically to /api/bootstrap/core: without this check a non-subscriber
+    could pull the full +EV list here even when BILLING_ENFORCE=true. No-op when
+    enforcement is off (_user_has_access returns True for everyone)."""
+    if not _user_has_access(user):
+        raise HTTPException(status_code=402, detail="Subscription required.")
     return _cached_response("bets", request)
 
 
@@ -1663,7 +1683,9 @@ def get_ui_config():
 
 
 @app.get("/api/matched")
-def get_matched(request: Request):
+def get_matched(request: Request, user: Optional[dict] = Depends(get_current_user_optional)):
+    if not _user_has_access(user):
+        raise HTTPException(status_code=402, detail="Subscription required.")
     return _cached_response("matches", request)
 
 
@@ -1852,6 +1874,9 @@ def get_config(user: dict = Depends(get_current_user)):
         "auto_slip_type":     cfg.get("auto_slip_type", "Power"),
         "auto_slip_legs":     cfg.get("auto_slip_legs", 6),
         "auto_slip_min_prob": cfg.get("auto_slip_min_prob"),
+        # _get_user_config populates this, but it was missing from the response
+        # dict, so the +EV page's green-devils opt-in never rehydrated on reload.
+        "auto_backtest_green_devils": cfg.get("auto_backtest_green_devils", False),
     }
 
 
@@ -1964,7 +1989,9 @@ def update_slip_prefs(update: SlipPrefsUpdate, user: dict = Depends(get_current_
 # ---------------------------------------------------------------------------
 
 @app.get("/api/prizepicks")
-def get_prizepicks(request: Request):
+def get_prizepicks(request: Request, user: Optional[dict] = Depends(get_current_user_optional)):
+    if not _user_has_access(user):
+        raise HTTPException(status_code=402, detail="Subscription required.")
     return _cached_response("pp_lines", request)
 
 
@@ -2032,7 +2059,9 @@ def _run_pp_scrape():
 # ---------------------------------------------------------------------------
 
 @app.get("/api/fanduel")
-def get_fanduel(request: Request):
+def get_fanduel(request: Request, user: Optional[dict] = Depends(get_current_user_optional)):
+    if not _user_has_access(user):
+        raise HTTPException(status_code=402, detail="Subscription required.")
     return _cached_response("fd_lines", request)
 
 
@@ -2121,7 +2150,9 @@ def _run_fd_scrape():
 # ---------------------------------------------------------------------------
 
 @app.get("/api/draftkings")
-def get_draftkings(request: Request):
+def get_draftkings(request: Request, user: Optional[dict] = Depends(get_current_user_optional)):
+    if not _user_has_access(user):
+        raise HTTPException(status_code=402, detail="Subscription required.")
     return _cached_response("dk_lines", request)
 
 
@@ -2203,7 +2234,9 @@ def _run_dk_scrape():
 # ---------------------------------------------------------------------------
 
 @app.get("/api/pinnacle")
-def get_pinnacle(request: Request):
+def get_pinnacle(request: Request, user: Optional[dict] = Depends(get_current_user_optional)):
+    if not _user_has_access(user):
+        raise HTTPException(status_code=402, detail="Subscription required.")
     return _cached_response("pin_lines", request)
 
 
@@ -2330,46 +2363,63 @@ class PendingSlipRequest(BaseModel):
 
 @app.post("/api/pending-slip")
 def set_pending_slip(req: PendingSlipRequest, user: dict = Depends(get_current_user)):
-    """Store a slip for the PP browser extension to pick up. TTL: 5 min."""
-    uid = user["id"]
+    """Store a slip for the PP browser extension to pick up. TTL: 5 min.
+
+    Returns a single-use `token` that the website passes to PrizePicks (via the
+    opened URL) so the extension fetches back exactly this slip. The extension
+    runs in the app.prizepicks.com origin and sends no CoreProp credentials, so
+    the token — not the user's JWT — is what scopes the GET to one slip. Keying
+    storage by an unguessable token (instead of the shared "most recent" slot)
+    is what prevents one user's extension from picking up another user's slip.
+    """
+    import secrets
+    token = secrets.token_urlsafe(16)
     expires_at = time.monotonic() + _PENDING_SLIP_TTL_SEC
     payload = {
-        "user_id": uid,
+        "user_id": user["id"],
         "slip_type": req.slip_type,
         "n_legs": req.n_legs,
         "legs": req.legs,
     }
     with _pending_slips_lock:
-        _pending_slips[uid] = (payload, expires_at)
-    return {"ok": True}
+        _pending_slips[token] = (payload, expires_at)
+    return {"ok": True, "token": token}
+
+
+def _evict_expired_pending(now: float) -> None:
+    """Drop expired pending-slip entries. Caller must hold _pending_slips_lock."""
+    for k in [k for k, (_, exp) in _pending_slips.items() if exp < now]:
+        del _pending_slips[k]
 
 
 @app.get("/api/pending-slip")
-def get_pending_slip():
+def get_pending_slip(token: str = Query("", alias="cp_slip")):
     """
-    Return the most recent non-expired pending slip.
-    No auth — called by the Chrome extension from app.prizepicks.com context.
-    Returns {} when nothing is pending.
+    Return the pending slip matching `token`, or {} if none.
+    No auth — called by the Chrome extension from app.prizepicks.com context;
+    the token (issued by POST and relayed through the opened PrizePicks URL) is
+    what authorizes the read, so one user's extension can never receive another
+    user's slip. A blank/unknown token returns {} rather than any slip.
     """
     now = time.monotonic()
     with _pending_slips_lock:
-        # Evict expired entries
-        expired = [k for k, (_, exp) in _pending_slips.items() if exp < now]
-        for k in expired:
-            del _pending_slips[k]
-        if not _pending_slips:
+        _evict_expired_pending(now)
+        if not token:
             return {}
-        # Return the most recently stored slip
-        latest = max(_pending_slips.items(), key=lambda kv: kv[1][1])
-        slip_data, _ = latest[1]
+        entry = _pending_slips.get(token)
+        if not entry:
+            return {}
+        slip_data, _ = entry
         return slip_data
 
 
 @app.delete("/api/pending-slip")
-def clear_pending_slip():
-    """Extension calls this after successfully building the slip on PP."""
+def clear_pending_slip(token: str = Query("", alias="cp_slip")):
+    """Extension calls this after successfully building the slip on PP.
+    Clears only the entry for `token` so it can't wipe other users' slips."""
     with _pending_slips_lock:
-        _pending_slips.clear()
+        if token:
+            _pending_slips.pop(token, None)
     return {"ok": True}
 
 
@@ -2800,7 +2850,11 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
         best_type = req_slip_type
 
         slip_id   = str(uuid.uuid4())[:8].upper()
-        timestamp = _dt.now().isoformat(timespec="seconds")
+        # UTC to match every other slip write (auto path + slip-header above);
+        # a naive local timestamp sorts wrong against them in the
+        # order("timestamp", desc=True) query and mis-buckets in the analytics
+        # window math.
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         proj_ev   = round(best_ev, 4)
 
         rows = []
@@ -2828,9 +2882,15 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
             raise HTTPException(status_code=500, detail="No database connection available.")
 
         try:
-            # 1. Insert slip header
+            # 1. Insert slip header. user_id is REQUIRED: the read path
+            # (get_backtest_slips) uses an RLS-scoped client that only returns
+            # rows matching auth.uid(), so a header without user_id is either
+            # rejected by the INSERT policy or inserted as an orphan the user
+            # can never see — i.e. the manually-saved slip silently vanishes
+            # from the Backtest tab. (The auto path already sets user_id.)
             db_client.table("slips").insert({
                 "id":               slip_id,
+                "user_id":          user["id"],
                 "timestamp":        timestamp,
                 "slip_type":        best_type,
                 "n_legs":           k,
@@ -2842,6 +2902,7 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
             for r in rows:
                 db_legs.append({
                     "slip_id":      slip_id,
+                    "user_id":      user["id"],   # RLS-required — see slip header note
                     "leg_num":      r["leg_num"],
                     "player":       r["player"],
                     "league":       r["league"],
