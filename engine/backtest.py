@@ -28,7 +28,7 @@ from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 import unidecode
 
-from engine.constants import BREAK_EVEN
+from engine.constants import BREAK_EVEN, OPTIMAL_BREAK_EVEN
 from engine.ev_calculator import power_slip_ev, flex_slip_ev
 from engine.database import get_db, get_user_db
 
@@ -413,13 +413,21 @@ class BacktestLogger:
         true_probs = [float(b.get("true_prob") or 0.0) for b in best_legs]
         avg_prob = sum(true_probs) / n_legs
         be_key = (str(n_legs), slip_type.lower())
-        slip_be = BREAK_EVEN.get(be_key)
+        # Fall back to the optimal per-leg break-even (~0.5408) for any combo
+        # not in the table (e.g. ("2","flex")). Using raw .get() -> None here
+        # meant such slips were SILENTLY dropped (never logged) rather than
+        # gated on a sensible threshold.
+        slip_be = BREAK_EVEN.get(be_key, OPTIMAL_BREAK_EVEN)
 
-        if slip_be is None or avg_prob < slip_be:
+        if avg_prob < slip_be:
             return None
 
-        # Use the correct EV function for the slip type
-        if slip_type.lower() == "power":
+        # Use the correct EV function for the slip type. A 2-leg Flex is
+        # identical to a 2-leg Power (FLEX_PAYOUTS has no n=2 tier, so
+        # flex_slip_ev would return None and silently drop the slip) — this
+        # mirrors the "Flex 2-leg = Power 2-leg" rule used in the payout math
+        # (web/app.py get_backtest_slips, frontend btSlipEvPct).
+        if slip_type.lower() == "power" or len(true_probs) == 2:
             best_ev = power_slip_ev(true_probs)
         else:
             best_ev = flex_slip_ev(true_probs)
@@ -622,7 +630,7 @@ class BacktestLogger:
                         continue
                 if not ok:
                     raise last
-            logger.info("Backtest: logged Auto-Slip %s (6-leg EV=%.2f%%) for user %s", slip_id, best_ev * 100, self.user_id)
+            logger.info("Backtest: logged Auto-Slip %s (%d-leg EV=%.2f%%) for user %s", slip_id, n_legs, best_ev * 100, self.user_id)
         except Exception as db_exc:
             logger.error("Backtest: Supabase write failed for slip %s: %s", slip_id, db_exc)
             return None
@@ -631,7 +639,7 @@ class BacktestLogger:
             "slip_id":          slip_id,
             "timestamp":        timestamp,
             "slip_type":        slip_type,
-            "n_legs":           6,
+            "n_legs":           n_legs,
             "proj_slip_ev_pct": proj_ev,
             "legs": [
                 {

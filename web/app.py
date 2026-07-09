@@ -2850,7 +2850,11 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
         best_type = req_slip_type
 
         slip_id   = str(uuid.uuid4())[:8].upper()
-        timestamp = _dt.now().isoformat(timespec="seconds")
+        # UTC to match every other slip write (auto path + slip-header above);
+        # a naive local timestamp sorts wrong against them in the
+        # order("timestamp", desc=True) query and mis-buckets in the analytics
+        # window math.
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         proj_ev   = round(best_ev, 4)
 
         rows = []
@@ -2878,9 +2882,15 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
             raise HTTPException(status_code=500, detail="No database connection available.")
 
         try:
-            # 1. Insert slip header
+            # 1. Insert slip header. user_id is REQUIRED: the read path
+            # (get_backtest_slips) uses an RLS-scoped client that only returns
+            # rows matching auth.uid(), so a header without user_id is either
+            # rejected by the INSERT policy or inserted as an orphan the user
+            # can never see — i.e. the manually-saved slip silently vanishes
+            # from the Backtest tab. (The auto path already sets user_id.)
             db_client.table("slips").insert({
                 "id":               slip_id,
+                "user_id":          user["id"],
                 "timestamp":        timestamp,
                 "slip_type":        best_type,
                 "n_legs":           k,
@@ -2892,6 +2902,7 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
             for r in rows:
                 db_legs.append({
                     "slip_id":      slip_id,
+                    "user_id":      user["id"],   # RLS-required — see slip header note
                     "leg_num":      r["leg_num"],
                     "player":       r["player"],
                     "league":       r["league"],

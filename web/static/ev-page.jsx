@@ -139,7 +139,10 @@ function EVPage() {
           setLegs(cfg.auto_slip_legs);
         }
         if (typeof cfg.auto_slip_min_prob === "number" && cfg.auto_slip_min_prob > 0 && cfg.auto_slip_min_prob < 1) {
-          setMinLegOverride(cfg.auto_slip_min_prob * 100);
+          // Round to 2 dp: 0.57 * 100 is 56.99999999999999 in float, which
+          // would otherwise show as "56.999999%" in the Min Leg % input on
+          // reload. The input uses step="0.1", so 2 dp loses no real precision.
+          setMinLegOverride(Math.round(cfg.auto_slip_min_prob * 10000) / 100);
         }
         if (typeof cfg.auto_backtest === "boolean") {
           setAutoBacktest(cfg.auto_backtest);
