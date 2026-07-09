@@ -34,6 +34,16 @@ def test_consensus_weighting_pulls_toward_fanduel():
     assert meta["devig_method"] == "weighted_consensus"
 
 
+def test_consensus_weighting_defaults_off():
+    """Odds audit (2026-07-09): the decision consensus must default to the
+    PLAIN UNWEIGHTED mean, because the 0.65 gate + SIDE_BIAS + CELL_DROPS were
+    all fit on that ruler. The FanDuel-heavy weighting is opt-in only (env
+    CONSENSUS_WEIGHTS_ENABLED=true) and must not be re-enabled by default until
+    those anchors are re-fit on the weighted prob. Guards against silently
+    flipping the decision ruler back to the unvalidated weighted one."""
+    assert cfg.CONSENSUS_WEIGHTS_ENABLED is False
+
+
 def test_consensus_weighting_disabled_is_plain_mean():
     """Kill switch: disabling weights reproduces the old unweighted mean."""
     books = [BookOdds("fanduel", -150, 125, True),

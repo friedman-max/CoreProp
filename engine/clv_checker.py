@@ -83,10 +83,10 @@ class CLVTracker:
         updated_count = 0
 
         # Pending: (player, league, prop, line, side, game_start) → raw closing
-        # prob. Flushed at the end of the loop to market_observatory so the
-        # calibration refit has CLV signal data to work with. We write the
-        # *raw* value (pre-isotonic) here to avoid the circular dependency
-        # where calibrated closing_prob would be used to refit calibration.
+        # prob. Flushed at the end of the loop to market_observatory so a
+        # future/manual refit has CLV signal data to work with. We write the
+        # *raw* (pre-correction) value here to avoid the circular dependency
+        # where a corrected closing_prob would be used to refit the correction.
         observatory_writes: dict[tuple, float] = {}
 
         for row in rows:
@@ -186,8 +186,8 @@ class CLVTracker:
                         logger.error("CLVTracker DB update failed: %s", db_exc)
 
                     # Stage the *raw* closing prob for market_observatory so
-                    # the calibration refit can use it as a CLV signal without
-                    # the bias of double-calibration.
+                    # a future/manual refit can use it as a CLV signal without
+                    # the bias of double-correction.
                     leg_player = row.get("player") or ""
                     leg_league = row.get("league") or ""
                     leg_prop = row.get("prop") or ""
@@ -246,9 +246,15 @@ class CLVTracker:
         `legs` table, so an observatory row only ever receives a
         `closing_prob` if a logged bet exists for the same 6-tuple. With
         6,572 legs vs 47,653 observatory rows, that path leaves 95% of the
-        training corpus without CLV signal. Result (measured): the dynamic
-        CLV-weight estimator in isotonic_calibration._compute_clv_weight is
-        operating on <2,000 rows even though 38,788 are settled.
+        training corpus without CLV signal — starving any future CLV-informed
+        recalibration of data even though 38,788 rows are settled.
+
+        NOTE: there is currently NO isotonic/hierarchical calibrator in the
+        codebase (the module the older comments named was never built). This
+        method exists to keep the observatory's CLV corpus complete so a
+        future/manual recalibration (or analysis/12_side_bias_refit.py) has
+        the signal it needs; nothing consumes closing_prob to adjust decision
+        probs at runtime today.
 
         This method writes closing_prob to ALL pending observatory rows
         whose game_start is within `capture_window_minutes` of now (default
@@ -264,11 +270,13 @@ class CLVTracker:
 
         Returns the number of observatory rows updated.
 
-        Schema notes: writes the RAW pre-calibration consensus (the dict
-        values from _build_current_probs are worst_case_prob already, but
-        they're pre-isotonic). The calibration refit at
-        isotonic_calibration._ingest_resolved_row reads this raw value and
-        avoids the feedback loop documented at isotonic_calibration.py:746.
+        Schema notes: writes the RAW pre-correction consensus so any future
+        refit trains on raw -> outcome (not corrected -> outcome), which is the
+        "one ruler" discipline that avoids the calibration feedback loop
+        (a corrected prob fed back as training input would compound its own
+        correction). raw_true_prob is the canonical training column everywhere
+        (backtest legs, observatory rows); closing_prob captured here is the
+        CLV signal, kept separate from that ruler.
         """
         db = get_db()
         if not db:
