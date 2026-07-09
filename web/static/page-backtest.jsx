@@ -456,7 +456,7 @@ function SlipCard({ slip }) {
         side:   b.side === "O" ? "over" : "under",
       }));
       if (!legs.length) throw new Error("slip has no legs");
-      await window.cpApi.apiFetch("/api/pending-slip", {
+      const res = await window.cpApi.apiFetch("/api/pending-slip", {
         method: "POST",
         body: {
           legs,
@@ -466,7 +466,12 @@ function SlipCard({ slip }) {
       });
       // Open PrizePicks so the extension's content script fires. Same
       // user-gesture chain as the click guarantees the popup isn't blocked.
-      window.open("https://app.prizepicks.com/", "_blank", "noopener,noreferrer");
+      // Pass the single-use token in the URL so the extension fetches back
+      // exactly this slip (not whatever another user queued most recently).
+      const ppUrl = res && res.token
+        ? "https://app.prizepicks.com/?cp_slip=" + encodeURIComponent(res.token)
+        : "https://app.prizepicks.com/";
+      window.open(ppUrl, "_blank", "noopener,noreferrer");
       setPlaceState("queued");
       setTimeout(() => setPlaceState(s => s === "queued" ? "idle" : s), 4000);
     } catch (ex) {

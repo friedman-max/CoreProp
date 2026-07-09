@@ -47,12 +47,13 @@ async function tryFetch(path, init) {
  * single fetches, no retries, no polling. The extension never asks the
  * same URL twice.
  */
-async function fetchPendingSlipFromAny() {
+async function fetchPendingSlipFromAny(token) {
   let firstEmpty = null;
   let lastErr = null;
+  const q = token ? `?cp_slip=${encodeURIComponent(token)}` : "";
   for (const base of COREPROP_URLS) {
     try {
-      const resp = await fetch(`${base}/api/pending-slip`, {
+      const resp = await fetch(`${base}/api/pending-slip${q}`, {
         method: "GET",
         headers: { "Accept": "application/json" },
       });
@@ -80,12 +81,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return false;
 
   if (msg.type === "coreprop:get-pending-slip") {
-    fetchPendingSlipFromAny().then(sendResponse);
+    fetchPendingSlipFromAny(msg.token || "").then(sendResponse);
     return true;  // async
   }
 
   if (msg.type === "coreprop:clear-pending-slip") {
-    tryFetch("/api/pending-slip", { method: "DELETE" }).then(sendResponse);
+    const q = msg.token ? `?cp_slip=${encodeURIComponent(msg.token)}` : "";
+    tryFetch(`/api/pending-slip${q}`, { method: "DELETE" }).then(sendResponse);
     return true;
   }
 

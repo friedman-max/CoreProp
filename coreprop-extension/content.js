@@ -195,8 +195,16 @@ function sendToBackground(message) {
   });
 }
 
+// The website opens PrizePicks with ?cp_slip=<token>; that token scopes the
+// pending-slip fetch to this user's slip. Without it the server returns {}.
+function pendingSlipToken() {
+  try { return new URLSearchParams(location.search).get("cp_slip") || ""; }
+  catch (e) { return ""; }
+}
+
 async function fetchPendingSlip() {
-  const resp = await sendToBackground({ type: "coreprop:get-pending-slip" });
+  const token = pendingSlipToken();
+  const resp = await sendToBackground({ type: "coreprop:get-pending-slip", token });
   log("pending-slip response:", resp);
 
   if (!resp.ok) {
@@ -210,7 +218,7 @@ async function fetchPendingSlip() {
 }
 
 async function clearPendingSlip() {
-  await sendToBackground({ type: "coreprop:clear-pending-slip" });
+  await sendToBackground({ type: "coreprop:clear-pending-slip", token: pendingSlipToken() });
 }
 
 // ---------------------------------------------------------------------------
