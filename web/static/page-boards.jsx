@@ -84,6 +84,24 @@ function OddsCell({ value, best }) {
   return <span className={cls}>{value > 0 ? "+" + value : value}</span>;
 }
 
+// Full-width table-body row for the loading / error / no-results states, so a
+// board never renders as a bare header over a blank panel (indistinguishable
+// from a data outage). `state` comes from useBoardLines: loading | ok | error.
+function BoardEmptyRow({ cols, state, error, empty, onClear }) {
+  let msg;
+  if (state === "loading") msg = "Loading…";
+  else if (state === "error") msg = "Couldn't load lines" + (error ? ": " + error : ".");
+  else msg = empty || "No lines match your filters.";
+  return (
+    <tr>
+      <td className="bd-empty" colSpan={cols}>
+        {msg}
+        {state === "ok" && onClear && <button className="bd-clear" style={{ marginLeft: 10 }} onClick={onClear}>Clear filters</button>}
+      </td>
+    </tr>
+  );
+}
+
 // ───────── Combined Lines ─────────
 function CombinedLinesPage() {
   const [league, setLeague] = useState("");
@@ -172,6 +190,10 @@ function CombinedLinesPage() {
                 </tr>
               );
             })}
+            {rows.length === 0 && (
+              <BoardEmptyRow cols={11} state={loadState} error={error}
+                onClear={() => { setLeague(""); setPropQ(""); setPlayer(""); setPage(1); }} />
+            )}
           </tbody>
         </table>
       </div>
@@ -186,7 +208,7 @@ function PrizePicksPage() {
   const [player, setPlayer] = useState("");
   const [page, setPage] = useState(1);
   const PER = 30;
-  const { rows: data } = window.cpApi.useBoardLines("/api/prizepicks", "lines");
+  const { rows: data, state: loadState, error } = window.cpApi.useBoardLines("/api/prizepicks", "lines");
 
   const filtered = useMemo(() =>
     data.filter(x =>
@@ -231,9 +253,14 @@ function PrizePicksPage() {
                 <td className="bd-muted">{r.prop}</td>
                 <td className="mono">{r.line}</td>
                 <td className={"bd-side " + (r.side === "OVER" ? "is-over" : "is-under")}>{r.side}</td>
-                <td className="bd-time mono">{r.time}</td>
+                <td className="bd-time mono">{fmtGameTimeB(r.startTime)}</td>
               </tr>
             ))}
+            {rows.length === 0 && (
+              <BoardEmptyRow cols={6} state={loadState} error={error}
+                empty="No PrizePicks lines right now."
+                onClear={() => { setLeague(""); setPropQ(""); setPlayer(""); }} />
+            )}
           </tbody>
         </table>
       </div>
@@ -250,7 +277,7 @@ function SportsbooksPage() {
   const [page, setPage] = useState(1);
   const PER = 25;
   const bookEndpoint = { fd: "/api/fanduel", dk: "/api/draftkings", pin: "/api/pinnacle" }[book];
-  const { rows: data } = window.cpApi.useBoardLines(bookEndpoint, "lines");
+  const { rows: data, state: loadState, error } = window.cpApi.useBoardLines(bookEndpoint, "lines");
 
   // Single-book endpoints (/api/fanduel etc.) return each row with the
   // book's own odds in `bookOdds` (from line_odds) — there are no
@@ -330,6 +357,11 @@ function SportsbooksPage() {
                 </tr>
               );
             })}
+            {rows.length === 0 && (
+              <BoardEmptyRow cols={9} state={loadState} error={error}
+                empty={"No " + bookLabels[book] + " lines available right now."}
+                onClear={() => { setLeague(""); setPropQ(""); setPlayer(""); }} />
+            )}
           </tbody>
         </table>
       </div>
