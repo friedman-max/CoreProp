@@ -113,8 +113,11 @@ class CLVTracker:
             prop = (row.get("prop") or "").lower().strip()
             side = (row.get("side") or "").lower().strip()
             try:
-                line = float(row.get("line", 0))
-            except ValueError:
+                # row["line"] may be present-but-null (Supabase NULL) -> .get's
+                # default doesn't apply, and float(None) raises TypeError (not
+                # ValueError), so catch both.
+                line = float(row.get("line") or 0)
+            except (ValueError, TypeError):
                 line = 0.0
 
             key = (player, prop, side, line)

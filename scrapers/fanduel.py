@@ -459,7 +459,11 @@ def _extract_props_from_json(data: dict, league: str) -> list[FanDuelProp]:
             if multi or is_alt:
                 runners = mkt.get("runners", [])
                 for runner in runners:
-                    runner_raw = runner.get("runnerName", "").strip()
+                    # FanDuel sends runnerName: null for suspended/placeholder
+                    # runners; dict.get's default only covers a MISSING key, so
+                    # coerce None -> "" before string ops (else .strip() throws
+                    # and the outer try aborts every later market in this tab).
+                    runner_raw = (runner.get("runnerName") or "").strip()
                     if not runner_raw: continue
                     if "/" in runner_raw: continue
 
@@ -514,8 +518,8 @@ def _extract_props_from_json(data: dict, league: str) -> list[FanDuelProp]:
             for runner in runners:
                 handicap_raw = runner.get("handicap")
                 if handicap_raw is None:
-                     handicap_raw = runner.get("runnerName", "")
-                     
+                     handicap_raw = runner.get("runnerName") or ""
+
                 try:
                     handicap = float(handicap_raw)
                 except (ValueError, TypeError):
@@ -527,14 +531,15 @@ def _extract_props_from_json(data: dict, league: str) -> list[FanDuelProp]:
                     or _parse_american(runner.get("currentPrice"))
                 )
 
-                runner_name = runner.get("runnerName", "").lower()
+                # Coerce None -> "" (runnerName may be JSON null on some runners).
+                runner_name = (runner.get("runnerName") or "").lower()
                 is_over  = "over"  in runner_name or "+" in runner_name
                 is_under = "under" in runner_name
 
                 if " - " in mkt_name:
                     player_name = mkt_name.split(" - ")[0].strip()
                 else:
-                    runner_raw = runner.get("runnerName", "")
+                    runner_raw = runner.get("runnerName") or ""
                     clean_runner = runner_raw
                     for suffix in [" - Over", " - Under", " Over", " Under"]:
                         if clean_runner.endswith(suffix):

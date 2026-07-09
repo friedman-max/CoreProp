@@ -760,7 +760,7 @@ class ESPNResultsChecker:
         to  = _num("to", "turnovers")
         pm3 = _num("3pt", "3pm", "threepointfieldgoalsmade")
 
-        if prop_type == "Points":
+        if prop_type == "Points" and league != "NHL":
             return pts
         if prop_type == "Rebounds":
             return reb

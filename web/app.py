@@ -732,6 +732,10 @@ def _run_pipeline_body():
                         "pin_odds": pin_o,
                         "nv_odds":  nv_o,
                         "true_odds": true,
+                        # Emit the consensus probability too: the Combined Lines
+                        # board's default sort is keyed on truePct (from
+                        # true_prob), which was otherwise always null here.
+                        "true_prob": prob,
                     })
 
                     # Observatory: log this priced side (gated at >= OBS_MIN_PROB
@@ -808,6 +812,7 @@ def _run_pipeline_body():
                         "pin_odds": pin_u,
                         "nv_odds":  nv_u,
                         "true_odds": true,
+                        "true_prob": prob,  # see over-side note
                     })
 
                     # Observatory: log this priced side (gated at >= OBS_MIN_PROB
@@ -1869,6 +1874,9 @@ def get_config(user: dict = Depends(get_current_user)):
         "auto_slip_type":     cfg.get("auto_slip_type", "Power"),
         "auto_slip_legs":     cfg.get("auto_slip_legs", 6),
         "auto_slip_min_prob": cfg.get("auto_slip_min_prob"),
+        # _get_user_config populates this, but it was missing from the response
+        # dict, so the +EV page's green-devils opt-in never rehydrated on reload.
+        "auto_backtest_green_devils": cfg.get("auto_backtest_green_devils", False),
     }
 
 

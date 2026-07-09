@@ -140,15 +140,9 @@ function EVPage() {
   React.useEffect(() => {
     if (!prefsHydrated.current) return;
     if (!window.cpApi || !window.cpApi.isLoggedIn()) return;
-    const minPct = (typeof minLegOverride === "number") ? minLegOverride : slipBE;
     window.cpApi.apiFetch("/api/user/slip-prefs", {
       method: "POST",
-      body: {
-        auto_slip_type: slipType,
-        auto_slip_legs: legs,
-        auto_slip_min_prob: Math.max(0.01, Math.min(0.99, minPct / 100)),
-        auto_backtest_green_devils: autoBacktestGreenDevils,
-      },
+      body: slipPrefsBody(),
     }).catch(err => console.warn("green-devil pref save failed:", err.message));
   }, [autoBacktestGreenDevils]);
 
@@ -161,19 +155,29 @@ function EVPage() {
     setPrefsSaveState("idle");
   }, [slipType, legs, minLegOverride]);
 
+  // Build the /api/user/slip-prefs body, clamping to what the backend accepts:
+  // auto_slip_legs must be 2-6 (the builder also offers 7 for live EV calc, but
+  // 7 is not a persistable pref) and Flex requires >= 3 legs. Sending an
+  // out-of-range value 400s and the pref silently never saves.
+  const slipPrefsBody = () => {
+    const minPct = (typeof minLegOverride === "number") ? minLegOverride : slipBE;
+    let saveLegs = Math.max(2, Math.min(6, legs));
+    if (slipType === "Flex") saveLegs = Math.max(3, saveLegs);
+    return {
+      auto_slip_type: slipType,
+      auto_slip_legs: saveLegs,
+      auto_slip_min_prob: Math.max(0.01, Math.min(0.99, minPct / 100)),
+      auto_backtest_green_devils: autoBacktestGreenDevils,
+    };
+  };
+
   const saveSlipPrefs = async () => {
     if (!window.cpApi || !window.cpApi.isLoggedIn()) return;
     setPrefsSaveState("saving");
     try {
-      const minPct = (typeof minLegOverride === "number") ? minLegOverride : slipBE;
       await window.cpApi.apiFetch("/api/user/slip-prefs", {
         method: "POST",
-        body: {
-          auto_slip_type: slipType,
-          auto_slip_legs: legs,
-          auto_slip_min_prob: Math.max(0.01, Math.min(0.99, minPct / 100)),
-          auto_backtest_green_devils: autoBacktestGreenDevils,
-        },
+        body: slipPrefsBody(),
       });
       setPrefsSaveState("saved");
       setTimeout(() => setPrefsSaveState(s => s === "saved" ? "idle" : s), 2500);

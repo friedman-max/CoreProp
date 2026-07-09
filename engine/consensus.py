@@ -259,7 +259,12 @@ def compute_true_probability(
             continue
 
         width = _get_market_width(book)
-        entries.append((book.book_name, power_prob, worst_prob, width, odds))
+        # Track whether this book has a DIRECT price for the requested side
+        # (vs. a complement derived from the opposite side of a single-sided
+        # book). Complement-derived probs must not enter the consensus mean —
+        # see the aggregation loop below.
+        entries.append((book.book_name, power_prob, worst_prob, width, odds,
+                        _has_direct_odds(book, side)))
 
     if not entries:
         return None, None, {"n_books": 0, "devig_method": "none"}
@@ -270,7 +275,7 @@ def compute_true_probability(
     # Single-source fallback
     # ------------------------------------------------------------------
     if n_books == 1:
-        _book_name, power_prob, worst_prob, width, odds = entries[0]
+        _book_name, power_prob, worst_prob, width, odds, _has_direct = entries[0]
         prob = worst_prob if worst_prob is not None else power_prob
 
         # Apply the scaled single-source uncertainty discount
@@ -301,7 +306,19 @@ def compute_true_probability(
     width_sum = 0.0
     worst_case_prob: Optional[float] = None
 
-    for book_name, power_prob, worst_prob, width, _odds in entries:
+    for book_name, power_prob, worst_prob, width, _odds, has_direct in entries:
+        width_sum += width
+        # Every book (direct or complement-derived) still informs the
+        # conservative worst_case_prob min.
+        if worst_prob is not None and (worst_case_prob is None or worst_prob < worst_case_prob):
+            worst_case_prob = worst_prob
+        # ...but complement-derived probs (a single-sided book missing the
+        # requested side) must NEVER enter the consensus mean: they lift the
+        # live decision number above MIN_DISPLAY_PROB from a phantom leg
+        # (e.g. an exact-line under-only book fabricating an "over"). The
+        # has_any_direct guard above guarantees weight_sum > 0 here.
+        if not has_direct:
+            continue
         w = 1.0
         if cfg.CONSENSUS_WEIGHTS_ENABLED:
             w = cfg.CONSENSUS_BOOK_WEIGHTS.get(
@@ -309,9 +326,6 @@ def compute_true_probability(
             )
         prob_wsum += power_prob * w
         weight_sum += w
-        width_sum += width
-        if worst_prob is not None and (worst_case_prob is None or worst_prob < worst_case_prob):
-            worst_case_prob = worst_prob
 
     consensus_prob = prob_wsum / weight_sum if weight_sum > 0 else None
     consensus_width = width_sum / n_books if n_books > 0 else None

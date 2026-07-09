@@ -82,3 +82,35 @@ def test_worst_case_can_sink_both_sides_below_half():
     _cu, wu, _ = compute_true_probability(books, "under", league="NBA", prop="Points")
     assert wo < 0.50 and wu < 0.50          # both below 50% -> would never surface
     assert (wo + wu) < 1.0
+
+
+def test_complement_from_single_sided_book_does_not_inflate_consensus():
+    """Regression: an exact-line single-sided book (only one side priced) must
+    NOT contribute a complement-derived prob to the consensus mean.
+
+    Before the fix, a two-sided book whose fair over was below the 0.50 display
+    floor plus an under-only book (whose 'over' is fabricated as 1 - devig(under))
+    lifted consensus_prob above 0.50, surfacing a phantom +EV leg. The complement
+    must be excluded from the mean while still informing worst_case."""
+    # FanDuel two-sided, fair over ~0.47 (below the 0.50 display floor).
+    two_sided = BookOdds("fanduel", -105, -115, True)
+    fair_over, _, _ = compute_true_probability([two_sided], "over", league="NBA", prop="Points")
+    assert fair_over < 0.50  # precondition: this leg should stay hidden
+
+    # Add an under-only exact-line book (its 'over' can only be a complement).
+    under_only = BookOdds("pinnacle", None, 400, False)
+    consensus, _worst, _meta = compute_true_probability(
+        [two_sided, under_only], "over", league="NBA", prop="Points"
+    )
+    # The consensus 'over' must not be inflated by the complement — it stays
+    # below the 0.50 display floor (phantom leg suppressed). Pre-fix, the under
+    # +400 complement (~0.79 over) lifted it above 0.50.
+    assert consensus is not None
+    assert consensus < 0.50, f"complement inflated consensus to {consensus:.4f}"
+
+    # With the complement excluded, FanDuel's is the ONLY direct over price, so
+    # the consensus equals FanDuel's power-devigged over (n_books==2 -> no
+    # single-source discount). It must never be pulled upward by the complement.
+    from engine.devig import devig_shin
+    fd_over, _ = devig_shin(-105, -115)
+    assert abs(consensus - fd_over) < 1e-6, f"consensus {consensus:.4f} != direct-only {fd_over:.4f}"
