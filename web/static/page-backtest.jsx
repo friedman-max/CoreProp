@@ -295,7 +295,10 @@ function BacktestPage() {
   // Summary stats — derived from the slips returned by /api/backtest/slips.
   const done = slips.filter(s => s.result !== "pending");
   const allLegs = slips.flatMap(s => s.bets || []);
-  const doneLegs = allLegs.filter(l => l.result !== "pending");
+  // Only hit/miss legs count toward the hit rate. push and dnp are excluded
+  // (they can never be "hit", so counting them only deflates the rate) —
+  // matching the Analytics tab's Raw Hit Rate and the backend's _RESOLVED set.
+  const doneLegs = allLegs.filter(l => l.result === "hit" || l.result === "miss");
   const legHits = doneLegs.filter(l => l.result === "hit").length;
   const slipHits = done.filter(s => s.result === "hit").length;
 

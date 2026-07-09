@@ -8,6 +8,45 @@ function fmtGameTime(iso) {
     " " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+// Slip-level EV% per 1u stake. Mirrors page-backtest.jsx btSlipEvPct and the
+// backend engine/ev_calculator.py (Power = product×payout−1; Flex = expected
+// payout over the Poisson-binomial hit-count distribution). Payout tables
+// match engine/constants.py. Returns null for <2 legs / unknown leg count.
+const EV_POWER_PAYOUTS = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 40.0 };
+const EV_FLEX_PAYOUTS = {
+  3: { 2: 1.0, 3: 3.0 },
+  4: { 3: 1.5, 4: 6.0 },
+  5: { 3: 0.4, 4: 2.0, 5: 10.0 },
+  6: { 4: 0.4, 5: 2.0, 6: 25.0 },
+};
+function slipEvPct(slipTypeRaw, legs) {
+  const probs = (legs || []).map(l => Math.max(0, Math.min(1, (l.truePct || 0) / 100)));
+  const n = probs.length;
+  if (n < 2) return null;
+  const slipType = String(slipTypeRaw || "power").toLowerCase();
+  if (slipType === "power") {
+    const pay = EV_POWER_PAYOUTS[n];
+    if (!pay) return null;
+    return (probs.reduce((a, p) => a * p, 1) * pay - 1) * 100;
+  }
+  // Flex: distribution over exact hit counts (Poisson-binomial).
+  let dist = [1];
+  for (const p of probs) {
+    const next = new Array(dist.length + 1).fill(0);
+    for (let k = 0; k < dist.length; k++) {
+      next[k]     += dist[k] * (1 - p);
+      next[k + 1] += dist[k] * p;
+    }
+    dist = next;
+  }
+  if (n === 2) return (dist[2] * EV_POWER_PAYOUTS[2] - 1) * 100;
+  const table = EV_FLEX_PAYOUTS[n];
+  if (!table) return null;
+  let expected = 0;
+  for (let k = 0; k < dist.length; k++) expected += dist[k] * (table[k] || 0);
+  return (expected - 1) * 100;
+}
+
 function EVPage() {
   const [league, setLeague] = useState("All");
   const [propQ, setPropQ] = useState("");
@@ -510,18 +549,30 @@ function EVPage() {
           )}
         </div>
 
-        {selected.length > 0 && (
-          <div className="ev-slip-summary">
-            <div className="ev-sum-row">
-              <span>Combined hit %</span>
-              <b>{(selected.reduce((a, b) => a * b.truePct / 100, 1) * 100).toFixed(2)}%</b>
+        {selected.length > 0 && (() => {
+          const combinedHit = selected.reduce((a, b) => a * (b.truePct || 0) / 100, 1) * 100;
+          const ev = slipEvPct(slipType, selected);   // true slip EV% (null if <2 legs)
+          return (
+            <div className="ev-slip-summary">
+              <div className="ev-sum-row">
+                <span>Combined hit %</span>
+                <b>{combinedHit.toFixed(2)}%</b>
+              </div>
+              <div className="ev-sum-row">
+                <span>Expected value</span>
+                {/* Slip-level EV% per 1u stake (Power all-hit×payout−1, Flex
+                 * Poisson-binomial), matching the Backtest tab. The old row
+                 * subtracted the PER-LEG break-even from the slip-level all-hit
+                 * probability — dimensionally wrong, so it read negative on
+                 * genuinely +EV slips. */}
+                <b className={ev != null && ev >= 0 ? "ev-edge" : ""}
+                   style={ev != null && ev < 0 ? { color: "#FCA5A5" } : undefined}>
+                  {ev == null ? "—" : (ev >= 0 ? "+" : "") + ev.toFixed(2) + "%"}
+                </b>
+              </div>
             </div>
-            <div className="ev-sum-row">
-              <span>vs. break-even</span>
-              <b className="ev-edge">+{((selected.reduce((a, b) => a * b.truePct / 100, 1) * 100) - slipBE).toFixed(2)}%</b>
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         <button
           className={"cp-btn cp-btn-save " + (selected.length < 2 || selected.length > 6 || saving ? "is-dis" : "")}

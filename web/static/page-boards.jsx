@@ -150,7 +150,7 @@ function CombinedLinesPage() {
               <th>FD</th>
               <th>DK</th>
               <th>PIN</th>
-              <th className={sortClass("time")} onClick={() => sortBy("time")}>Game Time</th>
+              <th className={sortClass("startTime")} onClick={() => sortBy("startTime")}>Game Time</th>
             </tr>
           </thead>
           <tbody>

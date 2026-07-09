@@ -127,8 +127,16 @@ function AnalyticsPage() {
   // fraction like 0.025 → 2.5 percentage points, so it is ×100 for display.
   const haveWindowClv = windowClv.length > 0;
   const clvCount = haveWindowClv ? windowClv.length : (data?.n_clv_tracked || 0);
+  // +CLV rate is over MOVED legs only (|clv| > eps), matching the backend's
+  // _summarize_clv: a stale 0.0 (closing == bet-time, capture never re-fired)
+  // is neither a win nor a loss against the close, so counting it in the
+  // denominator dilutes the rate. Every leg is seeded clv_pct=0 at insert, so
+  // including stales made the window +CLV rate chronically understated and
+  // flipped its good/bad tone vs the backend fallback path. (avg_clv_pct below
+  // intentionally still includes stales, matching the backend's all-in mean.)
+  const windowClvMoved = haveWindowClv ? windowClv.filter(l => Math.abs(l.clv_pct) > 1e-6) : [];
   const clvPos = haveWindowClv
-    ? (windowClv.filter(l => l.clv_pct > 0).length / windowClv.length) * 100
+    ? (windowClvMoved.length ? (windowClvMoved.filter(l => l.clv_pct > 0).length / windowClvMoved.length) * 100 : 0)
     : (typeof data?.clv_plus_rate === "number" ? data.clv_plus_rate * 100 : 0);
   const clvAvg = haveWindowClv
     ? (windowClv.reduce((a, l) => a + l.clv_pct, 0) / windowClv.length) * 100
