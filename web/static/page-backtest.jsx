@@ -547,7 +547,7 @@ function SlipCard({ slip, onDelete }) {
                 <div className="bt-leg-prop">
                   {b.league && <span className="bt-leg-league">{b.league}</span>}
                   <span className="bt-leg-prop-name">{b.propName}</span>
-                  <span className={"bt-leg-side bt-leg-side-" + (b.side === "O" ? "over" : "under")}>{b.side}{b.line}</span>
+                  <span className={"bt-leg-side bt-leg-side-" + (b.side === "O" ? "over" : "under")}>{b.side === "O" ? "▲" : "▼"}{b.line}</span>
                 </div>
               </div>
               <span className="bt-leg-pct mono" title="Modeled win probability">{(b.pct || 0).toFixed(1)}%</span>
