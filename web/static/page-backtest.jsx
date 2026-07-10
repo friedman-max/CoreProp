@@ -166,6 +166,9 @@ function BacktestPage() {
   const [slips, setSlips] = useState([]);
   const [loadState, setLoadState] = useState("loading");
   const [errMsg, setErrMsg] = useState("");
+  // Slip queued for deletion — drives the confirmation modal. null = closed.
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const PER = 50;
 
   React.useEffect(() => {
@@ -203,13 +206,16 @@ function BacktestPage() {
     return () => { cancelled = true; clearInterval(id); unsub(); };
   }, []);
 
-  // Delete a slip from the user's own backtest history. Optimistically drop
-  // it from local state (every summary stat is derived from `slips`, so they
-  // recompute immediately), then DELETE server-side. On failure, reload from
-  // the server so the UI doesn't lie about what's stored.
-  const handleDelete = React.useCallback(async (slipId) => {
-    if (!slipId) return;
+  // Confirmed delete of a slip from the user's own backtest history.
+  // Optimistically drop it from local state (every summary stat is derived
+  // from `slips`, so they recompute immediately), then DELETE server-side.
+  // On failure, roll back so the UI doesn't lie about what's stored.
+  const confirmDelete = React.useCallback(async () => {
+    const slip = pendingDelete;
+    if (!slip || !slip.id) { setPendingDelete(null); return; }
+    const slipId = slip.id;
     const prev = slips;
+    setDeleting(true);
     setSlips(cur => cur.filter(s => s.id !== slipId));
     try {
       await window.cpApi.apiFetch(`/api/backtest/slip/${encodeURIComponent(slipId)}`, { method: "DELETE" });
@@ -221,12 +227,15 @@ function BacktestPage() {
           cachedNow.slips = cachedNow.slips.filter(s => (s.id || s.slip_id) !== slipId);
         }
       }
+      setPendingDelete(null);
     } catch (ex) {
-      // Roll back on failure.
+      // Roll back on failure and surface the error in the modal.
       setSlips(prev);
-      alert("Could not delete slip: " + (ex.message || ex));
+      setPendingDelete(p => p ? { ...p, error: (ex.message || String(ex)) } : p);
+    } finally {
+      setDeleting(false);
     }
-  }, [slips]);
+  }, [pendingDelete, slips]);
 
   const filtered = useMemo(() =>
     slips.filter(s =>
@@ -362,9 +371,53 @@ function BacktestPage() {
 
       {/* Slip grid */}
       <div className="bt-slips-grid">
-        {slipsView.map(s => <SlipCard key={s.id} slip={s} onDelete={handleDelete} />)}
+        {slipsView.map(s => <SlipCard key={s.id} slip={s} onDelete={setPendingDelete} />)}
       </div>
+
+      {pendingDelete && (
+        <DeleteSlipModal
+          slip={pendingDelete}
+          busy={deleting}
+          error={pendingDelete.error}
+          onConfirm={confirmDelete}
+          onCancel={() => { if (!deleting) setPendingDelete(null); }}
+        />
+      )}
     </main>
+  );
+}
+
+// Confirmation modal for deleting a backtest slip. Styled to match the app's
+// modal look (cp-modal) rather than a raw window.confirm().
+function DeleteSlipModal({ slip, busy, error, onConfirm, onCancel }) {
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape" && !busy) onCancel();
+      if (e.key === "Enter" && !busy) onConfirm();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [busy, onConfirm, onCancel]);
+
+  const legCount = slip.legs || (slip.bets || []).length;
+  return (
+    <div className="cp-modal-back" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
+      <div className="cp-modal bt-del-modal" role="alertdialog" aria-modal="true" aria-labelledby="bt-del-title">
+        <div className="bt-del-icon">🗑</div>
+        <h3 id="bt-del-title" className="bt-del-title">Delete this slip?</h3>
+        <p className="bt-del-body">
+          <b>{slip.type} · {legCount}L</b> logged {slip.ts}. This permanently removes it
+          from your backtest and updates your stats. This can’t be undone.
+        </p>
+        {error && <div className="bt-del-error">Couldn’t delete: {error}</div>}
+        <div className="bt-del-actions">
+          <button type="button" className="cp-btn cp-btn-ghost" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="button" className="cp-btn bt-del-confirm" onClick={onConfirm} disabled={busy}>
+            {busy ? "Deleting…" : "Delete slip"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -467,11 +520,7 @@ function SlipCard({ slip, onDelete }) {
               className="bt-slip-del"
               title="Delete this slip from your backtest"
               aria-label="Delete slip"
-              onClick={() => {
-                if (window.confirm("Delete this slip from your backtest? This can't be undone.")) {
-                  onDelete(slip.id);
-                }
-              }}
+              onClick={() => onDelete(slip)}
             >✕</button>
           )}
         </div>

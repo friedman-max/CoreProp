@@ -85,7 +85,6 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
               title={email}
             >
               <span className="cp-avatar">{initial}</span>
-              <span className={"cp-caret " + (menuOpen ? "is-open" : "")}>▾</span>
             </button>
             {menuOpen && (
               <div className="cp-menu" role="menu">

@@ -428,33 +428,6 @@ function EVPage() {
           )}
         </div>
 
-        {/* Big Save-preferences bar at the bottom of the +EV main column.
-         * Always visible (not just when "dirty") so the user can re-confirm
-         * their Auto-Backtest min % is what's stored on their account. */}
-        <div className="ev-bottom-save">
-          <div className="ev-bottom-save-info">
-            <div className="ev-bottom-save-title">Auto-Backtest preferences</div>
-            <div className="ev-bottom-save-sub">
-              <span>Min Leg %: <b className="mono">{minLegOverride != null ? (typeof minLegOverride === "number" ? minLegOverride.toFixed(2) : minLegOverride) : slipBE.toFixed(2)}%</b></span>
-              <span className="ev-meta-dot">·</span>
-              <span>{slipType} · {legs}L</span>
-              <span className="ev-meta-dot">·</span>
-              <span>Auto-Backtest <b>{autoBacktest ? "on" : "off"}</b></span>
-            </div>
-          </div>
-          <button
-            type="button"
-            className={"ev-prefs-save ev-prefs-save-bottom ev-prefs-save-" + prefsSaveState}
-            onClick={saveSlipPrefs}
-            disabled={!prefsLoaded || prefsSaveState === "saving"}
-          >
-            {!prefsLoaded ? "Loading account…"
-              : prefsSaveState === "saving" ? "Saving…"
-              : prefsSaveState === "saved" ? "Saved ✓"
-              : prefsSaveState === "error" ? "Retry save"
-              : "Save preferences"}
-          </button>
-        </div>
       </div>
 
       {/* Slip Builder */}
@@ -497,7 +470,12 @@ function EVPage() {
               step="0.1"
               min="0"
               max="100"
-              value={minLegOverride != null ? minLegOverride : slipBE.toFixed(2)}
+              // Until the account's saved prefs load, leave the field blank
+              // with a "…" placeholder rather than showing the BE default
+              // (54.07) as if it were the user's stored value.
+              value={!prefsLoaded ? "" : (minLegOverride != null ? minLegOverride : slipBE.toFixed(2))}
+              placeholder={prefsLoaded ? "" : "…"}
+              disabled={!prefsLoaded}
               onChange={e => {
                 const v = e.target.value;
                 if (v === "") { setMinLegOverride(""); return; }

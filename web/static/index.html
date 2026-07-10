@@ -125,11 +125,10 @@ body::before{
 .cp-nav-r{display:flex;gap:10px;align-items:center}
 .cp-user{position:relative;display:flex;align-items:center}
 .cp-avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#6366F1,#3DA9F0);display:grid;place-items:center;color:white;font-weight:700;font-size:13px}
-/* Profile button (avatar + caret) opens the account dropdown. */
-.cp-avatar-btn{display:flex;align-items:center;gap:6px;background:transparent;border:1px solid transparent;border-radius:999px;padding:3px 8px 3px 3px;cursor:pointer;transition:.15s}
-.cp-avatar-btn:hover{background:rgba(255,255,255,.05);border-color:var(--hair-2)}
-.cp-caret{font-size:10px;color:var(--text-3);transition:transform .15s ease}
-.cp-caret.is-open{transform:rotate(180deg)}
+/* Profile button — just the avatar; clicking it opens the account dropdown. */
+.cp-avatar-btn{display:flex;align-items:center;background:transparent;border:1px solid transparent;border-radius:50%;padding:0;cursor:pointer;transition:.15s}
+.cp-avatar-btn:hover .cp-avatar{box-shadow:0 0 0 2px var(--hair-2)}
+.cp-avatar-btn:hover{border-color:transparent}
 .cp-menu{position:absolute;top:calc(100% + 8px);right:0;min-width:220px;background:var(--card,#13131c);border:1px solid var(--hair);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.5);padding:8px;z-index:120;animation:popIn .18s cubic-bezier(.2,1.2,.4,1)}
 .cp-menu-hd{display:flex;align-items:center;gap:10px;padding:8px 8px 10px}
 .cp-avatar-lg{width:38px;height:38px;font-size:15px}
@@ -776,6 +775,18 @@ body::before{
 .bt-slip-del{background:transparent;border:1px solid var(--hair-2);color:var(--text-4);width:24px;height:24px;border-radius:6px;cursor:pointer;font-size:12px;line-height:1;display:grid;place-items:center;flex-shrink:0;transition:.15s}
 .bt-slip-del:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:#FCA5A5}
 
+/* Delete-slip confirmation modal (reuses .cp-modal-back / .cp-modal shell). */
+.bt-del-modal{width:min(420px,92vw);text-align:center;padding:28px 26px 22px}
+.bt-del-icon{width:52px;height:52px;margin:0 auto 14px;border-radius:50%;display:grid;place-items:center;font-size:24px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4)}
+.bt-del-title{margin:0 0 8px;font-size:18px;font-weight:700;color:var(--text)}
+.bt-del-body{margin:0 0 6px;font-size:13.5px;line-height:1.5;color:var(--text-2)}
+.bt-del-error{margin:10px 0 0;font-size:12.5px;color:#FCA5A5;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:8px 10px}
+.bt-del-actions{display:flex;gap:10px;justify-content:center;margin-top:20px}
+.bt-del-actions .cp-btn{min-width:118px;padding:10px 16px}
+.bt-del-confirm{background:var(--red,#ef4444);color:#fff;border:1px solid var(--red,#ef4444)}
+.bt-del-confirm:hover:not(:disabled){background:#dc2626;border-color:#dc2626}
+.bt-del-confirm:disabled{opacity:.6;cursor:default}
+
 .bt-slip-legs{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:5px}
 .bt-slip-leg{display:grid;grid-template-columns:18px 1fr auto auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)}
 .bt-slip-leg:last-child{border-bottom:0}
@@ -942,23 +953,6 @@ body::before{
 .ev-prefs-save-error{background:linear-gradient(180deg,#dc2626,#b91c1c)}
 
 /* Big Save-preferences bar at the bottom of the +EV main column. */
-.ev-bottom-save{
-  margin-top:24px;
-  padding:18px 22px;
-  background:linear-gradient(180deg,#13131c,#0f0f17);
-  border:1px solid var(--hair);border-radius:14px;
-  display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;
-}
-.ev-bottom-save-info{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
-.ev-bottom-save-title{font-size:14px;font-weight:700;letter-spacing:-.005em;color:var(--text)}
-.ev-bottom-save-sub{display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:13px;flex-wrap:wrap}
-.ev-bottom-save-sub b{color:var(--text)}
-.ev-prefs-save-bottom{
-  width:auto;margin-top:0;
-  padding:12px 22px;font-size:14px;border-radius:10px;
-  min-width:200px;
-}
-
 /* Backtest slip card: Place-on-PrizePicks button at the bottom */
 .bt-slip-place{
   margin-top:6px;width:100%;
