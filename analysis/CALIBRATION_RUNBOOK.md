@@ -71,7 +71,46 @@ you never validated is the "stale ruler" failure this runbook exists to prevent.
   showed a global α-blend over-corrects and collapses the pool below the gate.
   If you ever add it, fit α on the *same weighted ruler* selection uses, and
   gate it behind an env flag defaulting OFF until validated.
-- **No isotonic/hierarchical calibrator.** The README mentions one; it was
-  never built. The `calibration.py` machinery is diagnostic-only (Brier /
-  log-loss / buckets for the Analytics tab) — nothing feeds back into the
-  decision prob at runtime.
+- **No hierarchical calibrator.** A per-cell isotonic map now exists (below);
+  a partial-pooling / hierarchical version is not built.
+
+## Isotonic recalibration map (engine.calibration_map)
+
+The structural fix for FINDINGS §2 (the slope error a constant `SIDE_BIAS`
+can't touch). Per-(league, side) weighted isotonic regression on
+`market_observatory.raw_true_prob → outcome` bends the raw consensus onto the
+realized curve — offset AND slope in one pass. Fit hourly by the scheduler,
+persisted to `data/calibration_map.json` (+ Supabase mirror), applied to the
+DECISION prob only, and **only when `CALIBRATION_MAP_ENABLED=true` (default
+OFF)**. `raw_true_prob` is never touched — one ruler, same as `SIDE_BIAS`.
+
+A trusted per-cell fit REPLACES that cell's `SIDE_BIAS` (the curve already
+carries the offset — stacking would double-correct). Cells without a trusted
+fit fall back to `SIDE_BIAS`; a calibrator error falls back too.
+
+### Before you enable it (same discipline as SIDE_BIAS — validate first)
+
+```bash
+# Inspect per-cell reliability on the live window.
+python analysis/13_calibration_map_report.py --days 90
+```
+
+Enable ONLY when, for the cells you actually bet:
+- the cell is marked `trusted=YES` (n ≥ MIN_CELL_OBS and ≥ MIN_BINS_SPANNED
+  populated bins), AND
+- its `|gap|cal` collapses to ~0 from a larger `|gap|raw` (the map is doing
+  work), AND
+- the improvement replicates on a disjoint earlier window (re-run with a
+  different `--days` slice) — the same out-of-sample bar SIDE_BIAS clears.
+
+Then `export CALIBRATION_MAP_ENABLED=true` and restart. Watch the **Calibration
+reliability** chart + **Calibration Error (ECE)** stat on the Analytics tab:
+dots should hug the diagonal and ECE should fall toward zero.
+
+Caveat (FINDINGS §2): on cells whose raw signal is inverted (e.g. NBA UNDER,
+NHL), the monotone fit correctly collapses toward the base rate — the number
+becomes honest but uninformative. Those belong in `CELL_DROPS`, not in the
+bet pool. Calibration makes predictions truthful; it does not create edge.
+
+Off-season note: the map can only fit leagues with live settled volume. With
+NBA/NHL dormant, only MLB/WNBA cells will reach `trusted=YES` — expected.

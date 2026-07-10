@@ -117,6 +117,39 @@ function AnalyticsPage() {
   const rawHit = allLegs.length ? (allLegs.filter(l => l.outcome === 1).length / allLegs.length) * 100 : 0;
   const delta = rawHit - avgPred;
 
+  // Reliability curve — the live calibration gauge. Bin the window's legs by
+  // predicted prob (5% bins), and for each populated bin compare mean
+  // predicted (x) against realized hit rate (y). On a perfectly-calibrated
+  // model every point sits on the y = x diagonal; points BELOW the diagonal
+  // are overconfident (predicted > realized), the exact 2x-overconfidence
+  // FINDINGS §2 describes. This is what CALIBRATION_MAP_ENABLED is meant to
+  // pull back onto the line — watch these dots hug the diagonal after you
+  // enable and refit.
+  const reliability = useMemo(() => {
+    const BINW = 0.05;
+    const acc = {}; // bin index → { n, hits, psum }
+    for (const l of allLegs) {
+      const p = l.true_prob;
+      if (typeof p !== "number" || p <= 0 || p >= 1) continue;
+      const idx = Math.floor(p / BINW);
+      const b = acc[idx] || (acc[idx] = { n: 0, hits: 0, psum: 0 });
+      b.n += 1; b.hits += l.outcome; b.psum += p;
+    }
+    return Object.keys(acc).map(k => {
+      const b = acc[k];
+      return { pred: b.psum / b.n, actual: b.hits / b.n, n: b.n };
+    }).sort((a, c) => a.pred - c.pred);
+  }, [allLegs]);
+
+  // Expected Calibration Error: sample-weighted mean |predicted − realized|
+  // across the populated bins. One honest number for "how far off are the
+  // odds" — 0 = perfectly calibrated. Complements Brier (which conflates
+  // calibration with resolution); ECE isolates the calibration gap the map
+  // targets.
+  const ece = allLegs.length && reliability.length
+    ? reliability.reduce((a, b) => a + b.n * Math.abs(b.pred - b.actual), 0) / allLegs.length
+    : 0;
+
   // CLV: prefer the windowed per-leg rows. But clv_legs only carries a row
   // when BOTH closing_prob and clv_pct are populated AND the slip timestamp
   // resolved server-side — so the windowed array can come back empty even
@@ -226,7 +259,11 @@ function AnalyticsPage() {
           <StatCard loading={anLoading} label="Raw Hit Rate" value={rawHit.toFixed(1) + "%"} tone={rawHit >= 54.08 ? "good" : "bad"} />
           <StatCard loading={anLoading} label="Avg Predicted Prob" value={avgPred.toFixed(1) + "%"} />
           <StatCard loading={anLoading} label="Hit Rate Delta" value={(delta >= 0 ? "+" : "") + delta.toFixed(1) + "%"} tone={delta >= 0 ? "good" : "bad"} />
+          <StatCard loading={anLoading} label="Calibration Error" sub="ECE, lower better" value={(ece * 100).toFixed(1) + "%"} tone={ece <= 0.03 ? "good" : ece <= 0.06 ? "neutral" : "bad"} />
         </div>
+
+        <div className="an-section-h">Calibration reliability <span className="an-section-sub">predicted vs realized · dots on the diagonal = accurate · below = overconfident</span></div>
+        <ReliabilityChart points={reliability} />
 
         <div className="an-section-h">Closing Line Value <span className="an-section-sub">if CLV+ {`>`} 50% &amp; Avg CLV% {`>`} 0, you're beating the market{clvIsAllTime ? " · all-time (no CLV tracked in this window)" : ""}</span></div>
         <div className="bt-summary">
@@ -375,6 +412,85 @@ function PnLChart({ series, onHover, hover }) {
         {xTicks.map((t, i) => (
           <text key={i} x={t.x} y={H - 10} fill="#9ca3af" fontSize="11.5" textAnchor="middle" fontFamily="JetBrains Mono,ui-monospace,monospace">{t.label}</text>
         ))}
+      </svg>
+    </div>
+  );
+}
+
+function ReliabilityChart({ points }) {
+  const ref = useRef(null);
+  const [size, setSize] = useState({ w: 800, h: 320 });
+  useEffect(() => {
+    if (!ref.current) return;
+    const ro = new ResizeObserver(es => {
+      const r = es[0].contentRect;
+      setSize({ w: Math.max(600, r.width), h: 320 });
+    });
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const padL = 56, padR = 28, padT = 18, padB = 34;
+  const W = size.w, H = size.h;
+  // Fixed 0–100% axes on both sides so the diagonal is a true 45° reference
+  // regardless of which prob range the window's legs fall in.
+  const lo = 0, hi = 1;
+  const sx = (v) => padL + ((v - lo) / (hi - lo)) * (W - padL - padR);
+  const sy = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+
+  if (!points || !points.length) {
+    return (
+      <div ref={ref} className="pnl-chart" style={{ display: "grid", placeItems: "center", color: "var(--text-3)", minHeight: 160 }}>
+        No resolved legs in this window yet.
+      </div>
+    );
+  }
+
+  // Scale dot radius by sample count so thin bins read as less trustworthy.
+  const maxN = Math.max(...points.map(p => p.n), 1);
+  const rFor = (n) => 3 + 5 * Math.sqrt(n / maxN);
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+
+  return (
+    <div ref={ref} className="pnl-chart">
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}>
+        {/* Grid + axis ticks */}
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={sx(t)} x2={sx(t)} y1={padT} y2={H - padB} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+            <line x1={padL} x2={W - padR} y1={sy(t)} y2={sy(t)} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+            <text x={sx(t)} y={H - 10} fill="#9ca3af" fontSize="11.5" textAnchor="middle" fontFamily="JetBrains Mono,ui-monospace,monospace">{(t * 100).toFixed(0)}%</text>
+            <text x={padL - 10} y={sy(t) + 4} fill="#9ca3af" fontSize="11.5" textAnchor="end" fontFamily="JetBrains Mono,ui-monospace,monospace">{(t * 100).toFixed(0)}%</text>
+          </g>
+        ))}
+
+        {/* Perfect-calibration diagonal (y = x) */}
+        <line x1={sx(0)} y1={sy(0)} x2={sx(1)} y2={sy(1)} stroke="rgba(255,255,255,.35)" strokeWidth="1.5" strokeDasharray="5,4" />
+
+        {/* Break-even reference (Power-6 leg BE ≈ 54.08%) — vertical guide */}
+        <line x1={sx(0.5408)} x2={sx(0.5408)} y1={padT} y2={H - padB} stroke="rgba(96,165,250,.35)" strokeWidth="1" />
+
+        {/* Observed reliability curve */}
+        <path
+          d={points.map((p, i) => `${i === 0 ? "M" : "L"}${sx(p.pred).toFixed(1)},${sy(p.actual).toFixed(1)}`).join(" ")}
+          fill="none" stroke="#22C55E" strokeWidth="2" strokeOpacity="0.7"
+        />
+        {points.map((p, i) => {
+          // Below the diagonal (actual < pred) = overconfident → red; on/above = green.
+          const over = p.actual < p.pred - 0.01;
+          return (
+            <circle key={i} cx={sx(p.pred)} cy={sy(p.actual)} r={rFor(p.n)}
+                    fill={over ? "#EF4444" : "#22C55E"} fillOpacity="0.55"
+                    stroke="#0a0a0d" strokeWidth="1.25">
+              <title>{`predicted ${(p.pred * 100).toFixed(1)}% → realized ${(p.actual * 100).toFixed(1)}%  (n=${p.n})`}</title>
+            </circle>
+          );
+        })}
+
+        {/* Axis labels */}
+        <text x={(padL + W - padR) / 2} y={H - 26} fill="#6b7280" fontSize="11" textAnchor="middle" fontFamily="JetBrains Mono,ui-monospace,monospace">predicted probability</text>
+        <text x={16} y={(padT + H - padB) / 2} fill="#6b7280" fontSize="11" textAnchor="middle" fontFamily="JetBrains Mono,ui-monospace,monospace" transform={`rotate(-90 16 ${(padT + H - padB) / 2})`}>realized hit rate</text>
       </svg>
     </div>
   );
