@@ -1076,13 +1076,18 @@ def _run_pipeline_body():
                     except (TypeError, ValueError):
                         user_min = None
 
-                    # Eligibility: user threshold (hard-floored by FINDINGS
-                    # change C — at the old 0.5407 default every slip size was
-                    # EV-negative, the model only has edge in its top slice),
-                    # minus the FINDINGS change A cell drops, plus "can we
-                    # actually resolve this leg?".
-                    min_prob = user_min if user_min is not None else cfg.DEFAULT_LEG_THRESHOLD
-                    min_prob = max(min_prob, cfg.AUTO_SLIP_MIN_PROB_FLOOR)
+                    # Eligibility: user threshold, plus the FINDINGS change A
+                    # cell drops, plus "can we actually resolve this leg?".
+                    # The FINDINGS 0.65 floor only backstops the DEFAULT (users
+                    # who never set a threshold) — an explicit auto_slip_min_prob
+                    # is honored as set. Hard-flooring every user's explicit
+                    # value at 0.65 starved the auto-log pool to ~zero (only
+                    # ~0.5% of historical legs ever cleared 0.65), so slips
+                    # stopped reaching the backtest tab entirely.
+                    if user_min is not None:
+                        min_prob = user_min
+                    else:
+                        min_prob = max(cfg.DEFAULT_LEG_THRESHOLD, cfg.AUTO_SLIP_MIN_PROB_FLOOR)
                     from engine.results_checker import soccer_prop_scoreable
 
                     def _scoreable(b):
@@ -2649,10 +2654,11 @@ def admin_trigger_auto_backtest():
             min_prob = float(raw_min) if raw_min is not None else None
         except (TypeError, ValueError):
             min_prob = None
+        # Mirror the live worker: honor an explicit auto_slip_min_prob as set;
+        # the FINDINGS 0.65 floor only backstops the DEFAULT (users who never
+        # set a threshold). Hard-flooring explicit values starved the pool.
         if min_prob is None:
-            min_prob = cfg.DEFAULT_LEG_THRESHOLD
-        # FINDINGS change C: same hard floor as the live worker.
-        min_prob = max(min_prob, cfg.AUTO_SLIP_MIN_PROB_FLOOR)
+            min_prob = max(cfg.DEFAULT_LEG_THRESHOLD, cfg.AUTO_SLIP_MIN_PROB_FLOOR)
 
         def _admin_cell_ok(b):
             # FINDINGS change A: mirror the live worker's cell drops.
