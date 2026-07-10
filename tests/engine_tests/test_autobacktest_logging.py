@@ -82,6 +82,70 @@ def test_logged_slip_carries_user_id_and_correct_n_legs():
     assert legs and all(l.get("user_id") == "user-42" for l in legs)
 
 
+# ── Orphaned-header rollback ─────────────────────────────────────────────────
+# The slip header and its legs are two separate inserts (PostgREST has no
+# cross-table transaction). If the legs insert fails for a NON-duplicate reason
+# and the optional-column retries are exhausted, the already-committed header
+# must be rolled back — otherwise it shows up as an "N-leg" slip with zero legs.
+
+class _RollbackQuery:
+    def __init__(self, db, name):
+        self.db = db
+        self.name = name
+        self._del_id = None
+    def select(self, *a, **k): return self
+    def gte(self, *a, **k): return self
+    def eq(self, col, val): self._del_id = val; return self
+    def in_(self, *a, **k): return self
+    def order(self, *a, **k): return self
+    def limit(self, *a, **k): return self
+    def insert(self, rows):
+        self._pending = rows if isinstance(rows, list) else [rows]
+        self._op = "insert"
+        return self
+    def delete(self):
+        self._op = "delete"
+        return self
+    def execute(self):
+        class _Res:
+            def __init__(self, data): self.data = data
+        if self.name == "slips":
+            if getattr(self, "_op", None) == "insert":
+                self.db.slip_ids.update(r["id"] for r in self._pending)
+            elif getattr(self, "_op", None) == "delete":
+                self.db.slip_ids.discard(self._del_id)
+                self.db.deleted.append(self._del_id)
+            return _Res([])
+        # legs table: every insert fails with a non-duplicate error
+        if getattr(self, "_op", None) == "insert":
+            raise RuntimeError("legs insert boom (not a duplicate)")
+        return _Res([])
+
+
+class _RollbackDB:
+    def __init__(self):
+        self.slip_ids = set()
+        self.deleted = []
+    def table(self, name):
+        return _RollbackQuery(self, name)
+
+
+def test_non_duplicate_legs_failure_rolls_back_header():
+    # Reproduces the "6-leg slip with no legs" bug: legs insert fails for a
+    # reason other than a 23505 duplicate, exhausting the optional-column
+    # retries. The header written first must be deleted so no orphaned,
+    # legless slip survives.
+    from engine.backtest import BacktestLogger
+    bets = [_bet(i, ev=0.05 + 0.001 * i) for i in range(6)]
+    db = _RollbackDB()
+    bl = BacktestLogger(user_id="u1", db_client=db)
+    result = bl.try_log_slip(bets, slip_type="Power", n_legs=6)
+    assert result is None, "a failed legs insert must not report success"
+    # The header must have been rolled back — no orphaned slip left behind.
+    assert db.slip_ids == set(), f"orphaned slip header(s) survived: {db.slip_ids}"
+    assert db.deleted, "header rollback delete was never issued"
+
+
 # ── Multi-slip-per-cycle support ────────────────────────────────────────────
 # The refresh worker loops try_log_slip until the pool can't build another
 # distinct slip. That only works if try_log_slip's DB-driven dedup sees the

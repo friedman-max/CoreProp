@@ -633,6 +633,21 @@ class BacktestLogger:
             logger.info("Backtest: logged Auto-Slip %s (%d-leg EV=%.2f%%) for user %s", slip_id, n_legs, best_ev * 100, self.user_id)
         except Exception as db_exc:
             logger.error("Backtest: Supabase write failed for slip %s: %s", slip_id, db_exc)
+            # The slip header is written before the legs (two separate inserts —
+            # PostgREST has no cross-table transaction). If anything after the
+            # header fails (a non-duplicate legs-insert error that exhausted the
+            # optional-column retries, an RLS/constraint rejection on `legs`, a
+            # transient network error), the header is already committed. Delete
+            # it so we never leave an orphaned "N-leg" slip with zero legs
+            # showing up in the backtest. Deleting a not-yet-inserted id is a
+            # harmless no-op if the failure was the header insert itself.
+            try:
+                db.table("slips").delete().eq("id", slip_id).execute()
+            except Exception as cleanup_exc:
+                logger.warning(
+                    "Backtest: failed to roll back orphan slip header %s after write "
+                    "error: %s", slip_id, cleanup_exc,
+                )
             return None
 
         return {

@@ -2567,7 +2567,12 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         for s in slip_data:
             s["slip_id"] = s["id"]
             s["legs"] = sorted(legs_by_slip.get(s["id"], []), key=lambda x: x["leg_num"])
-        all_slips = slip_data
+        # Defensively drop orphaned slip headers that have no legs. The header
+        # and its legs are two separate PostgREST inserts (no cross-table
+        # transaction), so a failure or crash between them can leave a legless
+        # header. Those render as empty "N-leg" slips and pollute the backtest
+        # + skew summary stats, so never surface them.
+        all_slips = [s for s in slip_data if s["legs"]]
     except Exception as db_err:
         logger.error("Backtest API: Supabase fetch failed: %s", db_err)
         return {"slips": [], "total": 0}
