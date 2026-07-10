@@ -129,6 +129,24 @@ CELL_DROPS = {
 AUTO_SLIP_MIN_PROB_FLOOR = float(os.getenv("AUTO_SLIP_MIN_PROB_FLOOR", "0.65"))
 
 # ---------------------------------------------------------------------------
+# Isotonic recalibration map (engine.calibration_map). FINDINGS.md §2: the
+# raw consensus has a SLOPE error (alpha ~= 0.49 — 2x overconfident, inverted
+# on some cells) that SIDE_BIAS, a constant additive shift, cannot fix. The
+# isotonic map bends raw -> realized per (league, side), correcting slope AND
+# offset in one pass, so calibration extends below the 0.65 gate instead of
+# relying on the threshold alone.
+#
+# Default OFF, per CALIBRATION_RUNBOOK discipline: a calibrator is a ruler you
+# must validate before you gate on it. Enable ONLY after inspecting
+# analysis/13_calibration_map_report.py on a settled window and confirming the
+# per-cell reliability curves are monotone-sane and the trusted cells replicate
+# out-of-sample — the same bar SIDE_BIAS clears. Fit on raw_true_prob (one
+# ruler); when enabled and a cell has a TRUSTED fit the map REPLACES that
+# cell's SIDE_BIAS (the curve already carries the offset — stacking would
+# double-correct); cells without a trusted fit fall back to SIDE_BIAS.
+CALIBRATION_MAP_ENABLED = os.getenv("CALIBRATION_MAP_ENABLED", "false").lower() in ("true", "1", "yes")
+
+# ---------------------------------------------------------------------------
 # Per-book consensus weights (research-driven, 2026-07). The decision prob is
 # a weighted mean of the per-book devigged probs. Player-prop research
 # converges — from independent sources (Pikkit, Unabated, Sharp App's

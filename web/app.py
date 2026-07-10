@@ -1448,6 +1448,25 @@ def startup():
         except Exception as exc:
             logger.error("Hourly refit: correlation error: %s", exc)
 
+        # Isotonic recalibration map (engine.calibration_map). Refit whether
+        # or not it's live so the artefact + the diagnostic report stay fresh
+        # for a pre-flip review; apply_calibration() only reads it when
+        # CALIBRATION_MAP_ENABLED is true. One aggregation query on settled
+        # observatory rows — same cost profile as the correlation fit.
+        try:
+            from engine.calibration_map import fit_calibration_map, reload_calibration_map
+            cal = fit_calibration_map()
+            if cal:
+                n_trusted = reload_calibration_map()
+                logger.info(
+                    "Hourly refit: %d calibration cells, %d trusted (live=%s)",
+                    len(cal.get("cells", {})), n_trusted, cfg.CALIBRATION_MAP_ENABLED,
+                )
+            else:
+                logger.info("Hourly refit: calibration — no data yet")
+        except Exception as exc:
+            logger.error("Hourly refit: calibration error: %s", exc)
+
     scheduler.add_job(
         _run_periodic_models,
         trigger="interval",

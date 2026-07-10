@@ -80,16 +80,35 @@ class BetResult:
         raw = max(0.001, min(0.999, true_prob))
         self.raw_true_prob = raw
 
-        # FINDINGS.md change B: side-specific bias correction. PP shades
-        # lines toward OVERs and the devig doesn't undo it — UNDERs
-        # empirically beat their raw prob by 5-8pp in every league, OVERs
-        # undershoot. The DECISION number gets the additive correction;
-        # green devils are exempt (the table was fit on standard lines).
+        # DECISION-number corrections (never touch raw_true_prob). Both are
+        # exempt on green devils — every correction was fit on standard lines.
         adj = raw
-        if cfg.SIDE_BIAS_ENABLED and (self.odds_type == "standard"):
-            adj = raw + cfg.SIDE_BIAS.get(
-                ((league or "").upper(), (side or "").lower()), 0.0
-            )
+        calibrated = None
+        if self.odds_type == "standard":
+            # Preferred: isotonic recalibration map (engine.calibration_map).
+            # It bends raw -> realized per (league, side), fixing the SLOPE
+            # error SIDE_BIAS can't (FINDINGS §2). When a cell has a TRUSTED
+            # fit this REPLACES the cell's SIDE_BIAS — the curve already
+            # carries the offset, so stacking both would double-correct.
+            if cfg.CALIBRATION_MAP_ENABLED:
+                try:
+                    from engine.calibration_map import apply_calibration
+                    calibrated = apply_calibration(raw, league, side)
+                except Exception:
+                    # Any failure in the optional calibrator must never break
+                    # leg evaluation — fall through to the SIDE_BIAS path.
+                    calibrated = None
+            if calibrated is not None:
+                adj = calibrated
+            elif cfg.SIDE_BIAS_ENABLED:
+                # FINDINGS.md change B: side-specific bias correction. PP
+                # shades lines toward OVERs and the devig doesn't undo it —
+                # UNDERs empirically beat their raw prob by 5-8pp in every
+                # league, OVERs undershoot. Additive shift, applied when the
+                # calibration map is off or lacks a trusted fit for the cell.
+                adj = raw + cfg.SIDE_BIAS.get(
+                    ((league or "").upper(), (side or "").lower()), 0.0
+                )
         self.true_prob = max(0.001, min(0.999, adj))
         self.true_odds = prob_to_american(self.true_prob)
 
