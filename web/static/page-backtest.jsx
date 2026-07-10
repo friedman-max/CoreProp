@@ -1,87 +1,7 @@
 // Backtest — slip-level history matching web/static/index.html `#backtest-view`.
 const { useState: useStateBT, useMemo: useMemoBT } = React;
 
-// Sample slip history — mirrors backtest_slips shape
-const BT_SLIPS = [
-  { id: "s001", ts: "5/26 9:42 PM", type: "Power", legs: 6, league: "MIXED", stake: 5, payout: 200,  result: "hit",     hits: 6, pushes: 0, dnps: 0,
-    bets: [
-      { player: "Cale Makar",   prop: "Assists O0.5",   pct: 72.4, result: "hit", actual: "2" },
-      { player: "Wembanyama",   prop: "Assists U3.5",   pct: 59.9, result: "hit", actual: "2" },
-      { player: "Bueckers",     prop: "Rebs+Asts U8.5", pct: 60.2, result: "hit", actual: "7" },
-      { player: "Holmgren",     prop: "Rebounds U7.5",  pct: 57.6, result: "hit", actual: "6" },
-      { player: "Wicks",        prop: "Hits Allow U4.5",pct: 62.0, result: "hit", actual: "3" },
-      { player: "Vassell",      prop: "Rebounds U4.5",  pct: 57.0, result: "hit", actual: "3" },
-    ] },
-  { id: "s002", ts: "5/26 8:18 PM", type: "Power", legs: 5, league: "NBA", stake: 5, payout: 0, result: "miss", hits: 4, pushes: 0, dnps: 0,
-    bets: [
-      { player: "Stephon Castle", prop: "Points U17.5", pct: 57.1, result: "hit",  actual: "13" },
-      { player: "J. Williams",    prop: "Points U14.5", pct: 56.7, result: "hit",  actual: "11" },
-      { player: "Cason Wallace",  prop: "Rebs U3.5",    pct: 62.0, result: "hit",  actual: "2" },
-      { player: "Dort",           prop: "Rebs U2.5",    pct: 59.2, result: "hit",  actual: "2" },
-      { player: "McCain",         prop: "Rebs U2.5",    pct: 57.6, result: "miss", actual: "5" },
-    ] },
-  { id: "s003", ts: "5/26 7:55 PM", type: "Flex", legs: 4, league: "WNBA", stake: 5, payout: 25, result: "hit", hits: 4, pushes: 0, dnps: 0,
-    bets: [
-      { player: "C. Williams",  prop: "Rebs+Asts U9.5", pct: 66.4, result: "hit", actual: "7" },
-      { player: "Olivia Miles", prop: "Rebs+Asts U10.5",pct: 63.6, result: "hit", actual: "8" },
-      { player: "Mabrey",       prop: "Rebs+Asts U7.5", pct: 60.2, result: "hit", actual: "6" },
-      { player: "N. Cloud",     prop: "Rebs U3.5",      pct: 56.9, result: "hit", actual: "2" },
-    ] },
-  { id: "s004", ts: "5/26 6:40 PM", type: "Power", legs: 3, league: "MLB", stake: 5, payout: 30, result: "hit", hits: 3, pushes: 0, dnps: 0,
-    bets: [
-      { player: "Jordan Wicks",  prop: "Hits Allow U4.5",  pct: 62.0, result: "hit", actual: "3" },
-      { player: "Sean Burke",    prop: "Walks Allow U1.5", pct: 58.3, result: "hit", actual: "1" },
-      { player: "Jordan Wicks",  prop: "Walks Allow U1.5", pct: 57.8, result: "hit", actual: "1" },
-    ] },
-  { id: "s005", ts: "5/26 12:11 AM", type: "Power", legs: 6, league: "MIXED", stake: 5, payout: 0, result: "miss", hits: 5, pushes: 0, dnps: 0,
-    bets: [
-      { player: "Slavin",         prop: "Blk Shots O1.5", pct: 58.0, result: "hit",  actual: "4" },
-      { player: "Champagnie",     prop: "P+R U14.5",      pct: 57.0, result: "hit",  actual: "9" },
-      { player: "G. Jaquez",      prop: "Points U11.5",   pct: 57.7, result: "hit",  actual: "8" },
-      { player: "N. Coffey",      prop: "Rebs U5.5",      pct: 57.8, result: "hit",  actual: "4" },
-      { player: "Bedard",         prop: "SOG O3.5",       pct: 56.1, result: "hit",  actual: "5" },
-      { player: "Pete Alonso",    prop: "TB O1.5",        pct: 55.9, result: "miss", actual: "1" },
-    ] },
-  { id: "s006", ts: "5/25 10:30 PM", type: "Power", legs: 4, league: "NBA", stake: 5, payout: 50, result: "hit", hits: 4, pushes: 0, dnps: 0,
-    bets: [
-      { player: "Wemby",     prop: "Pts U22.5",  pct: 58.1, result: "hit", actual: "18" },
-      { player: "Holmgren",  prop: "Rebs U7.5",  pct: 59.0, result: "hit", actual: "5" },
-      { player: "Vassell",   prop: "Pts U16.5",  pct: 56.2, result: "hit", actual: "12" },
-      { player: "Wallace",   prop: "Asts O3.5",  pct: 55.5, result: "hit", actual: "5" },
-    ] },
-  { id: "s007", ts: "5/25 9:00 PM", type: "Flex", legs: 5, league: "WNBA", stake: 5, payout: 10, result: "hit", hits: 4, pushes: 0, dnps: 1,
-    bets: [
-      { player: "Bueckers",   prop: "R+A U8.5",   pct: 61.2, result: "hit", actual: "6" },
-      { player: "Mabrey",     prop: "R+A U7.5",   pct: 59.0, result: "hit", actual: "4" },
-      { player: "Coffey",     prop: "Rebs U5.5",  pct: 58.0, result: "hit", actual: "3" },
-      { player: "Cloud",      prop: "Rebs U3.5",  pct: 56.9, result: "hit", actual: "1" },
-      { player: "Diggins",    prop: "Pts U18.5",  pct: 57.0, result: "dnp", actual: "—" },
-    ] },
-  { id: "s008", ts: "5/25 7:15 PM", type: "Power", legs: 3, league: "MLB", stake: 5, payout: 0, result: "miss", hits: 2, pushes: 0, dnps: 0,
-    bets: [
-      { player: "Riley Greene", prop: "Hits O0.5",  pct: 55.5, result: "miss", actual: "0" },
-      { player: "Pete Alonso",  prop: "TB O1.5",    pct: 56.0, result: "hit",  actual: "2" },
-      { player: "S. Burke",     prop: "K's O3.5",   pct: 57.0, result: "hit",  actual: "5" },
-    ] },
-  { id: "s009", ts: "5/25 5:00 PM", type: "Power", legs: 6, league: "MIXED", stake: 5, payout: 200, result: "hit", hits: 6, pushes: 0, dnps: 0,
-    bets: [
-      { player: "Bedard",   prop: "SOG O3.5",  pct: 56.1, result: "hit", actual: "4" },
-      { player: "Makar",    prop: "Asts O0.5", pct: 71.0, result: "hit", actual: "1" },
-      { player: "Wemby",    prop: "Pts U22.5", pct: 57.8, result: "hit", actual: "20" },
-      { player: "Holmgren", prop: "Rebs U7.5", pct: 58.4, result: "hit", actual: "6" },
-      { player: "Mabrey",   prop: "R+A U7.5",  pct: 59.0, result: "hit", actual: "5" },
-      { player: "Wicks",    prop: "Hits A U4.5",pct: 60.0, result: "hit", actual: "3" },
-    ] },
-  { id: "s010", ts: "5/27 7:00 PM", type: "Power", legs: 6, league: "MIXED", stake: 5, payout: null, result: "pending", hits: 0, pushes: 0, dnps: 0,
-    bets: [
-      { player: "Bueckers",  prop: "R+A U8.5", pct: 60.2, result: "pending", actual: "—" },
-      { player: "Miles",     prop: "R+A U10.5",pct: 63.6, result: "pending", actual: "—" },
-      { player: "Mabrey",    prop: "R+A U7.5", pct: 60.2, result: "pending", actual: "—" },
-      { player: "Bedard",    prop: "SOG O3.5", pct: 56.1, result: "pending", actual: "—" },
-      { player: "Alonso",    prop: "TB O1.5",  pct: 55.9, result: "pending", actual: "—" },
-      { player: "Greene",    prop: "Hits O0.5",pct: 55.5, result: "pending", actual: "—" },
-    ] },
-];
+// Live data only — slips come from /api/backtest/slips. No sample fallback.
 
 // Mirror engine/constants.py exactly. Used to recompute slip payout from
 // leg outcomes when the API's `payout` or `completed` flags are missing
@@ -283,6 +203,31 @@ function BacktestPage() {
     return () => { cancelled = true; clearInterval(id); unsub(); };
   }, []);
 
+  // Delete a slip from the user's own backtest history. Optimistically drop
+  // it from local state (every summary stat is derived from `slips`, so they
+  // recompute immediately), then DELETE server-side. On failure, reload from
+  // the server so the UI doesn't lie about what's stored.
+  const handleDelete = React.useCallback(async (slipId) => {
+    if (!slipId) return;
+    const prev = slips;
+    setSlips(cur => cur.filter(s => s.id !== slipId));
+    try {
+      await window.cpApi.apiFetch(`/api/backtest/slip/${encodeURIComponent(slipId)}`, { method: "DELETE" });
+      // Keep the SWR cache honest so the next poll/tab-switch doesn't restore
+      // the deleted slip from a stale cached payload.
+      if (window.cpApi.getCached) {
+        const cachedNow = window.cpApi.getCached("/api/backtest/slips");
+        if (cachedNow && Array.isArray(cachedNow.slips)) {
+          cachedNow.slips = cachedNow.slips.filter(s => (s.id || s.slip_id) !== slipId);
+        }
+      }
+    } catch (ex) {
+      // Roll back on failure.
+      setSlips(prev);
+      alert("Could not delete slip: " + (ex.message || ex));
+    }
+  }, [slips]);
+
   const filtered = useMemo(() =>
     slips.filter(s =>
       (!resultFilter || s.result === resultFilter) &&
@@ -349,6 +294,11 @@ function BacktestPage() {
 
   const fmt = (v, d = 1, suf = "%") => v.toFixed(d) + suf;
 
+  // Show shimmer instead of empty-derived zeros until the first fetch lands
+  // (loading OR error, when we have nothing real yet). A genuine empty
+  // dataset (loadState "ok" with 0 slips) still shows truthful zeros.
+  const statsLoading = loadState !== "ok" && slips.length === 0;
+
   return (
     <main className="bd-page bt-page">
       <FiltersBar count={filtered.length} label="slips" page={page} totalPages={totalPages} onPage={setPage}>
@@ -380,17 +330,19 @@ function BacktestPage() {
        *     (sum_payouts - n_resolved) / n_resolved using 1-unit stake per
        *     slip, matching the backend's pnl_timeline math. */}
       <div className="bt-summary">
-        <StatCard label="Slips (Done / Total)" sub="Recent 300" value={`${slipsDone} / ${slipsTotal}`} />
+        <StatCard loading={statsLoading} label="Slips (Done / Total)" sub="Recent 300" value={`${slipsDone} / ${slipsTotal}`} />
         <StatCard
+          loading={statsLoading}
           label="Slip Hit Rate"
           sub={slipBeWeighted != null ? `BE ${slipBeWeighted.toFixed(2)}%` : "BE —"}
           value={fmt(slipHitRate)}
           tone={slipsDone === 0 || slipBeWeighted == null ? "neutral" : (slipHitRate >= slipBeWeighted ? "good" : "bad")}
         />
-        <StatCard label="Legs (Done / Total)" sub="Recent 300" value={`${legsDone} / ${legsTotal}`} />
-        <StatCard label="Leg Hit Rate" sub="BE 54.08%" value={fmt(legHitRate)} tone={legsDone === 0 ? "neutral" : (legHitRate >= 54.08 ? "good" : "bad")} />
-        <StatCard label="Exp. Leg Hit Rate" value={fmt(expLegHitRate)} />
+        <StatCard loading={statsLoading} label="Legs (Done / Total)" sub="Recent 300" value={`${legsDone} / ${legsTotal}`} />
+        <StatCard loading={statsLoading} label="Leg Hit Rate" sub="BE 54.08%" value={fmt(legHitRate)} tone={legsDone === 0 ? "neutral" : (legHitRate >= 54.08 ? "good" : "bad")} />
+        <StatCard loading={statsLoading} label="Exp. Leg Hit Rate" value={fmt(expLegHitRate)} />
         <StatCard
+          loading={statsLoading}
           label="Actual ROI"
           sub={done.length > 0 ? `${totalProfitUnits >= 0 ? "+" : ""}${totalProfitUnits.toFixed(2)}u / ${totalStakeUnits}u` : null}
           value={(roi >= 0 ? "+" : "") + fmt(roi)}
@@ -410,25 +362,29 @@ function BacktestPage() {
 
       {/* Slip grid */}
       <div className="bt-slips-grid">
-        {slipsView.map(s => <SlipCard key={s.id} slip={s} />)}
+        {slipsView.map(s => <SlipCard key={s.id} slip={s} onDelete={handleDelete} />)}
       </div>
     </main>
   );
 }
 
-function StatCard({ label, sub, value, tone }) {
+function StatCard({ label, sub, value, tone, loading }) {
+  // While the first fetch is in flight, render a shimmer instead of a value
+  // derived from an empty dataset (which would read as a real "0.0%" / "0/0").
   return (
-    <div className={"bt-card tone-" + (tone || "neutral")}>
+    <div className={"bt-card tone-" + (loading ? "neutral" : (tone || "neutral"))}>
       <div className="bt-card-label">
         {label}
-        {sub && <span className="bt-card-sub">({sub})</span>}
+        {!loading && sub && <span className="bt-card-sub">({sub})</span>}
       </div>
-      <div className="bt-card-value">{value}</div>
+      <div className="bt-card-value">
+        {loading ? <span className="cp-skel" /> : value}
+      </div>
     </div>
   );
 }
 
-function SlipCard({ slip }) {
+function SlipCard({ slip, onDelete }) {
   // Status drives the entire card border + badge color:
   //   pending → yellow, hit → green, miss/loss → red, push/dnp → muted yellow
   const resultLabel = {
@@ -505,6 +461,19 @@ function SlipCard({ slip }) {
             </span>
           )}
           <span className={"bt-slip-badge " + resultLabel.cls}>{resultLabel.t}</span>
+          {onDelete && (
+            <button
+              type="button"
+              className="bt-slip-del"
+              title="Delete this slip from your backtest"
+              aria-label="Delete slip"
+              onClick={() => {
+                if (window.confirm("Delete this slip from your backtest? This can't be undone.")) {
+                  onDelete(slip.id);
+                }
+              }}
+            >✕</button>
+          )}
         </div>
       </header>
 
@@ -555,4 +524,4 @@ function SlipCard({ slip }) {
   );
 }
 
-Object.assign(window, { BacktestPage, BT_SLIPS });
+Object.assign(window, { BacktestPage });

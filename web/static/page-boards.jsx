@@ -11,37 +11,6 @@ function probToAmerican(p) {
 
 const LEAGUE_ORDER = ["NBA", "WNBA", "NCAAB", "MLB", "NHL", "SOCCER"];
 
-// Extended dataset used across all 3 boards. Real codebase shape:
-// player_name, league, stat_type, pp_line, side, true_prob, fd_line/fd_odds, dk_line/dk_odds, pin_line/pin_odds, start_time
-const BOARD_LINES = [
-  { player: "Cale Makar",        league: "NHL",   prop: "Assists",       line: 0.5,  side: "OVER",  truePct: 72.4, fd: -138, dk: -145, pin: -135, time: "5/26 9:08 PM" },
-  { player: "Courtney Williams", league: "WNBA",  prop: "Rebs+Asts",     line: 9.5,  side: "UNDER", truePct: 66.4, fd: -140, dk:  null, pin:  null, time: "5/27 9:00 PM" },
-  { player: "Olivia Miles",      league: "WNBA",  prop: "Rebs+Asts",     line: 10.5, side: "UNDER", truePct: 63.6, fd: -136, dk:  null, pin:  null, time: "5/27 9:00 PM" },
-  { player: "Cason Wallace",     league: "NBA",   prop: "Rebounds",      line: 3.5,  side: "UNDER", truePct: 62.0, fd: -132, dk: -122, pin: -133, time: "5/26 8:40 PM" },
-  { player: "Jordan Wicks",      league: "MLB",   prop: "Hits Allowed",  line: 4.5,  side: "UNDER", truePct: 62.0, fd:  null, dk: -118, pin: -134, time: "5/26 6:40 PM" },
-  { player: "Marina Mabrey",     league: "WNBA",  prop: "Rebs+Asts",     line: 7.5,  side: "UNDER", truePct: 60.2, fd: -130, dk:  null, pin:  null, time: "5/27 8:00 PM" },
-  { player: "Paige Bueckers",    league: "WNBA",  prop: "Rebs+Asts",     line: 8.5,  side: "UNDER", truePct: 60.2, fd: -130, dk:  null, pin:  null, time: "5/28 8:00 PM" },
-  { player: "Victor Wembanyama", league: "NBA",   prop: "Assists",       line: 3.5,  side: "UNDER", truePct: 59.9, fd: -134, dk: -123, pin: -141, time: "5/26 8:40 PM" },
-  { player: "Luguentz Dort",     league: "NBA",   prop: "Rebounds",      line: 2.5,  side: "UNDER", truePct: 59.2, fd: -122, dk: -112, pin: -112, time: "5/26 8:40 PM" },
-  { player: "Sean Burke",        league: "MLB",   prop: "Walks Allowed", line: 1.5,  side: "UNDER", truePct: 58.3, fd:  null, dk: -120, pin:  null, time: "5/26 7:40 PM" },
-  { player: "Jaccob Slavin",     league: "NHL",   prop: "Blocked Shots", line: 1.5,  side: "OVER",  truePct: 58.0, fd: -190, dk:  null, pin:  null, time: "5/27 8:08 PM" },
-  { player: "Jordan Wicks",      league: "MLB",   prop: "Walks Allowed", line: 1.5,  side: "UNDER", truePct: 57.8, fd:  null, dk: -119, pin:  null, time: "5/26 6:40 PM" },
-  { player: "Nia Coffey",        league: "WNBA",  prop: "Rebounds",      line: 5.5,  side: "UNDER", truePct: 57.8, fd: -125, dk: -122, pin:  null, time: "5/27 9:00 PM" },
-  { player: "Gabriela Jaquez",   league: "WNBA",  prop: "Points",        line: 11.5, side: "UNDER", truePct: 57.7, fd: -128, dk: -124, pin:  null, time: "5/27 8:00 PM" },
-  { player: "Chet Holmgren",     league: "NBA",   prop: "Rebounds",      line: 7.5,  side: "UNDER", truePct: 57.6, fd: -114, dk: -115, pin: -112, time: "5/26 8:40 PM" },
-  { player: "Jared McCain",      league: "NBA",   prop: "Rebounds",      line: 2.5,  side: "UNDER", truePct: 57.6, fd: -114, dk: -115, pin: -112, time: "5/26 8:40 PM" },
-  { player: "Stephon Castle",    league: "NBA",   prop: "Points",        line: 17.5, side: "UNDER", truePct: 57.1, fd:  null, dk: -116, pin: -129, time: "5/26 8:40 PM" },
-  { player: "Julian Champagnie", league: "NBA",   prop: "Pts+Rebs",      line: 14.5, side: "UNDER", truePct: 57.0, fd: -130, dk: -112, pin:  null, time: "5/26 8:40 PM" },
-  { player: "Devin Vassell",     league: "NBA",   prop: "Rebounds",      line: 4.5,  side: "UNDER", truePct: 57.0, fd: -125, dk:  101, pin: -126, time: "5/26 8:40 PM" },
-  { player: "Natasha Cloud",     league: "WNBA",  prop: "Rebounds",      line: 3.5,  side: "UNDER", truePct: 56.9, fd: -130, dk: -112, pin:  null, time: "5/27 8:00 PM" },
-  { player: "Jalen Williams",    league: "NBA",   prop: "Points",        line: 14.5, side: "UNDER", truePct: 56.7, fd: -146, dk: -122, pin: -122, time: "5/26 8:40 PM" },
-  { player: "RJ Barrett",        league: "NBA",   prop: "Assists",       line: 4.5,  side: "OVER",  truePct: 56.4, fd: -125, dk: -120, pin: -118, time: "5/26 7:30 PM" },
-  { player: "Connor Bedard",     league: "NHL",   prop: "Shots On Goal", line: 3.5,  side: "OVER",  truePct: 56.1, fd: -132, dk: -125, pin: -130, time: "5/27 8:00 PM" },
-  { player: "Pete Alonso",       league: "MLB",   prop: "Total Bases",   line: 1.5,  side: "OVER",  truePct: 55.9, fd: -118, dk: -115, pin: -120, time: "5/27 7:10 PM" },
-  { player: "Riley Greene",      league: "MLB",   prop: "Hits",          line: 0.5,  side: "OVER",  truePct: 55.5, fd: -210, dk: -205, pin: -215, time: "5/27 7:10 PM" },
-  { player: "Tyler O'Neil",      league: "NCAAB", prop: "Points",        line: 13.5, side: "UNDER", truePct: 55.2, fd: -120, dk: -118, pin:  null, time: "5/27 9:00 PM" },
-];
-
 // True odds derived from true probability (fallback when server doesn't include it)
 function withTrueOdds(row) {
   if (row.trueOdds != null) return row;

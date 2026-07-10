@@ -178,6 +178,11 @@ function AnalyticsPage() {
     ? `${hover.delta >= 0 ? "+" : ""}${hover.delta.toFixed(2)}u this slip`
     : null;
 
+  // By this point the loading/error/empty states have already returned early
+  // above, so stat cards only render with real data — but keep an explicit
+  // flag so the shimmer contract with StatCard stays consistent.
+  const anLoading = false;
+
   return (
     <main className="bd-page an-page">
       <div className="an-panel">
@@ -215,19 +220,19 @@ function AnalyticsPage() {
 
         <div className="an-section-h">Window stats <span className="an-section-sub">stats for: {range}</span></div>
         <div className="bt-summary">
-          <StatCard label="Brier Score" value={brier.toFixed(4)} tone={brier < 0.25 ? "good" : "neutral"} />
-          <StatCard label="Log Loss" value={logLoss.toFixed(4)} />
-          <StatCard label="Resolved Legs" value={String(allLegs.length)} />
-          <StatCard label="Raw Hit Rate" value={rawHit.toFixed(1) + "%"} tone={rawHit >= 54.08 ? "good" : "bad"} />
-          <StatCard label="Avg Predicted Prob" value={avgPred.toFixed(1) + "%"} />
-          <StatCard label="Hit Rate Delta" value={(delta >= 0 ? "+" : "") + delta.toFixed(1) + "%"} tone={delta >= 0 ? "good" : "bad"} />
+          <StatCard loading={anLoading} label="Brier Score" value={brier.toFixed(4)} tone={brier < 0.25 ? "good" : "neutral"} />
+          <StatCard loading={anLoading} label="Log Loss" value={logLoss.toFixed(4)} />
+          <StatCard loading={anLoading} label="Resolved Legs" value={String(allLegs.length)} />
+          <StatCard loading={anLoading} label="Raw Hit Rate" value={rawHit.toFixed(1) + "%"} tone={rawHit >= 54.08 ? "good" : "bad"} />
+          <StatCard loading={anLoading} label="Avg Predicted Prob" value={avgPred.toFixed(1) + "%"} />
+          <StatCard loading={anLoading} label="Hit Rate Delta" value={(delta >= 0 ? "+" : "") + delta.toFixed(1) + "%"} tone={delta >= 0 ? "good" : "bad"} />
         </div>
 
         <div className="an-section-h">Closing Line Value <span className="an-section-sub">if CLV+ {`>`} 50% &amp; Avg CLV% {`>`} 0, you're beating the market{clvIsAllTime ? " · all-time (no CLV tracked in this window)" : ""}</span></div>
         <div className="bt-summary">
-          <StatCard label="Tracked" value={String(clvCount)} />
-          <StatCard label="CLV+ Rate" value={clvCount ? clvPos.toFixed(1) + "%" : "—"} tone={clvPos >= 50 ? "good" : "bad"} />
-          <StatCard label="Avg CLV%" value={clvCount ? (clvAvg >= 0 ? "+" : "") + clvAvg.toFixed(1) + "%" : "—"} tone={clvAvg >= 0 ? "good" : "bad"} />
+          <StatCard loading={anLoading} label="Tracked" value={String(clvCount)} />
+          <StatCard loading={anLoading} label="CLV+ Rate" value={clvCount ? clvPos.toFixed(1) + "%" : "—"} tone={clvPos >= 50 ? "good" : "bad"} />
+          <StatCard loading={anLoading} label="Avg CLV%" value={clvCount ? (clvAvg >= 0 ? "+" : "") + clvAvg.toFixed(1) + "%" : "—"} tone={clvAvg >= 0 ? "good" : "bad"} />
         </div>
       </div>
     </main>

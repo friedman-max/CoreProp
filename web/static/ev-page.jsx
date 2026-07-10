@@ -400,9 +400,9 @@ function EVPage() {
                 title={b.inBacktest ? "Already logged — won't be picked for new slips" : undefined}
               >
                 <span className="ev-player">
+                  {b.inBacktest && <span className="ev-logged">LOGGED</span>}
                   <span className="ev-player-n">{b.player}</span>
                   {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>GD</span>}
-                  {b.inBacktest && <span className="ev-logged">LOGGED</span>}
                 </span>
                 <span><LeaguePill league={b.league} /></span>
                 <span className="ev-prop">{b.prop}</span>

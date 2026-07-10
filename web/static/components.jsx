@@ -34,15 +34,29 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
   // the marketing landing page regardless of which tab they were viewing.
   const logoDest = loggedIn ? "+EV Bets" : "landing";
   const [busy, setBusy] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
   const user = (window.cpApi && window.cpApi.getUser && window.cpApi.getUser()) || null;
-  const initial = (user && (user.email || user.user_metadata?.username) || "?").trim().charAt(0).toUpperCase();
+  const email = user?.email || "";
+  const displayName = (user?.user_metadata?.username || email || "Account");
+  const initial = (email || user?.user_metadata?.username || "?").trim().charAt(0).toUpperCase();
 
   const handleLogout = async () => {
     if (busy) return;
     setBusy(true);
     try { await (onLogout && onLogout()); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setMenuOpen(false); }
   };
+
+  // Close the profile dropdown on any outside click or Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [menuOpen]);
 
   return (
     <header className={"cp-nav " + (variant === "landing" ? "is-landing" : "")}>
@@ -62,9 +76,32 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
       </nav>
       <div className="cp-nav-r">
         {loggedIn ? (
-          <div className="cp-user">
-            <div className="cp-avatar" title={user?.email || ""}>{initial}</div>
-            <button className="cp-link" onClick={handleLogout} disabled={busy}>{busy ? "…" : "Log Out"}</button>
+          <div className="cp-user" ref={menuRef}>
+            <button
+              className="cp-avatar-btn"
+              onClick={() => setMenuOpen(o => !o)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              title={email}
+            >
+              <span className="cp-avatar">{initial}</span>
+              <span className={"cp-caret " + (menuOpen ? "is-open" : "")}>▾</span>
+            </button>
+            {menuOpen && (
+              <div className="cp-menu" role="menu">
+                <div className="cp-menu-hd">
+                  <div className="cp-avatar cp-avatar-lg">{initial}</div>
+                  <div className="cp-menu-id">
+                    <div className="cp-menu-name">{displayName}</div>
+                    {email && <div className="cp-menu-email">{email}</div>}
+                  </div>
+                </div>
+                <div className="cp-menu-sep" />
+                <button className="cp-menu-item" role="menuitem" onClick={handleLogout} disabled={busy}>
+                  {busy ? "Logging out…" : "Log Out"}
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <button className="cp-btn cp-btn-primary cp-btn-sm" onClick={onLogin}>Log In</button>
