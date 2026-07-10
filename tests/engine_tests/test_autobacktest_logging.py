@@ -80,3 +80,78 @@ def test_logged_slip_carries_user_id_and_correct_n_legs():
     # Every leg carries user_id too.
     legs = db._legs_q.inserts[0]
     assert legs and all(l.get("user_id") == "user-42" for l in legs)
+
+
+# ── Multi-slip-per-cycle support ────────────────────────────────────────────
+# The refresh worker loops try_log_slip until the pool can't build another
+# distinct slip. That only works if try_log_slip's DB-driven dedup sees the
+# slips committed by earlier iterations. This stateful fake feeds inserted
+# legs back into the dedup select, mirroring Supabase, so we can prove the
+# loop drains a multi-slip pool and then terminates.
+
+class _StatefulDB:
+    """Minimal Supabase stand-in that remembers inserted slips + legs and
+    replays them through the same select chain BacktestLogger.\
+_fetch_recent_slips_with_legs uses."""
+    def __init__(self):
+        self.slips = []   # list of {id, user_id, timestamp}
+        self.legs = []    # list of leg dicts (must carry slip_id, player, ...)
+
+    def table(self, name):
+        return _StatefulQuery(self, name)
+
+
+class _StatefulQuery:
+    def __init__(self, db, name):
+        self.db = db
+        self.name = name
+        self._filter_ids = None
+    def select(self, *a, **k): return self
+    def gte(self, *a, **k): return self
+    def eq(self, *a, **k): return self
+    def order(self, *a, **k): return self
+    def limit(self, *a, **k): return self
+    def in_(self, col, vals):
+        self._filter_ids = set(vals)
+        return self
+    def insert(self, rows):
+        rows = rows if isinstance(rows, list) else [rows]
+        target = self.db.slips if self.name == "slips" else self.db.legs
+        target.extend(rows)
+        return self
+    def delete(self, *a, **k): return self
+    def execute(self):
+        class _Res:
+            def __init__(self, data): self.data = data
+        if self.name == "slips":
+            return _Res([{"id": s["id"], "timestamp": s.get("timestamp", "")}
+                         for s in self.db.slips])
+        # legs
+        rows = self.db.legs
+        if self._filter_ids is not None:
+            rows = [l for l in rows if l.get("slip_id") in self._filter_ids]
+        return _Res(rows)
+
+
+def test_worker_loop_logs_multiple_distinct_slips_then_stops():
+    from engine.backtest import BacktestLogger
+    # Pool big enough for two 3-leg Power slips (6 distinct players, 2 teams).
+    bets = [_bet(i, ev=0.06, prob=0.66, team=("ATL" if i % 2 == 0 else "BOS"))
+            for i in range(6)]
+    db = _StatefulDB()
+    bl = BacktestLogger(user_id="u1", db_client=db)
+
+    # Replicate the worker's _log_pool loop (bounded).
+    logged = 0
+    for _ in range(10):
+        if bl.try_log_slip(bets, slip_type="Power", n_legs=3) is None:
+            break
+        logged += 1
+
+    # Two full slips fit; the third call finds every player already used and
+    # returns None, so the loop terminates rather than spinning to the cap.
+    assert logged == 2, f"expected 2 distinct slips, logged {logged}"
+    assert len(db.slips) == 2
+    # 2 slips × 3 legs, all distinct players.
+    assert len(db.legs) == 6
+    assert len({l["player"] for l in db.legs}) == 6

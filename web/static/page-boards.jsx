@@ -323,14 +323,6 @@ function SportsbooksPage() {
         <button className="bd-clear" onClick={() => { setLeague(""); setPropQ(""); setPlayer(""); }}>Clear</button>
       </FiltersBar>
 
-      <div className="bd-book-hd">
-        <div className="bd-book-hd-l">
-          <span className={"bd-book-chip bd-book-chip-" + book.toUpperCase()}>{book.toUpperCase()}</span>
-          <span>{bookLabels[book]} lines</span>
-        </div>
-        <span className="bd-book-hd-r">Edge highlighted when book overpays vs. our true odds</span>
-      </div>
-
       <div className="bd-tbl-wrap">
         <table className="bd-tbl">
           <thead>

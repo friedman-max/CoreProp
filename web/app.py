@@ -1119,14 +1119,45 @@ def _run_pipeline_body():
                     from engine.backtest import BacktestLogger
                     bl = BacktestLogger(user_id=uid, db_client=db)
 
-                    def _log_pool(pool, label=""):
-                        # Flex keeps its thin-slate size fallback (6->5->4).
+                    # Max auto-slips to log for one user in a single refresh
+                    # cycle. try_log_slip re-reads the dedup set from the DB on
+                    # every call, so each iteration builds a DISTINCT slip from
+                    # players not yet used — looping drains the whole pool of
+                    # good candidates instead of stopping after the first slip
+                    # (the old behavior: 3 good slips available, only 1 logged
+                    # per 5-min scrape). Bounded so a huge slate can't log an
+                    # unreasonable number of slips in one cycle.
+                    MAX_AUTO_SLIPS_PER_CYCLE = int(
+                        os.getenv("MAX_AUTO_SLIPS_PER_CYCLE", "10")
+                    )
+
+                    def _log_one(pool) -> bool:
+                        # Log a single slip. Flex keeps its thin-slate size
+                        # fallback (6->5->4): try the largest size first, drop
+                        # a leg if the pool can't fill it. Returns True iff a
+                        # slip was logged.
                         if slip_type.lower() == "flex":
                             for try_n in range(n_legs, 3, -1):
                                 if bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=try_n):
-                                    break
-                        else:
-                            bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
+                                    return True
+                            return False
+                        return bl.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs) is not None
+
+                    def _log_pool(pool, label=""):
+                        # Keep logging distinct slips until the pool can't
+                        # produce another one (dedup exhausts the candidates)
+                        # or the per-cycle cap is reached.
+                        logged = 0
+                        while logged < MAX_AUTO_SLIPS_PER_CYCLE:
+                            if not _log_one(pool):
+                                break
+                            logged += 1
+                        if logged:
+                            logger.info(
+                                "auto_backtest    user=%s logged %d slip(s)%s this cycle",
+                                uid, logged, (" (" + label + ")") if label else "",
+                            )
+                        return logged
 
                     # Standard +EV pool. Green devils are EXCLUDED here — they
                     # only auto-log when the user opts in, and then as their own

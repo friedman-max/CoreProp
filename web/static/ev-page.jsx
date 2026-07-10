@@ -354,13 +354,13 @@ function EVPage() {
               style={showGreenDevils
                 ? { background: "#16a34a", borderColor: "#16a34a", color: "#fff" }
                 : { borderColor: "#16a34a", color: "#22c55e" }}
-            >😈 {showGreenDevils ? "On" : "Off"}{greenDevilCount ? ` · ${greenDevilCount}` : ""}</button>
+            >{showGreenDevils ? "On" : "Off"}{greenDevilCount ? ` · ${greenDevilCount}` : ""}</button>
           </div>
           <button className="ev-clear" onClick={() => { setLeague("All"); setPropQ(""); setMinOdds(50); setSide("Both"); }}>Clear</button>
         </div>
 
         <div className="ev-meta">
-          <span><b>{bets.length}</b> {showGreenDevils ? "green devils 😈" : "bets"}</span>
+          <span><b>{bets.length}</b> {showGreenDevils ? "green devils" : "bets"}</span>
           <span className="ev-meta-dot">·</span>
           <span>
             {loadState === "loading" && "Loading…"}
@@ -401,7 +401,7 @@ function EVPage() {
               >
                 <span className="ev-player">
                   <span className="ev-player-n">{b.player}</span>
-                  {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>😈 GD</span>}
+                  {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>GD</span>}
                   {b.inBacktest && <span className="ev-logged">LOGGED</span>}
                 </span>
                 <span><LeaguePill league={b.league} /></span>
@@ -467,7 +467,7 @@ function EVPage() {
           </label>
           <label className="ev-auto" title="Also auto-backtest green devils — logged as their own separate slip, never mixed into +EV slips. Off = green devils are display-only.">
             <input type="checkbox" checked={autoBacktestGreenDevils} onChange={e => setAutoBacktestGreenDevils(e.target.checked)} />
-            <span style={{ color: "#22c55e" }}>😈 Green devils</span>
+            <span style={{ color: "#22c55e" }}>Green devils</span>
           </label>
         </div>
         <div className="ev-slip-row">

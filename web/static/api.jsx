@@ -115,10 +115,11 @@
   // Map a backend bet (snake_case) to the UI's prototype shape (camelCase).
   function betToUi(b) {
     const books = [];
-    if (b.fd_odds_book != null) books.push(["FD", b.fd_odds_book]);
-    if (b.dk_odds_book != null) books.push(["DK", b.dk_odds_book]);
-    if (b.pin_odds_book != null) books.push(["PIN", b.pin_odds_book]);
-    if (b.nv_odds_book != null) books.push(["NV", b.nv_odds_book]);
+    // American odds display as whole numbers — round the devigged floats.
+    if (b.fd_odds_book != null) books.push(["FD", Math.round(b.fd_odds_book)]);
+    if (b.dk_odds_book != null) books.push(["DK", Math.round(b.dk_odds_book)]);
+    if (b.pin_odds_book != null) books.push(["PIN", Math.round(b.pin_odds_book)]);
+    if (b.nv_odds_book != null) books.push(["NV", Math.round(b.nv_odds_book)]);
     return {
       id:       b.bet_id,
       player:   b.player_name,
@@ -148,6 +149,13 @@
   //               pin_odds, best_odds, true_odds, start_time
   //   FD/DK/PIN : player_name, stat_type, line_score, side, line_odds,
   //               true_odds, start_time   ← single book's odds in line_odds
+  // American odds are always whole numbers; the devig math produces floats
+  // (e.g. -201.0930087709964), so round every odds value to an integer before
+  // it reaches a table cell. null stays null.
+  function roundOdds(v) {
+    return v == null ? null : Math.round(v);
+  }
+
   function lineToUi(l) {
     const prop = l.stat_type || l.prop_type || "";
     const line = l.line ?? l.pp_line ?? l.line_score ?? l.fd_line ?? l.dk_line ?? l.pin_line ?? "";
@@ -159,14 +167,14 @@
       line:      line,
       side:      (l.side || "").toUpperCase(),
       truePct:   l.true_prob != null ? l.true_prob * 100 : null,
-      trueOdds:  l.true_odds != null ? l.true_odds : null,
+      trueOdds:  roundOdds(l.true_odds),
       // matched rows carry per-book odds; single-book rows carry one odds
       // value in line_odds — expose it as bookOdds for the Sportsbooks view.
-      fd:        l.fd_odds ?? l.fd_odds_book ?? null,
-      dk:        l.dk_odds ?? l.dk_odds_book ?? null,
-      pin:       l.pin_odds ?? l.pin_odds_book ?? null,
-      bookOdds:  l.line_odds ?? null,
-      best:      l.best_odds ?? null,
+      fd:        roundOdds(l.fd_odds ?? l.fd_odds_book),
+      dk:        roundOdds(l.dk_odds ?? l.dk_odds_book),
+      pin:       roundOdds(l.pin_odds ?? l.pin_odds_book),
+      bookOdds:  roundOdds(l.line_odds),
+      best:      roundOdds(l.best_odds),
       startTime: l.start_time,
       raw: l,
     };
