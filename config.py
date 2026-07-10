@@ -114,7 +114,11 @@ SIDE_BIAS = {
     ("MLB", "under"): +0.025,
 }
 
-CELL_DROPS_ENABLED = os.getenv("CELL_DROPS_ENABLED", "true").lower() in ("true", "1", "yes")
+# Default OFF: with NBA/NHL off-season, the only live cell this drops is
+# WNBA-over, and excluding it (plus the 0.65 floor) starved the auto-log pool
+# so nothing reached the backtest tab. Re-enable per-cell via CELL_DROPS_ENABLED=true
+# once there's enough resolved WNBA volume to re-confirm the FINDINGS signal.
+CELL_DROPS_ENABLED = os.getenv("CELL_DROPS_ENABLED", "false").lower() in ("true", "1", "yes")
 CELL_DROPS = {
     ("NBA",  "over"),
     ("NHL",  "over"),
