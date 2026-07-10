@@ -2555,14 +2555,28 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
             return {"slips": [], "total": 0}
 
         sids = [s["id"] for s in slip_data]
-        # 2. Fetch all legs for these slips
-        legs_res = db.table("legs").select("*").in_("slip_id", sids).execute()
+        # 2. Fetch all legs for these slips. PostgREST silently caps an
+        # unbounded select at 1000 rows; 300 slips × up to 6 legs = 1800 legs,
+        # so an unpaginated fetch would drop the legs of the oldest ~130 slips
+        # — those slips then render legless (and, with the orphan filter below,
+        # vanish entirely), which is how a real winning slip goes missing.
+        # Paginate to pull every leg.
         legs_by_slip = {}
-        for l in legs_res.data:
-            sid = l["slip_id"]
-            if sid not in legs_by_slip:
-                legs_by_slip[sid] = []
-            legs_by_slip[sid].append(l)
+        _page_size = 1000
+        _offset = 0
+        while True:
+            _page = (
+                db.table("legs").select("*").in_("slip_id", sids)
+                  .order("slip_id", desc=False)
+                  .range(_offset, _offset + _page_size - 1)
+                  .execute()
+                  .data
+            ) or []
+            for l in _page:
+                legs_by_slip.setdefault(l["slip_id"], []).append(l)
+            if len(_page) < _page_size:
+                break
+            _offset += _page_size
         
         for s in slip_data:
             s["slip_id"] = s["id"]

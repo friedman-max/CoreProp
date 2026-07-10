@@ -61,10 +61,28 @@ def _load_resolved_rows(user_jwt: str) -> list[dict]:
         # Project only the columns we use; `select("*")` was pulling every
         # leg's worth of CLV/odds/timestamp baggage into RAM.
         cols = "result, true_prob, player, prop, side, league, slip_id"
-        res = db.table("legs").select(cols).in_("result", ["won", "win", "hit", "1", "lost", "loss", "miss", "0"]).execute()
+        # Paginate — an unbounded select silently caps at 1000 rows, which
+        # would drop resolved legs (and their slips' outcomes) from the
+        # calibration/hit-rate metrics once a user exceeds ~1000 resolved legs.
+        resolved_filter = ["won", "win", "hit", "1", "lost", "loss", "miss", "0"]
+        _data: list = []
+        _page_size = 1000
+        _offset = 0
+        while True:
+            _page = (
+                db.table("legs").select(cols).in_("result", resolved_filter)
+                  .order("slip_id", desc=False)
+                  .range(_offset, _offset + _page_size - 1)
+                  .execute()
+                  .data
+            ) or []
+            _data.extend(_page)
+            if len(_page) < _page_size:
+                break
+            _offset += _page_size
         from engine.constants import is_excluded_league
         rows = []
-        for r in res.data:
+        for r in _data:
             # Skip legacy legs whose league has since been removed (e.g.
             # soccer). Otherwise their resolved outcomes silently feed
             # the per-league calibration display.
@@ -108,11 +126,24 @@ def _load_clv_rows(user_jwt: str) -> list[dict]:
         return []
 
     try:
-        res = db.table("legs").select("closing_prob, clv_pct, slip_id").execute()
+        # Paginate — an unbounded select silently caps at 1000 rows.
         rows = []
-        for r in (res.data or []):
-            if r.get("closing_prob") is not None and r.get("clv_pct") is not None:
-                rows.append({"closing_prob": r["closing_prob"], "clv_pct": r["clv_pct"]})
+        _page_size = 1000
+        _offset = 0
+        while True:
+            _page = (
+                db.table("legs").select("closing_prob, clv_pct, slip_id")
+                  .order("slip_id", desc=False)
+                  .range(_offset, _offset + _page_size - 1)
+                  .execute()
+                  .data
+            ) or []
+            for r in _page:
+                if r.get("closing_prob") is not None and r.get("clv_pct") is not None:
+                    rows.append({"closing_prob": r["closing_prob"], "clv_pct": r["clv_pct"]})
+            if len(_page) < _page_size:
+                break
+            _offset += _page_size
         return rows
     except Exception as e:
         logger.warning("Calibration: Supabase CLV load failed: %s", e)
@@ -286,14 +317,34 @@ def evaluate_analytics(user_jwt: str) -> dict:
     """
     from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS
 
-    # Fetch every leg in a single round trip; both the calibration metrics
-    # and the slip aggregation read from this list.
+    # Fetch every leg; both the calibration metrics and the slip aggregation
+    # read from this list. PostgREST silently caps an unbounded select at 1000
+    # rows, so we MUST paginate — at 6 legs/slip that cap is only ~167 slips,
+    # and once a user has more history than that the missing legs make whole
+    # slips vanish from the P&L timeline (a won slip's legs never land in
+    # legs_by_slip, so it's skipped) and from the hit-rate/calibration rows.
+    # Order by slip_id so a given slip's legs are never split across the
+    # truncation boundary of a partial final page.
     db = get_user_db(user_jwt)
     all_legs: list = []
     if db:
         try:
             cols = "result, true_prob, player, prop, side, league, slip_id, closing_prob, clv_pct"
-            all_legs = (db.table("legs").select(cols).execute().data) or []
+            page_size = 1000
+            offset = 0
+            while True:
+                page = (
+                    db.table("legs")
+                      .select(cols)
+                      .order("slip_id", desc=False)
+                      .range(offset, offset + page_size - 1)
+                      .execute()
+                      .data
+                ) or []
+                all_legs.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += page_size
         except Exception as exc:
             logger.warning("Analytics: legs fetch failed: %s", exc)
             all_legs = []
@@ -305,8 +356,23 @@ def evaluate_analytics(user_jwt: str) -> dict:
     slip_meta: list = []
     if db:
         try:
-            slips_res = db.table("slips").select("id, timestamp, slip_type").order("timestamp", desc=False).execute()
-            slip_meta = slips_res.data or []
+            # Paginate — an unbounded select silently caps at 1000 rows, which
+            # would drop the oldest slips from the P&L timeline entirely.
+            _page_size = 1000
+            _offset = 0
+            while True:
+                _page = (
+                    db.table("slips")
+                      .select("id, timestamp, slip_type")
+                      .order("timestamp", desc=False)
+                      .range(_offset, _offset + _page_size - 1)
+                      .execute()
+                      .data
+                ) or []
+                slip_meta.extend(_page)
+                if len(_page) < _page_size:
+                    break
+                _offset += _page_size
             for s in slip_meta:
                 if s.get("id") and s.get("timestamp"):
                     slip_ts[s["id"]] = s["timestamp"]
