@@ -26,7 +26,7 @@ function fmtGameTimeB(iso) {
 }
 
 function bestOdds(row) {
-  const offers = [["FD", row.fd], ["DK", row.dk], ["PIN", row.pin]].filter(([_, o]) => o != null);
+  const offers = [["FD", row.fd], ["DK", row.dk], ["PIN", row.pin], ["NV", row.nv]].filter(([_, o]) => o != null);
   if (!offers.length) return [null, null];
   // higher (less negative or more positive) odds = better for bettor
   return offers.reduce((a, b) => (a[1] > b[1] ? a : b));
@@ -137,6 +137,7 @@ function CombinedLinesPage() {
               <th>FD</th>
               <th>DK</th>
               <th>PIN</th>
+              <th>NV</th>
               <th className={sortClass("startTime")} onClick={() => sortBy("startTime")}>Game Time</th>
             </tr>
           </thead>
@@ -155,12 +156,13 @@ function CombinedLinesPage() {
                   <td><OddsCell value={r.fd} best={bestBook === "FD"} /></td>
                   <td><OddsCell value={r.dk} best={bestBook === "DK"} /></td>
                   <td><OddsCell value={r.pin} best={bestBook === "PIN"} /></td>
+                  <td><OddsCell value={r.nv} best={bestBook === "NV"} /></td>
                   <td className="bd-time mono">{fmtGameTimeB(r.startTime)}</td>
                 </tr>
               );
             })}
             {rows.length === 0 && (
-              <BoardEmptyRow cols={11} state={loadState} error={error}
+              <BoardEmptyRow cols={12} state={loadState} error={error}
                 onClear={() => { setLeague(""); setPropQ(""); setPlayer(""); setPage(1); }} />
             )}
           </tbody>

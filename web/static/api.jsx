@@ -173,6 +173,7 @@
       fd:        roundOdds(l.fd_odds ?? l.fd_odds_book),
       dk:        roundOdds(l.dk_odds ?? l.dk_odds_book),
       pin:       roundOdds(l.pin_odds ?? l.pin_odds_book),
+      nv:        roundOdds(l.nv_odds ?? l.nv_odds_book),
       bookOdds:  roundOdds(l.line_odds),
       best:      roundOdds(l.best_odds),
       startTime: l.start_time,

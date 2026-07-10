@@ -176,6 +176,7 @@ function BookBadge({ book, odds }) {
     FD:  { bg: "rgba(239,68,68,.16)",  fg: "#FCA5A5" },
     DK:  { bg: "rgba(34,197,94,.16)",  fg: "#86EFAC" },
     PIN: { bg: "rgba(250,204,21,.18)", fg: "#FDE68A" },
+    NV:  { bg: "rgba(167,139,250,.18)", fg: "#C4B5FD" },
     MGM: { bg: "rgba(56,189,248,.16)", fg: "#7DD3FC" },
   };
   const c = colors[book] || colors.FD;
