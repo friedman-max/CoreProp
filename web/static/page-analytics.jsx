@@ -2,13 +2,7 @@
 const { useState: useStateA, useMemo: useMemoA, useRef: useRefA, useEffect: useEffectA } = React;
 
 const RANGES = ["1D", "1W", "1M", "3M", "1Y", "MAX"];
-
-function _windowStartMs(range, latestMs) {
-  if (range === "MAX") return -Infinity;
-  const day = 86400000;
-  const days = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365 }[range] || 30;
-  return latestMs - days * day;
-}
+const _RANGE_DAYS = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365 };
 
 function AnalyticsPage() {
   const [range, setRange] = useState("1M");
@@ -48,56 +42,97 @@ function AnalyticsPage() {
     })).filter(p => !isNaN(p.date.getTime()));
   }, [data]);
 
+  // Window bounds shared by the chart and the stat cards. A fixed range
+  // (1D…1Y) is anchored to NOW (real wall-clock), not to the last slip — so
+  // "1Y" always means "the last 365 days ending today", and the axis spans the
+  // whole window even when the newest bet is weeks old. MAX spans first slip →
+  // now. Returns { startMs, endMs } (startMs === -Infinity for MAX's lower
+  // bound so every slip is included).
+  const nowMs = useMemo(() => Date.now(), [data]);
+  const windowBounds = useMemo(() => {
+    const endMs = nowMs;
+    if (range === "MAX") return { startMs: -Infinity, endMs };
+    const days = _RANGE_DAYS[range] || 30;
+    return { startMs: endMs - days * 86400000, endMs };
+  }, [range, nowMs]);
+
   const filtered = useMemo(() => {
     if (!fullSeries.length) return [];
+    const { startMs, endMs } = windowBounds;
 
-    // Slice to the window, then REBASE so the window opens at 0u. Viewing a
-    // single timeframe in a vacuum: a +18u week reads 0 → +18, not
-    // −65 → −47. Baseline = the cumulative P&L immediately *before* the
-    // window's first slip (or that slip's own pre-delta value if the window
-    // includes the very first slip).
-    let startIdx = 0;
-    if (range !== "MAX") {
-      const latest = fullSeries[fullSeries.length - 1].date.getTime();
-      const cutoff = _windowStartMs(range, latest);
-      startIdx = fullSeries.findIndex(p => p.date.getTime() >= cutoff);
-      if (startIdx < 0) return [];
+    // Slips that actually fall inside the window.
+    const startIdx = range === "MAX"
+      ? 0
+      : fullSeries.findIndex(p => p.date.getTime() >= startMs);
+
+    // Baseline = cumulative P&L right before the window opens, so the curve is
+    // REBASED to start at 0u. For a fixed window that's the last slip before
+    // the window (or ~0 if the window predates the first bet). For MAX it's the
+    // pre-first-slip value (~0).
+    let baseline, inWindow;
+    if (startIdx < 0) {
+      // No slip within the window (all bets are older than the window start).
+      // Everything to date is the running baseline; the window shows a flat 0.
+      baseline = fullSeries[fullSeries.length - 1].pnl;
+      inWindow = [];
+    } else {
+      baseline = startIdx > 0
+        ? fullSeries[startIdx - 1].pnl
+        : (fullSeries[0].pnl - (fullSeries[0].delta || 0));
+      inWindow = fullSeries.slice(startIdx);
     }
-    const first = fullSeries[startIdx];
-    const baseline = startIdx > 0
-      ? fullSeries[startIdx - 1].pnl          // P&L right before the window
-      : (first.pnl - (first.delta || 0));     // pre-first-slip = ~0
-    return fullSeries.slice(startIdx).map(p => ({
+
+    const pts = inWindow.map(p => ({
       ...p,
-      pnl: p.pnl - baseline,                  // rebased: window starts at 0u
-      cumAbs: p.pnl,                          // keep absolute for reference
+      pnl: p.pnl - baseline,   // rebased: window opens at 0u
+      cumAbs: p.pnl,           // keep absolute for reference
     }));
-  }, [fullSeries, range]);
+
+    // Anchor points so the drawn axis spans the FULL window regardless of
+    // where the bets fall. `anchor: true` marks synthetic points (no dot, no
+    // hover, no per-slip delta). For MAX the domain is naturally first→now, so
+    // only the trailing "now" anchor is added.
+    const out = [];
+    if (range !== "MAX" && isFinite(startMs)) {
+      // Leading flat segment: 0u from the window start until the first real
+      // bet in the window. If a bet lands exactly at/after the start this still
+      // draws a flat run from window-open to that bet.
+      const firstT = pts.length ? pts[0].date.getTime() : endMs;
+      if (firstT > startMs) {
+        out.push({ date: new Date(startMs), pnl: 0, delta: 0, slipId: null, anchor: true });
+      }
+    }
+    out.push(...pts);
+    // Trailing flat segment: hold the last cumulative value out to "now" so the
+    // curve doesn't stop at the most recent bet.
+    const lastPnl = pts.length ? pts[pts.length - 1].pnl : 0;
+    const lastT = pts.length ? pts[pts.length - 1].date.getTime() : -Infinity;
+    if (endMs > lastT) {
+      out.push({ date: new Date(endMs), pnl: lastPnl, delta: 0, slipId: null, anchor: true });
+    }
+    return out;
+  }, [fullSeries, range, windowBounds]);
 
   // Window stats: filter resolved_legs by the same window and recompute.
   const windowLegs = useMemo(() => {
     if (!data?.resolved_legs) return [];
     if (range === "MAX") return data.resolved_legs;
-    if (!fullSeries.length) return data.resolved_legs;
-    const latest = fullSeries[fullSeries.length - 1].date.getTime();
-    const cutoff = _windowStartMs(range, latest);
+    const { startMs } = windowBounds;
     return data.resolved_legs.filter(l => {
       const t = l.timestamp ? new Date(l.timestamp).getTime() : NaN;
-      return !isNaN(t) && t >= cutoff;
+      return !isNaN(t) && t >= startMs;
     });
-  }, [data, range, fullSeries]);
+  }, [data, range, windowBounds]);
 
   const windowClv = useMemo(() => {
     if (!data?.clv_legs) return [];
     if (range === "MAX") return data.clv_legs;
-    if (!fullSeries.length) return data.clv_legs;
-    const latest = fullSeries[fullSeries.length - 1].date.getTime();
-    const cutoff = _windowStartMs(range, latest);
+    const { startMs } = windowBounds;
     return data.clv_legs.filter(l => {
       const t = l.timestamp ? new Date(l.timestamp).getTime() : NaN;
-      return !isNaN(t) && t >= cutoff;
+      return !isNaN(t) && t >= startMs;
     });
-  }, [data, range, fullSeries]);
+  }, [data, range, windowBounds]);
 
   // Series is already rebased to open at 0u, so the window's net P&L is just
   // the last rebased cumulative value.
@@ -337,18 +372,19 @@ function PnLChart({ series, onHover, hover }) {
     xTicks.push({ x, label: new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) });
   }
 
-  // Find the slip the cursor is nearest to in time.
+  // Find the REAL slip (not a synthetic axis anchor) the cursor is nearest to.
   const onMove = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = (e.clientX - rect.left) * (W / rect.width); // normalize to viewBox
     const ratio = Math.min(1, Math.max(0, (x - padL) / (W - padL - padR)));
     const tHover = tMin + ratio * tSpan;
-    let best = 0, bestDt = Infinity;
+    let best = -1, bestDt = Infinity;
     for (let i = 0; i < series.length; i++) {
+      if (series[i].anchor) continue;   // leading/trailing flat anchors aren't slips
       const dt = Math.abs(series[i].date.getTime() - tHover);
       if (dt < bestDt) { bestDt = dt; best = i; }
     }
-    onHover(series[best]);
+    onHover(best >= 0 ? series[best] : null);
   };
 
   const hoverIdx = hover ? series.findIndex(p => p.date.getTime() === hover.date.getTime() && p.pnl === hover.pnl) : -1;
@@ -383,17 +419,20 @@ function PnLChart({ series, onHover, hover }) {
         {/* Step-after equity curve */}
         <path d={pathD} fill="none" stroke={lineColor} strokeWidth="2.25" strokeLinejoin="miter" strokeLinecap="square" />
 
-        {/* Per-slip dots colored by individual outcome */}
+        {/* Per-slip dots colored by individual outcome. Synthetic axis anchors
+            (leading flat-line start, trailing "now") get no dot. */}
         {series.map((p, i) => (
-          <circle
-            key={i}
-            cx={xs(i)}
-            cy={ys(p.pnl)}
-            r={hoverIdx === i ? 5 : 3}
-            fill={dotColor(p.delta)}
-            stroke="#0a0a0d"
-            strokeWidth="1.25"
-          />
+          p.anchor ? null : (
+            <circle
+              key={i}
+              cx={xs(i)}
+              cy={ys(p.pnl)}
+              r={hoverIdx === i ? 5 : 3}
+              fill={dotColor(p.delta)}
+              stroke="#0a0a0d"
+              strokeWidth="1.25"
+            />
+          )
         ))}
 
         {/* Hover crosshair */}
