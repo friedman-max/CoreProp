@@ -353,137 +353,11 @@ function EVPage() {
     return be == null ? 54.07 : be;
   }, [slipType, legs]);
 
-  return (
-    <main className="ev">
-      <div className="ev-main">
-        {/* Filter bar */}
-        <div className="ev-filters">
-          <div className="ev-filter">
-            <label>League</label>
-            <div className="ev-chips">
-              {["All", "NBA", "WNBA", "NHL", "MLB", "NFL"].map(l => (
-                <button key={l} className={"ev-chip " + (league === l ? "is-on" : "")} onClick={() => setLeague(l)}>{l}</button>
-              ))}
-            </div>
-          </div>
-          <div className="ev-filter ev-filter-grow">
-            <label>Prop type</label>
-            <input className="cp-input cp-input-sm" placeholder="Rebounds, Points, Hits Allowed…" value={propQ} onChange={e => setPropQ(e.target.value)} />
-          </div>
-          <div className="ev-filter">
-            <label>Min True %</label>
-            <div className="ev-stepper">
-              <button onClick={() => setMinOdds(v => Math.max(50, v - 1))}>−</button>
-              <span>{minOdds}</span>
-              <button onClick={() => setMinOdds(v => Math.min(80, v + 1))}>+</button>
-            </div>
-          </div>
-          <div className="ev-filter">
-            <label>Side</label>
-            <div className="ev-chips">
-              {["Both", "Over", "Under"].map(s => (
-                <button key={s} className={"ev-chip " + (side === s ? "is-on" : "")} onClick={() => setSide(s)}>{s}</button>
-              ))}
-            </div>
-          </div>
-          <div className="ev-filter">
-            <label>Green Devils</label>
-            <button
-              type="button"
-              className={"ev-chip " + (showGreenDevils ? "is-on" : "")}
-              onClick={() => setShowGreenDevils(v => !v)}
-              title="Green devils are PrizePicks goblins — discounted, higher-hit-rate lines. Toggle to see the safest 'just need to win' picks, ranked by hit probability."
-              style={showGreenDevils
-                ? { background: "#16a34a", borderColor: "#16a34a", color: "#fff" }
-                : { borderColor: "#16a34a", color: "#22c55e" }}
-            >{showGreenDevils ? "On" : "Off"}{greenDevilCount ? ` · ${greenDevilCount}` : ""}</button>
-          </div>
-          <button className="ev-clear" onClick={() => { setLeague("All"); setPropQ(""); setMinOdds(50); setSide("Both"); }}>Clear</button>
-          {/* Mobile-only: reveal/hide the slip builder (hidden by default). */}
-          <button
-            type="button"
-            className={"ev-slip-toggle " + (slipOpen ? "is-on" : "")}
-            onClick={() => setSlipOpen(v => !v)}
-            aria-expanded={slipOpen}
-          >
-            Slip Builder{selected.length ? ` · ${selected.length}` : ""}
-            <span className={"ev-slip-toggle-caret " + (slipOpen ? "is-open" : "")}>▾</span>
-          </button>
-        </div>
-
-        <div className="ev-meta">
-          <span><b>{bets.length}</b> {showGreenDevils ? "green devils" : "bets"}</span>
-          <span className="ev-meta-dot">·</span>
-          <span>
-            {loadState === "loading" && "Loading…"}
-            {loadState === "ok" && <>Updated <em className="ev-pulse">live</em></>}
-            {loadState === "error" && <span style={{color:"#FCA5A5"}}>Error: {errMsg}</span>}
-          </span>
-          <span className="ev-meta-pag">{bets.length} of {allBets.length}</span>
-        </div>
-
-        {/* Table */}
-        <div className="ev-table">
-          <div className="ev-row ev-row-hd">
-            <span>PLAYER</span>
-            <span>LEAGUE</span>
-            <span>PROP</span>
-            <span>LINE</span>
-            <span>SIDE</span>
-            <span className="ev-th-sort">TRUE % <span className="ev-arrow">↓</span></span>
-            <span>BOOK ODDS</span>
-            <span>GAME</span>
-            <span></span>
-          </div>
-          {bets.map((b, i) => {
-            const key = b.id || (b.player + b.prop + b.line);
-            const isSel = selected.find(p => p.key === key);
-            return (
-              <div
-                key={key + i}
-                className={"ev-row ev-row-data "
-                  + (isSel ? "is-sel " : "")
-                  + (hovered === key ? "is-hov " : "")
-                  + (b.inBacktest ? "is-logged " : "")}
-                onMouseEnter={() => setHovered(key)}
-                onMouseLeave={() => setHovered(null)}
-                onClick={() => toggleBet(b)}
-                style={{ animationDelay: (i * 14) + "ms" }}
-                title={b.inBacktest ? "Already logged — won't be picked for new slips" : undefined}
-              >
-                <span className="ev-player">
-                  {b.inBacktest && <span className="ev-logged">LOGGED</span>}
-                  <span className="ev-player-n">{b.player}</span>
-                  {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>GD</span>}
-                </span>
-                <span><LeaguePill league={b.league} /></span>
-                <span className="ev-prop">{b.prop}</span>
-                <span className="ev-line">{b.line}</span>
-                <span className={"ev-side " + (b.side === "OVER" ? "is-over" : "is-under")}>{b.side}</span>
-                <span>
-                  <TruePct value={b.truePct} />
-                </span>
-                <span className="ev-books">
-                  {b.books.map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}
-                </span>
-                <span className="ev-time">{fmtGameTime(b.startTime)}</span>
-                <span className="ev-add">
-                  <span className={"ev-add-btn " + (isSel ? "is-sel" : "")}>{isSel ? "✓" : "+"}</span>
-                </span>
-              </div>
-            );
-          })}
-          {loadState === "ok" && bets.length === 0 && (
-            <div className="ev-row" style={{ display: "block", textAlign: "center", padding: "40px 18px", color: "var(--text-3)", fontSize: 13 }}>
-              {showGreenDevils ? "No green devils available right now." : "No bets match your filters."}
-            </div>
-          )}
-        </div>
-
-      </div>
-
-      {/* Slip Builder */}
-      <aside className={"ev-slip " + (slipOpen ? "is-open" : "")}>
+  // Slip-builder body, shared by the desktop sidebar and the mobile dropdown
+  // (rendered in two places, CSS decides which is visible). It closes over all
+  // state directly, so both copies stay in sync automatically.
+  const slipBody = (
+    <React.Fragment>
         <div className="ev-slip-hd">
           <h3>Slip Builder</h3>
           <label className="ev-auto">
@@ -599,10 +473,7 @@ function EVPage() {
               <div className="ev-sum-row">
                 <span>Expected value</span>
                 {/* Slip-level EV% per 1u stake (Power all-hit×payout−1, Flex
-                 * Poisson-binomial), matching the Backtest tab. The old row
-                 * subtracted the PER-LEG break-even from the slip-level all-hit
-                 * probability — dimensionally wrong, so it read negative on
-                 * genuinely +EV slips. */}
+                 * Poisson-binomial), matching the Backtest tab. */}
                 <b className={ev != null && ev >= 0 ? "ev-edge" : ""}
                    style={ev != null && ev < 0 ? { color: "#FCA5A5" } : undefined}>
                   {ev == null ? "—" : (ev >= 0 ? "+" : "") + ev.toFixed(2) + "%"}
@@ -619,6 +490,151 @@ function EVPage() {
         >
           {saving ? "Saving…" : (selected.length < 2 ? "Add 2+ legs" : selected.length > 6 ? "Max 6 legs" : "Save slip")}
         </button>
+    </React.Fragment>
+  );
+
+  return (
+    <main className="ev">
+      <div className="ev-main">
+        {/* Filter bar */}
+        <div className="ev-filters">
+          <div className="ev-filter">
+            <label>League</label>
+            <div className="ev-chips">
+              {["All", "NBA", "WNBA", "NHL", "MLB", "NFL"].map(l => (
+                <button key={l} className={"ev-chip " + (league === l ? "is-on" : "")} onClick={() => setLeague(l)}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div className="ev-filter ev-filter-grow">
+            <label>Prop type</label>
+            <input className="cp-input cp-input-sm" placeholder="Rebounds, Points, Hits Allowed…" value={propQ} onChange={e => setPropQ(e.target.value)} />
+          </div>
+          <div className="ev-filter">
+            <label>Min True %</label>
+            <div className="ev-stepper">
+              <button onClick={() => setMinOdds(v => Math.max(50, v - 1))}>−</button>
+              <span>{minOdds}</span>
+              <button onClick={() => setMinOdds(v => Math.min(80, v + 1))}>+</button>
+            </div>
+          </div>
+          <div className="ev-filter">
+            <label>Side</label>
+            <div className="ev-chips">
+              {["Both", "Over", "Under"].map(s => (
+                <button key={s} className={"ev-chip " + (side === s ? "is-on" : "")} onClick={() => setSide(s)}>{s}</button>
+              ))}
+            </div>
+          </div>
+          <div className="ev-filter">
+            <label>Green Devils</label>
+            <button
+              type="button"
+              className={"ev-chip " + (showGreenDevils ? "is-on" : "")}
+              onClick={() => setShowGreenDevils(v => !v)}
+              title="Green devils are PrizePicks goblins — discounted, higher-hit-rate lines. Toggle to see the safest 'just need to win' picks, ranked by hit probability."
+              style={showGreenDevils
+                ? { background: "#16a34a", borderColor: "#16a34a", color: "#fff" }
+                : { borderColor: "#16a34a", color: "#22c55e" }}
+            >{showGreenDevils ? "On" : "Off"}{greenDevilCount ? ` · ${greenDevilCount}` : ""}</button>
+          </div>
+          <button className="ev-clear" onClick={() => { setLeague("All"); setPropQ(""); setMinOdds(50); setSide("Both"); }}>Clear</button>
+          {/* Mobile-only: a full-width grey bar at the bottom of the config
+              tile that reveals/hides the slip builder (hidden by default). The
+              panel drops out directly beneath it, connected to the tile. */}
+          <button
+            type="button"
+            className={"ev-slip-toggle " + (slipOpen ? "is-on" : "")}
+            onClick={() => setSlipOpen(v => !v)}
+            aria-expanded={slipOpen}
+          >
+            Slip Builder{selected.length ? ` · ${selected.length}` : ""}
+            <span className={"ev-slip-toggle-caret " + (slipOpen ? "is-open" : "")}>▾</span>
+          </button>
+        </div>
+
+        {/* Mobile slip-builder dropdown: rendered immediately after the config
+            tile so it appears to fall out of it. Hidden on desktop (the sidebar
+            aside shows instead) and until the toggle is opened. */}
+        <div className={"ev-slip ev-slip-mobile " + (slipOpen ? "is-open" : "")}>
+          {slipBody}
+        </div>
+
+        <div className="ev-meta">
+          <span><b>{bets.length}</b> {showGreenDevils ? "green devils" : "bets"}</span>
+          <span className="ev-meta-dot">·</span>
+          <span>
+            {loadState === "loading" && "Loading…"}
+            {loadState === "ok" && <>Updated <em className="ev-pulse">live</em></>}
+            {loadState === "error" && <span style={{color:"#FCA5A5"}}>Error: {errMsg}</span>}
+          </span>
+          <span className="ev-meta-pag">{bets.length} of {allBets.length}</span>
+        </div>
+
+        {/* Table */}
+        <div className="ev-table">
+          <div className="ev-row ev-row-hd">
+            <span>PLAYER</span>
+            <span>LEAGUE</span>
+            <span>PROP</span>
+            <span>LINE</span>
+            <span>SIDE</span>
+            <span className="ev-th-sort">TRUE % <span className="ev-arrow">↓</span></span>
+            <span>BOOK ODDS</span>
+            <span>GAME</span>
+            <span></span>
+          </div>
+          {bets.map((b, i) => {
+            const key = b.id || (b.player + b.prop + b.line);
+            const isSel = selected.find(p => p.key === key);
+            return (
+              <div
+                key={key + i}
+                className={"ev-row ev-row-data "
+                  + (isSel ? "is-sel " : "")
+                  + (hovered === key ? "is-hov " : "")
+                  + (b.inBacktest ? "is-logged " : "")}
+                onMouseEnter={() => setHovered(key)}
+                onMouseLeave={() => setHovered(null)}
+                onClick={() => toggleBet(b)}
+                style={{ animationDelay: (i * 14) + "ms" }}
+                title={b.inBacktest ? "Already logged — won't be picked for new slips" : undefined}
+              >
+                <span className="ev-player">
+                  {b.inBacktest && <span className="ev-logged">LOGGED</span>}
+                  <span className="ev-player-n">{b.player}</span>
+                  {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>GD</span>}
+                </span>
+                <span><LeaguePill league={b.league} /></span>
+                <span className="ev-prop">{b.prop}</span>
+                <span className="ev-line">{b.line}</span>
+                <span className={"ev-side " + (b.side === "OVER" ? "is-over" : "is-under")}>{b.side}</span>
+                <span>
+                  <TruePct value={b.truePct} />
+                </span>
+                <span className="ev-books">
+                  {b.books.map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}
+                </span>
+                <span className="ev-time">{fmtGameTime(b.startTime)}</span>
+                <span className="ev-add">
+                  <span className={"ev-add-btn " + (isSel ? "is-sel" : "")}>{isSel ? "✓" : "+"}</span>
+                </span>
+              </div>
+            );
+          })}
+          {loadState === "ok" && bets.length === 0 && (
+            <div className="ev-row" style={{ display: "block", textAlign: "center", padding: "40px 18px", color: "var(--text-3)", fontSize: 13 }}>
+              {showGreenDevils ? "No green devils available right now." : "No bets match your filters."}
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      {/* Slip Builder — desktop sidebar (always visible on wide screens; the
+          mobile copy lives inside .ev-main, right under the config tile). */}
+      <aside className="ev-slip ev-slip-desktop">
+        {slipBody}
       </aside>
     </main>
   );

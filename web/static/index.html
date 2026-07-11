@@ -456,12 +456,19 @@ body::before{
 .ev-stepper span{padding:0 12px;font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text)}
 .ev-clear{margin-left:auto;background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:9px 16px;border-radius:8px;font-size:13px;cursor:default;align-self:flex-end}
 .ev-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#FCA5A5}
-/* Slip Builder toggle — desktop hides it (the aside is always visible there);
- * shown only on narrow screens by the mobile block at the end of the sheet. */
-.ev-slip-toggle{display:none;align-self:flex-end;align-items:center;gap:7px;background:var(--primary);border:1px solid var(--primary);color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
-.ev-slip-toggle.is-on{background:#4f46e5}
+/* Slip Builder toggle — desktop hides it (the sidebar aside is always visible
+ * there). On mobile (block at the end of the sheet) it becomes a full-width
+ * grey bar at the bottom of the config tile. */
+.ev-slip-toggle{display:none;justify-content:center;align-items:center;gap:8px;background:#1b1b26;border:1px solid var(--hair-2);color:var(--text);font-size:13px;font-weight:600;cursor:pointer}
+.ev-slip-toggle:hover{background:#20202c}
+.ev-slip-toggle.is-on{background:#20202c;color:var(--primary-2)}
 .ev-slip-toggle-caret{font-size:10px;transition:transform .15s ease}
 .ev-slip-toggle-caret.is-open{transform:rotate(180deg)}
+/* The mobile slip dropdown is hidden everywhere by default; the mobile media
+ * block reveals .is-open. On desktop it never shows (the sidebar handles it).
+ * Two-class selector so it beats the later single-class `.ev-slip{display:flex}`
+ * base rule, which the panel also carries. */
+.ev-slip.ev-slip-mobile{display:none}
 
 .ev-meta{display:flex;align-items:center;gap:8px;padding:0 6px 14px;color:var(--text-3);font-size:13px}
 .ev-meta b{color:var(--text)}
@@ -1159,15 +1166,48 @@ body::before{
 @media (max-width:900px){
   .ev{grid-template-columns:1fr}
   .ev-main{padding-bottom:32px}
-  /* Slip builder is hidden by default on mobile and revealed by the
-   * "Slip Builder" toggle in the filter bar (.ev-slip.is-open). When open it
-   * flows below the table as a static panel instead of a pinned sidebar. */
-  .ev-slip-toggle{display:inline-flex}
-  .ev-slip{display:none}
-  .ev-slip.is-open{
-    display:flex;position:static;height:auto;
-    border-left:0;border-top:1px solid var(--hair);
+
+  /* Desktop sidebar is gone on mobile; the slip builder lives in a dropdown
+   * that falls out of the config tile instead. Two-class selector to beat the
+   * base `.ev-slip{display:flex}`. */
+  .ev-slip.ev-slip-desktop{display:none}
+
+  /* Slip Builder toggle: a full-width grey bar pinned to the BOTTOM of the
+   * config tile, centered, below the Clear button. `order:1` forces it after
+   * every filter field regardless of wrap order; the negative margins let it
+   * span the tile edge-to-edge and sit flush on the tile's bottom border so it
+   * reads as part of the tile. Squared bottom corners when open so the panel
+   * below looks continuous. */
+  /* Fixed 16px side padding so the toggle's negative margin can span exactly
+   * to the tile edges. */
+  .ev-filters{padding:16px 16px 0}
+  .ev-slip-toggle{
+    display:flex;order:1;box-sizing:border-box;
+    /* basis = full content width + the tile's 16px padding on each side, so
+     * the negative margins bleed it flush to the tile edges (own row). */
+    flex:0 0 calc(100% + 32px);width:calc(100% + 32px);
+    margin:4px -16px 0;
+    padding:13px 16px;border-radius:0 0 13px 13px;
+    border-left:0;border-right:0;border-bottom:0;
+    border-top:1px solid var(--hair);
   }
+  .ev-slip-toggle.is-on{border-radius:0}
+
+  /* The dropdown: rendered right after .ev-filters, pulled up flush against it
+   * (negative top margin over the tile's 14px bottom gap) so it looks like it
+   * fell out of the config tile. Same surface + side borders as the tile,
+   * squared top corners, rounded bottom. Hidden until .is-open. */
+  .ev-slip.ev-slip-mobile{
+    display:none;margin:-14px 0 14px;position:static;height:auto;
+    background:linear-gradient(180deg,#13131c,#0e0e16);
+    border:1px solid var(--hair);border-top:0;
+    border-radius:0 0 14px 14px;
+    padding:16px 18px 18px;flex-direction:column;gap:14px;
+    animation:evSlipDrop .22s ease both;
+  }
+  .ev-slip.ev-slip-mobile.is-open{display:flex}
+  @keyframes evSlipDrop{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+
   /* The 9-column row grid can't fit a phone, and .ev-table clips overflow —
    * which previously hid the rightmost "+" add-to-slip button entirely,
    * making the slip builder unusable on mobile. Let the table scroll
