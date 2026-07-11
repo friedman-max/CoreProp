@@ -86,8 +86,8 @@ def test_side_bias_applied_per_table():
 
 
 def test_side_bias_unknown_league_neutral():
-    """Leagues without a fitted bias entry (e.g. SOCCER) pass through raw."""
-    b = _bet(0.55, side="over", league="SOCCER")
+    """Leagues without a fitted bias entry (e.g. NCAAB) pass through raw."""
+    b = _bet(0.55, side="over", league="NCAAB")
     assert b.true_prob == pytest.approx(0.55)
 
 

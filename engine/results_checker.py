@@ -23,13 +23,6 @@ ESPN_SCOREBOARD = {
     "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard",
     "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard",
     "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
-    # 2026 FIFA World Cup. ESPN's free feed carries it under the soccer
-    # league code "fifa.world". Confirmed live: scoreboard returns the
-    # tournament events; the summary's `rosters[].roster[].stats[]` block
-    # exposes per-player totalShots / shotsOnTarget / foulsCommitted /
-    # saves / goalAssists / totalGoals. It does NOT expose tackles or key
-    # passes ("Shots Assisted") — those props stay pending (see _compute_stat).
-    "SOCCER": "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard",
 }
 
 # ESPN event summary (for box scores)
@@ -39,7 +32,6 @@ ESPN_SUMMARY = {
     "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/summary",
     "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary",
     "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary",
-    "SOCCER": "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary",
 }
 
 # Conservative estimate of how long after game_start a result can be fetched
@@ -49,37 +41,9 @@ GAME_DURATION_MINUTES = {
     "NCAAB": 150,   # 2.5 h
     "MLB":   225,   # 3.75 h
     "NHL":   180,   # 3 h
-    "SOCCER": 150,  # 2.5 h — 90' + halftime + stoppage + post-match buffer
 }
 
 FUZZY_THRESHOLD = 80   # Strict threshold for name matching
-
-# Soccer props CoreProp can actually grade. ESPN's free World Cup feed
-# exposes the first set; tackles + shots-assisted (key passes) only resolve
-# when the API-Football fallback is configured (config.API_FOOTBALL_KEY).
-# The auto-backtest worker consults soccer_prop_scoreable() so it never logs
-# a soccer leg that can never resolve (which is what left 45 legs stranded).
-ESPN_SOCCER_PROPS = frozenset({
-    "Shots", "Shots On Target", "Shots on Target", "Fouls",
-    "Goalie Saves", "Saves", "Goals", "Assists", "Offsides",
-})
-APIFOOTBALL_ONLY_SOCCER_PROPS = frozenset({"Tackles", "Shots Assisted"})
-
-
-def soccer_prop_scoreable(prop: str) -> bool:
-    """True if a soccer prop can be resolved by some configured source.
-
-    ESPN props are always scoreable. Tackles / Shots Assisted are scoreable
-    only when the API-Football fallback key is set."""
-    if prop in ESPN_SOCCER_PROPS:
-        return True
-    if prop in APIFOOTBALL_ONLY_SOCCER_PROPS:
-        try:
-            from config import API_FOOTBALL_KEY
-            return bool(API_FOOTBALL_KEY)
-        except Exception:
-            return False
-    return False
 
 # Suffixes that should be stripped before comparing last names. ESPN often
 # omits "Jr."/"Sr."/"III" while PrizePicks includes them (or vice versa).
@@ -241,12 +205,6 @@ class ESPNResultsChecker:
                 if gl_stats is not None:
                     actual = self._compute_stat(gl_stats, prop_type, league)
 
-            # Soccer gap fallback: ESPN's WC feed lacks Tackles / Shots
-            # Assisted. When configured (API_FOOTBALL_KEY), consult
-            # API-Football for those specific props only.
-            if actual is None and league == "SOCCER" and prop_type in APIFOOTBALL_ONLY_SOCCER_PROPS:
-                actual = self._apifootball_gap(player_name, gs, prop_type)
-
             if actual is None:
                 # If the game ended over 6 hours ago and we still can't find
                 # the player, they almost certainly didn't play (DNP/injury).
@@ -384,9 +342,6 @@ class ESPNResultsChecker:
                 if gl_stats is not None:
                     actual = self._compute_stat(gl_stats, prop_type, league)
 
-            if actual is None and league == "SOCCER" and prop_type in APIFOOTBALL_ONLY_SOCCER_PROPS:
-                actual = self._apifootball_gap(player_name, gs, prop_type)
-
             if actual is None:
                 hours_since_end = (now_utc - likely_end).total_seconds() / 3600
                 is_completed = self._is_game_over(league, gs)
@@ -463,19 +418,6 @@ class ESPNResultsChecker:
                     row.get("id"), restore_exc,
                 )
             raise
-
-    @staticmethod
-    def _apifootball_gap(player_name: str, game_start: datetime, prop_type: str) -> Optional[float]:
-        """Resolve a soccer prop ESPN can't (Tackles / Shots Assisted) via the
-        API-Football fallback. Returns None when the key is unset or the lookup
-        fails — the leg then stays pending, never errors the run."""
-        try:
-            from engine.apifootball import score_soccer_gap
-            return score_soccer_gap(player_name, game_start, prop_type)
-        except Exception as exc:
-            logger.warning("API-Football gap lookup failed for %s/%s: %s",
-                           player_name, prop_type, exc)
-            return None
 
     def _get_player_stats(
         self, league: str, game_start: datetime, player_name: str
@@ -581,44 +523,6 @@ class ESPNResultsChecker:
         """
         result: dict = {}
 
-        # ── Soccer (World Cup) ──────────────────────────────────────────
-        # ESPN soccer puts per-player stats under rosters[].roster[].stats[]
-        # as {name, abbreviation, displayValue} — a different shape from the
-        # basketball/baseball boxscore.players table. Detect it by the
-        # presence of `rosters` with no usable boxscore.players, and parse
-        # each stat under BOTH its long name and its abbreviation so the
-        # _compute_stat aliases can find it (totalShots/SHOT, etc.).
-        bx = summary.get("boxscore", {}) or {}
-        has_box_players = any(
-            sec.get("statistics") for sec in (bx.get("players") or [])
-        )
-        rosters = summary.get("rosters") or []
-        if rosters and not has_box_players:
-            for team in rosters:
-                for p in team.get("roster", []) or []:
-                    ath = p.get("athlete", {}) or {}
-                    display = ath.get("displayName", "")
-                    stats = p.get("stats", []) or []
-                    if not display or not stats:
-                        continue
-                    sd: dict = {}
-                    for st in stats:
-                        val = st.get("displayValue")
-                        if val is None:
-                            continue
-                        nm = (st.get("name") or "").lower()
-                        ab = (st.get("abbreviation") or "").lower()
-                        if nm:
-                            sd[nm] = val
-                        if ab:
-                            sd[ab] = val
-                    dl = display.lower()
-                    if dl in result:
-                        result[dl].update(sd)
-                    else:
-                        result[dl] = sd
-            return result
-
         # athlete_id → player_name_lower (for enriching from plays)
         athlete_id_to_name: dict[str, str] = {}
         # Track which players appeared as MLB batters so we can default their
@@ -718,30 +622,6 @@ class ESPNResultsChecker:
                         return float(sval.split("-")[0])
                     except (ValueError, IndexError):
                         continue
-            return None
-
-        # ── Soccer (World Cup) ──────────────────────────────────
-        # Gated on league so "Goals"/"Assists"/"Saves" don't collide with the
-        # NHL/NBA handlers below. ESPN exposes these under both long name and
-        # abbreviation (parsed in _parse_box_score). Props ESPN does NOT carry
-        # — Tackles and Shots Assisted (key passes) — fall through to None and
-        # stay pending rather than grade on a stat we don't have.
-        if league == "SOCCER":
-            if prop_type == "Shots":
-                return _num("totalshots", "shot")
-            if prop_type in ("Shots On Target", "Shots on Target"):
-                return _num("shotsontarget", "sog")
-            if prop_type == "Fouls":
-                return _num("foulscommitted", "fc")
-            if prop_type in ("Goalie Saves", "Saves"):
-                return _num("saves", "sv")
-            if prop_type == "Goals":
-                return _num("totalgoals", "g")
-            if prop_type == "Assists":
-                return _num("goalassists", "a")
-            if prop_type == "Offsides":
-                return _num("offsides", "of")
-            # Tackles, Shots Assisted, etc. — not in ESPN's free WC feed.
             return None
 
         # ── Basketball ──────────────────────────────────────────

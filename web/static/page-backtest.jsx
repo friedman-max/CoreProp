@@ -315,7 +315,6 @@ function BacktestPage() {
           <select value={resultFilter} onChange={e => { setResultFilter(e.target.value); setPage(1); }}>
             <option value="">All</option><option value="pending">Pending</option>
             <option value="hit">Hit</option><option value="miss">Miss</option>
-            <option value="push">Push</option><option value="dnp">DNP</option>
           </select>
         </label>
         <label className="bd-f"><span>League</span>

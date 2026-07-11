@@ -47,6 +47,42 @@ function slipEvPct(slipTypeRaw, legs) {
   return (expected - 1) * 100;
 }
 
+// Per-leg break-even % for an n-leg slip of a given type, DERIVED from the
+// payout tables above (not a hand-typed table that drifts out of sync).
+//   Power: every leg must hit, so E[payout] = p^n · payout(n). Break-even is
+//          p = (1/payout)^(1/n)  → closed form.
+//   Flex:  partial payouts, so E[payout](p) is monotincreasing in p; bisect
+//          for the p where the Poisson-binomial expected payout == 1.
+// Matches engine/constants.py BREAK_EVEN exactly (e.g. Power 2 = 57.74%,
+// Power 4 = 56.23%, Flex 5 = 54.25%). Returns a percentage (0–100).
+function slipBreakEvenPct(slipTypeRaw, n) {
+  const slipType = String(slipTypeRaw || "power").toLowerCase();
+  if (!n || n < 2) return null;
+  if (slipType === "power" || n === 2) {
+    const pay = EV_POWER_PAYOUTS[n];
+    if (!pay) return null;
+    return Math.pow(1 / pay, 1 / n) * 100;
+  }
+  const table = EV_FLEX_PAYOUTS[n];
+  if (!table) return null;
+  const evAt = (p) => {
+    // Expected payout for n independent legs each at prob p (Poisson-binomial
+    // collapses to the binomial when every leg shares the same p).
+    let dist = [1];
+    for (let i = 0; i < n; i++) {
+      const nx = new Array(dist.length + 1).fill(0);
+      for (let k = 0; k < dist.length; k++) { nx[k] += dist[k] * (1 - p); nx[k + 1] += dist[k] * p; }
+      dist = nx;
+    }
+    let e = 0;
+    for (let k = 0; k < dist.length; k++) e += dist[k] * (table[k] || 0);
+    return e;
+  };
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; if (evAt(mid) < 1) lo = mid; else hi = mid; }
+  return ((lo + hi) / 2) * 100;
+}
+
 function EVPage() {
   const [league, setLeague] = useState("All");
   const [propQ, setPropQ] = useState("");
@@ -56,6 +92,10 @@ function EVPage() {
   const [legs, setLegs] = useState(6);
   const [selected, setSelected] = useState([]);
   const [hovered, setHovered] = useState(null);
+  // Mobile-only: the slip builder is hidden by default and revealed via a
+  // "Slip Builder" toggle in the filter bar. On desktop the aside is always
+  // shown (the class is a no-op there — see the .ev-slip mobile CSS).
+  const [slipOpen, setSlipOpen] = useState(false);
   const [allBets, setAllBets] = useState([]);
   const [loadState, setLoadState] = useState("loading"); // loading | ok | error
   const [errMsg, setErrMsg] = useState("");
@@ -306,9 +346,11 @@ function EVPage() {
   };
 
   const slipBE = useMemoE(() => {
-    // Break-even depending on slip type & legs (illustrative)
-    const table = { Power: { 2: 60.0, 3: 56.0, 4: 54.5, 5: 54.2, 6: 54.07, 7: 54.0 }, Flex: { 2: 50, 3: 48, 4: 46, 5: 45, 6: 44, 7: 43 } };
-    return (table[slipType] && table[slipType][legs]) || 54.07;
+    // Real per-leg break-even from the payout tables. PrizePicks caps slips at
+    // 6 legs (no 7-leg payout), so a 7-leg selection uses the 6-leg BE.
+    const n = Math.min(6, Math.max(2, legs));
+    const be = slipBreakEvenPct(slipType, n);
+    return be == null ? 54.07 : be;
   }, [slipType, legs]);
 
   return (
@@ -357,6 +399,16 @@ function EVPage() {
             >{showGreenDevils ? "On" : "Off"}{greenDevilCount ? ` · ${greenDevilCount}` : ""}</button>
           </div>
           <button className="ev-clear" onClick={() => { setLeague("All"); setPropQ(""); setMinOdds(50); setSide("Both"); }}>Clear</button>
+          {/* Mobile-only: reveal/hide the slip builder (hidden by default). */}
+          <button
+            type="button"
+            className={"ev-slip-toggle " + (slipOpen ? "is-on" : "")}
+            onClick={() => setSlipOpen(v => !v)}
+            aria-expanded={slipOpen}
+          >
+            Slip Builder{selected.length ? ` · ${selected.length}` : ""}
+            <span className={"ev-slip-toggle-caret " + (slipOpen ? "is-open" : "")}>▾</span>
+          </button>
         </div>
 
         <div className="ev-meta">
@@ -431,7 +483,7 @@ function EVPage() {
       </div>
 
       {/* Slip Builder */}
-      <aside className="ev-slip">
+      <aside className={"ev-slip " + (slipOpen ? "is-open" : "")}>
         <div className="ev-slip-hd">
           <h3>Slip Builder</h3>
           <label className="ev-auto">

@@ -493,41 +493,6 @@ def devig_single_sided_scaled(american: int | float) -> float:
     return implied / (1.0 + vig)
 
 
-# Vig that a single-sided FAVORITE milestone carries. The longshot model
-# above only adds hold for implied < 0.5, so a -500 "1+ shots" over devigs
-# to ~0.79 with just the 5% base removed — but one-way milestone markets
-# carry a fat hold on the heavy side too. This is the bias the 2026-06-14
-# soccer audit flagged. The favorite-aware variant below applies the hold
-# symmetrically: distance is measured from 0.5 in EITHER direction.
-_FAVORITE_SLOPE = 0.20  # steeper than the longshot slope — heavy milestone
-                        # favorites hide more hold than symmetric longshots
-
-
-def devig_single_sided_favorite_aware(american: int | float) -> float:
-    """Single-sided de-vig that corrects FAVORITES as well as longshots.
-
-    `devig_single_sided_scaled` only removes extra hold below 0.5, so it
-    leaves favorite milestones biased HIGH. This variant scales the assumed
-    vig with distance from 0.5 in both directions, with a steeper slope on
-    the favorite side:
-
-        implied 0.50  -> ~5% hold
-        implied 0.20  -> ~9.5% hold   (longshot, same as scaled)
-        implied 0.80  -> ~11% hold    (favorite — scaled gave only 5%)
-        implied 0.91  -> ~13% hold
-
-    Heuristic, not calibrated to a two-sided market (single-sided props
-    don't expose one) — but directionally correct where the old model was
-    flatly wrong. Used only by the SOCCER single-sided anchor path.
-    """
-    implied = american_to_implied(american)
-    if implied >= 0.50:
-        vig = _BASE_VIG + _FAVORITE_SLOPE * (implied - 0.50)
-    else:
-        vig = _BASE_VIG + _LONGSHOT_SLOPE * (0.50 - implied)
-    return implied / (1.0 + vig)
-
-
 def devig_single_sided(american: int | float) -> float:
     """
     Legacy single-sided de-vig.  Kept as a compatibility shim that now

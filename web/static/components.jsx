@@ -209,7 +209,6 @@ function LeaguePill({ league }) {
     MLB:  "#34D399",
     WNBA: "#C084FC",
     NFL:  "#FBBF24",
-    SOCCER: "#10B981",
   };
   return <span className="cp-league" style={{ color: colors[league] || "#9CA3AF" }}>{league}</span>;
 }

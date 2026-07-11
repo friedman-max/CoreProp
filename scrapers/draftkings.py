@@ -108,26 +108,6 @@ LEAGUE_CONFIG = {
             "Pts+Rebs+Asts": "16483",
         }
     },
-    # Soccer / World Cup. eventGroupId 209533 = DK "World Cup 2026" (soccer,
-    # sportId 1), verified live 2026-06-14. The subcategory ids below are the
-    # event-level player-prop categories for the WC (also verified live).
-    # NOTE: DK prices these as single-sided "N+" milestone ladders (e.g.
-    # "Haaland Shots: 3+ / 4+ / 5+"), NOT two-sided over/unders — so like
-    # FanDuel they're display/consensus only and do not provide a two-sided
-    # anchor for the sharp engine. If DK rotates the WC eventGroupId, re-pull
-    # it from the page state (key "eventGroupName":"World Cup 2026").
-    "SOCCER": {
-        "id": "209533",
-        "subcategories": {
-            "Player Shots":     "16868",
-            "Player Assists":   "16863",
-            "Tackles":          "18345",
-            "Saves":            "18346",
-            "Fouls Committed":  "18348",
-            "Offsides":         "18351",
-            "Goalscorer":       "16604",
-        }
-    },
 }
 
 # ---------------------------------------------------------------------------
@@ -185,15 +165,6 @@ SUBCAT_TO_PROP_TYPE = {
         "Saves":            "Saves",
         "Power Play Points": "Power Play Points",
         "60 Mins Props":    "1st Period Goals",
-    },
-    "SOCCER": {
-        "Player Shots":     "Shots",
-        "Player Assists":   "Assists",
-        "Tackles":          "Tackles",
-        "Saves":            "Goalie Saves",
-        "Fouls Committed":  "Fouls",
-        "Offsides":         "Offsides",
-        "Goalscorer":       "Goals",
     },
     "NCAAB": {
         "Points":           "Points",

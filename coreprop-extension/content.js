@@ -460,7 +460,6 @@ const LEAGUE_TAB_LABELS = {
   MLB:    ["MLB"],
   NHL:    ["NHL"],
   NCAAB:  ["NCAAB", "CBB"],
-  SOCCER: ["SOCCER", "WORLD CUP", "WORLDCUP"],   // PP labels World Cup props as their own tab
 };
 
 async function scrollToTop() {

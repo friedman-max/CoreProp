@@ -210,28 +210,4 @@ PROP_TYPE_MAP = {
         "power play points":             "Power Play Points",
         "1st period goals":              "1st Period Goals",
     },
-    # Soccer / World Cup. Values MUST match PrizePicks stat_type labels exactly
-    # (verified live against PP league 241 "WORLD CUP"). Keys are the lowercased
-    # book/PP labels we normalize FROM. "saves" intentionally lives ONLY under
-    # SOCCER here → "Goalie Saves" (NHL "saves" → "Saves" is a different key in
-    # its own nested map), so the league-aware lookup can't collide.
-    "SOCCER": {
-        "shots on target":               "Shots On Target",
-        "sot":                           "Shots On Target",
-        "shots":                         "Shots",
-        "goals":                         "Goals",
-        "anytime goalscorer":            "Goals",
-        "to score":                      "Goals",
-        "assists":                       "Assists",
-        "shots assisted":                "Shots Assisted",
-        "passes":                        "Passes Attempted",
-        "passes attempted":              "Passes Attempted",
-        "tackles":                       "Tackles",
-        "crosses":                       "Crosses",
-        "clearances":                    "Clearances",
-        "saves":                         "Goalie Saves",
-        "goalkeeper saves":              "Goalie Saves",
-        "goalie saves":                  "Goalie Saves",
-        "attempted dribbles":            "Attempted Dribbles",
-    },
 }

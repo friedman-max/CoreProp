@@ -1088,15 +1088,11 @@ def _run_pipeline_body():
                         min_prob = user_min
                     else:
                         min_prob = max(cfg.DEFAULT_LEG_THRESHOLD, cfg.AUTO_SLIP_MIN_PROB_FLOOR)
-                    from engine.results_checker import soccer_prop_scoreable
+                    from engine.constants import is_excluded_league
 
                     def _scoreable(b):
-                        # Never auto-log a leg we can't resolve. Soccer is
-                        # deferred in v1, but guard anyway so a stray
-                        # un-scoreable soccer prop can't strand as pending.
-                        if (b.get("league") or "").upper() != "SOCCER":
-                            return True
-                        return soccer_prop_scoreable(b.get("prop_type") or b.get("prop") or "")
+                        # Never auto-log a leg from a league we can't resolve.
+                        return not is_excluded_league(b.get("league"))
 
                     def _cell_ok(b):
                         # FINDINGS change A: never log the four (league, side)

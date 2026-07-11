@@ -456,6 +456,12 @@ body::before{
 .ev-stepper span{padding:0 12px;font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text)}
 .ev-clear{margin-left:auto;background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:9px 16px;border-radius:8px;font-size:13px;cursor:default;align-self:flex-end}
 .ev-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#FCA5A5}
+/* Slip Builder toggle — desktop hides it (the aside is always visible there);
+ * shown only on narrow screens by the mobile block at the end of the sheet. */
+.ev-slip-toggle{display:none;align-self:flex-end;align-items:center;gap:7px;background:var(--primary);border:1px solid var(--primary);color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+.ev-slip-toggle.is-on{background:#4f46e5}
+.ev-slip-toggle-caret{font-size:10px;transition:transform .15s ease}
+.ev-slip-toggle-caret.is-open{transform:rotate(180deg)}
 
 .ev-meta{display:flex;align-items:center;gap:8px;padding:0 6px 14px;color:var(--text-3);font-size:13px}
 .ev-meta b{color:var(--text)}
@@ -692,10 +698,14 @@ body::before{
 .bd-f input:focus,.bd-f select:focus{border-color:var(--primary)}
 .bd-f-grow{flex:1;min-width:160px}
 .bd-f-grow input{width:100%}
-.bd-clear{background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:8px 14px;border-radius:8px;font-size:13px;cursor:default;align-self:flex-end}
+/* Clear sits with the "# lines" badge and the pager on the right of the filter
+ * bar. All three are vertically centered (align-self:center) and the same
+ * height so they line up on one row; `margin-left:auto` on Clear pushes the
+ * whole cluster to the right edge, past the left-aligned filter fields. */
+.bd-clear{background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:0 14px;height:34px;border-radius:8px;font-size:13px;cursor:default;align-self:center;margin-left:auto;display:inline-flex;align-items:center}
 .bd-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#FCA5A5}
-.bd-badge{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--text-2);background:rgba(99,102,241,.10);border:1px solid rgba(99,102,241,.25);padding:6px 12px;border-radius:999px;align-self:center;margin-left:auto}
-.bd-pag{display:inline-flex;align-items:center;gap:4px;align-self:center}
+.bd-badge{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--text-2);background:rgba(99,102,241,.10);border:1px solid rgba(99,102,241,.25);padding:0 12px;height:34px;border-radius:999px;align-self:center;display:inline-flex;align-items:center}
+.bd-pag{display:inline-flex;align-items:center;gap:4px;align-self:center;height:34px}
 .bd-pag-btn{background:#0a0a12;border:1px solid var(--hair);color:var(--text);width:28px;height:28px;border-radius:6px;cursor:default;font-size:14px}
 .bd-pag-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary-2)}
 .bd-pag-btn:disabled{opacity:.3}
@@ -1149,8 +1159,13 @@ body::before{
 @media (max-width:900px){
   .ev{grid-template-columns:1fr}
   .ev-main{padding-bottom:32px}
-  .ev-slip{
-    position:static;height:auto;
+  /* Slip builder is hidden by default on mobile and revealed by the
+   * "Slip Builder" toggle in the filter bar (.ev-slip.is-open). When open it
+   * flows below the table as a static panel instead of a pinned sidebar. */
+  .ev-slip-toggle{display:inline-flex}
+  .ev-slip{display:none}
+  .ev-slip.is-open{
+    display:flex;position:static;height:auto;
     border-left:0;border-top:1px solid var(--hair);
   }
   /* The 9-column row grid can't fit a phone, and .ev-table clips overflow —

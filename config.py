@@ -21,13 +21,6 @@ ACTIVE_LEAGUES = {
     "MLB":   os.getenv("LEAGUE_MLB", "true").lower()   == "true",
     "NHL":   os.getenv("LEAGUE_NHL", "true").lower()   == "true",
     "NCAAB": os.getenv("LEAGUE_NCAAB", "true").lower() == "true",
-    # Soccer is DEFERRED in simplify-v1: its props are single-sided ("N+"
-    # milestone ladders) with no two-sided market, so conservative devig
-    # can't be trusted yet (this was the product's central failure mode).
-    # The scraper/parser/scoring code stays in the tree, dormant — set
-    # LEAGUE_SOCCER=true once a trustworthy single-sided decision path
-    # exists (v2). Defaulting OFF here is the whole "defer soccer" switch.
-    "SOCCER": os.getenv("LEAGUE_SOCCER", "false").lower() == "true",
 }
 
 # FanDuel URLs per league
@@ -46,11 +39,6 @@ PRIZEPICKS_LEAGUE_IDS = {
     "MLB":   2,
     "NHL":   8,
     "NCAAB": 20,   # PrizePicks calls this "CBB" (ID=20); 189 is a defunct alias that returns 0
-    # PrizePicks "WORLD CUP" league. The legacy "SOCCER" league (id=82) is now
-    # dormant (0 projections off-season); 241 is where the live 2026 World Cup
-    # player props are published. Re-point here if PP rotates the active soccer
-    # league (e.g. EPL=14, EUROCUP=287) — verify with /leagues before editing.
-    "SOCCER": 241,
 }
 
 # Fuzzy match threshold (0-100)
@@ -210,9 +198,3 @@ PORT = int(os.getenv("PORT", "8000"))
 # by the primary server on restart).
 DISABLE_AUTO_BACKTEST = os.getenv("DISABLE_AUTO_BACKTEST", "false").lower() in ("true", "1", "yes")
 DISABLE_PERSISTENCE   = os.getenv("DISABLE_PERSISTENCE",   "false").lower() in ("true", "1", "yes")
-
-# API-Football (api-sports.io) key. ESPN stays the primary soccer scorer;
-# this is consulted ONLY as a fallback for stats ESPN's free World Cup feed
-# doesn't expose — tackles and shots-assisted (key passes). Empty = fallback
-# disabled (those two props stay pending). Free tier: 100 req/day.
-API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "").strip()

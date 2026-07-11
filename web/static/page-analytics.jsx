@@ -373,9 +373,10 @@ function PnLChart({ series, onHover, hover }) {
   }
 
   // Find the REAL slip (not a synthetic axis anchor) the cursor is nearest to.
-  const onMove = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * (W / rect.width); // normalize to viewBox
+  // Resolve a clientX (from a mouse or touch point) to the nearest real slip
+  // and set it as the hovered point. Shared by pointer + touch handlers.
+  const hoverAtClientX = (clientX, rect) => {
+    const x = (clientX - rect.left) * (W / rect.width); // normalize to viewBox
     const ratio = Math.min(1, Math.max(0, (x - padL) / (W - padL - padR)));
     const tHover = tMin + ratio * tSpan;
     let best = -1, bestDt = Infinity;
@@ -387,6 +388,19 @@ function PnLChart({ series, onHover, hover }) {
     onHover(best >= 0 ? series[best] : null);
   };
 
+  const onMove = (e) => hoverAtClientX(e.clientX, e.currentTarget.getBoundingClientRect());
+
+  // Touch: drag a finger along the chart to scrub P&L over time. We do NOT call
+  // preventDefault here (React attaches touch listeners as passive, so it would
+  // throw); instead `touch-action:none` on the SVG stops the browser from
+  // treating the drag as a page scroll, which is what lets the scrub work.
+  const onTouch = (e) => {
+    const pt = e.touches && e.touches.length ? e.touches[0]
+             : (e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : null);
+    if (!pt) return;
+    hoverAtClientX(pt.clientX, e.currentTarget.getBoundingClientRect());
+  };
+
   const hoverIdx = hover ? series.findIndex(p => p.date.getTime() === hover.date.getTime() && p.pnl === hover.pnl) : -1;
 
   // Per-slip dot color: green if this slip won, red if it lost, yellow if push.
@@ -394,7 +408,10 @@ function PnLChart({ series, onHover, hover }) {
 
   return (
     <div ref={ref} className="pnl-chart">
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} onMouseMove={onMove} onMouseLeave={() => onHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
+           onMouseMove={onMove} onMouseLeave={() => onHover(null)}
+           onTouchStart={onTouch} onTouchMove={onTouch} onTouchEnd={() => onHover(null)}
+           style={{ touchAction: "none" }}>
         <defs>
           <linearGradient id="pnl-fill" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor={lineColor} stopOpacity="0.24" />

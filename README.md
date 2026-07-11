@@ -127,7 +127,7 @@ in `.env` or via the dashboard's preferences.
 | `REFRESH_INTERVAL_MINUTES` | `15` | Auto-refresh cadence |
 | `MIN_INDIVIDUAL_EV_PCT` | `0.01` | Per-leg edge threshold for the +EV view |
 | `SCRAPE_ALL_LEAGUES` | `false` | Override per-league flags |
-| `LEAGUE_NBA` / `_WNBA` / `_MLB` / `_NHL` / `_NCAAB` / `_SOCCER` | `true` | Per-league enable |
+| `LEAGUE_NBA` / `_WNBA` / `_MLB` / `_NHL` / `_NCAAB` | `true` | Per-league enable |
 
 Most user-facing settings (slip preferences, auto-backtest opt-in, EV
 threshold) live in the UI and persist per-account via Supabase.

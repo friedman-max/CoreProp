@@ -19,7 +19,7 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
     { icon: "back",   t: "Full backtester",               d: "Replay the model on any window. ROI, hit rate, and CLV broken out by sport and prop type." },
     { icon: "alert",  t: "Line movement + alerts",        d: "Track every steam move. Get pinged the moment a line moves into +EV territory." },
     { icon: "scan",   t: "Sportsbook screen",             d: "Scan every league, market, and book in one view. Filter by league, prop type, and min True %." },
-    { icon: "league", t: "All major leagues",             d: "NBA, NFL, MLB, NHL, WNBA, NCAA, soccer, tennis, and more. New markets added weekly." },
+    { icon: "league", t: "All major leagues",             d: "NBA, NFL, MLB, NHL, WNBA, NCAA, and more. New markets added weekly." },
     { icon: "refresh",t: "Auto refresh + LOGGED tags",    d: "Lines update every 30 seconds. Tag bets you have placed and we track CLV automatically." },
   ];
 

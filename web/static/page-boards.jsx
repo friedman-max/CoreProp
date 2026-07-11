@@ -9,7 +9,7 @@ function probToAmerican(p) {
   return Math.round(100 * (1 - p) / p);
 }
 
-const LEAGUE_ORDER = ["NBA", "WNBA", "NCAAB", "MLB", "NHL", "SOCCER"];
+const LEAGUE_ORDER = ["NBA", "WNBA", "NCAAB", "MLB", "NHL"];
 
 // True odds derived from true probability (fallback when server doesn't include it)
 function withTrueOdds(row) {

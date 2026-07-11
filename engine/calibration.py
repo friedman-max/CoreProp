@@ -83,8 +83,8 @@ def _load_resolved_rows(user_jwt: str) -> list[dict]:
         from engine.constants import is_excluded_league
         rows = []
         for r in _data:
-            # Skip legacy legs whose league has since been removed (e.g.
-            # soccer). Otherwise their resolved outcomes silently feed
+            # Skip legacy legs whose league has since been removed.
+            # Otherwise their resolved outcomes silently feed
             # the per-league calibration display.
             if is_excluded_league(r.get("league")):
                 continue
@@ -384,7 +384,7 @@ def evaluate_analytics(user_jwt: str) -> dict:
     rows: list[dict] = []
     resolved_legs_with_ts: list[dict] = []
     for leg in all_legs:
-        # Drop legs from excluded leagues (e.g. soccer) so historical
+        # Drop legs from excluded leagues so historical
         # rows can't surface in the per-league analytics breakdowns.
         if is_excluded_league(leg.get("league")):
             continue
