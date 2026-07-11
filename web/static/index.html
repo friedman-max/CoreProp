@@ -1169,6 +1169,18 @@ body::before{
   .bd-badge{margin-left:0}
   .bd-pag{margin-left:auto}
 }
+
+/* Mobile bezel parity: on phones/tablets the board & analytics tabs (Combined
+ * Lines, PrizePicks, Sportsbooks, Backtest, Analytics — all `.bd-page`) were
+ * far narrower than the +EV tab. `.bd-page` carries a desktop gutter cap
+ * (max-width: calc(100vw - 48px) + margin:0 auto = 24px each side) which, on
+ * top of its 22px padding, left a ~46px bezel — double the +EV page's ~22px.
+ * Below the point where the +EV layout collapses to one column, drop that cap
+ * so every tab fills the screen edge-to-edge with the same small bezel as +EV. */
+@media (max-width:900px){
+  .bd-page{max-width:none;margin:0;padding:18px 16px 60px}
+  .ev-main{padding:18px 16px 32px}
+}
 </style>
 </head>
 <body>
