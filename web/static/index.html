@@ -550,8 +550,20 @@ body::before{
 .ev-slip{position:sticky;top:65px;height:calc(100vh - 65px);background:linear-gradient(180deg,#13131c,#0e0e16);border-left:1px solid var(--hair);padding:20px 18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto}
 .ev-slip-hd{display:flex;justify-content:space-between;align-items:center}
 .ev-slip-hd h3{margin:0;font-size:15px;font-weight:700}
-.ev-auto{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3)}
-.ev-auto input{accent-color:var(--primary)}
+.ev-auto{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3);cursor:pointer;user-select:none}
+/* Custom themed checkbox: hide the native box, drive a styled .ev-check off its
+ * :checked state. Matches the accent (--primary) with a drawn checkmark; the
+ * green-devils variant (.ev-auto-gd) uses the green accent. */
+.ev-auto input{position:absolute;opacity:0;width:0;height:0;margin:0;pointer-events:none}
+.ev-check{width:16px;height:16px;flex-shrink:0;border:1.5px solid var(--hair-2);border-radius:5px;background:#0a0a12;position:relative;transition:background .15s,border-color .15s}
+.ev-check::after{content:"";position:absolute;left:4.5px;top:1.5px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);transform-origin:center;transition:transform .15s ease}
+.ev-auto input:checked ~ .ev-check{background:var(--primary);border-color:var(--primary)}
+.ev-auto input:checked ~ .ev-check::after{transform:rotate(45deg) scale(1)}
+.ev-auto:hover .ev-check{border-color:var(--primary-2)}
+.ev-auto input:focus-visible ~ .ev-check{box-shadow:0 0 0 3px var(--primary-hi)}
+.ev-auto-gd input:checked ~ .ev-check{background:#16a34a;border-color:#16a34a}
+.ev-auto-gd:hover .ev-check{border-color:#22c55e}
+.ev-auto-gd input:focus-visible ~ .ev-check{box-shadow:0 0 0 3px rgba(34,197,94,.25)}
 .ev-slip-row{display:grid;grid-template-columns:1fr .6fr;gap:8px}
 .ev-slip-field{display:flex;flex-direction:column;gap:5px}
 .ev-slip-field label{font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase}

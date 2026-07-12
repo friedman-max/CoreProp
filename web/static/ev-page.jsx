@@ -362,10 +362,12 @@ function EVPage() {
           <h3>Slip Builder</h3>
           <label className="ev-auto">
             <input type="checkbox" checked={autoBacktest} onChange={e => setAutoBacktest(e.target.checked)} />
+            <span className="ev-check" aria-hidden="true" />
             Auto-Backtest
           </label>
-          <label className="ev-auto" title="Also auto-backtest green devils — logged as their own separate slip, never mixed into +EV slips. Off = green devils are display-only.">
+          <label className="ev-auto ev-auto-gd" title="Also auto-backtest green devils — logged as their own separate slip, never mixed into +EV slips. Off = green devils are display-only.">
             <input type="checkbox" checked={autoBacktestGreenDevils} onChange={e => setAutoBacktestGreenDevils(e.target.checked)} />
+            <span className="ev-check" aria-hidden="true" />
             <span style={{ color: "#22c55e" }}>Green devils</span>
           </label>
         </div>
