@@ -1,5 +1,6 @@
 import os
 import logging
+import httpx
 from postgrest import SyncPostgrestClient
 from dotenv import load_dotenv
 
@@ -12,20 +13,60 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", SUPABASE_KEY) # Fallback to service key if anon key missing, but RLS works with JWT.
 
+_REST_URL = f"{SUPABASE_URL.rstrip('/')}/rest/v1" if SUPABASE_URL else None
+
+# ── Shared connection pool ────────────────────────────────────────────────
+# A single httpx.Client (keep-alive pool, HTTP/2) reused by EVERY PostgREST
+# client we build — the service-role client below and every per-request
+# user-scoped client from get_user_db(). Previously each call to
+# get_user_db(jwt) constructed its own SyncPostgrestClient, and each of those
+# spun up a brand-new httpx.Client → a fresh TLS + HTTP/2 handshake to Supabase
+# on every authenticated request (/api/config, /api/backtest/keys,
+# /api/analytics, /api/backtest/slips, deletes, billing reads …), plus a slow
+# socket leak as those one-shot clients were never closed.
+#
+# Auth is applied PER REQUEST: PostgREST's request builder merges each client's
+# own headers (apikey + Authorization) into every outgoing request, so two
+# users sharing this transport never see each other's credentials — the pool
+# only carries raw TCP/TLS connections, not auth state. httpx.Client is
+# thread-safe for concurrent requests, which is what our ThreadPoolExecutor
+# scrapers and background daemon threads need.
+_shared_http_client = None
+if _REST_URL:
+    try:
+        _shared_http_client = httpx.Client(
+            base_url=_REST_URL,
+            follow_redirects=True,
+            http2=True,
+            # Reuse warm connections across the 30 s poll cadence. httpx's
+            # default keepalive_expiry is only 5 s, which would drop the
+            # connection between polls and re-handshake every time.
+            limits=httpx.Limits(
+                max_keepalive_connections=20,
+                max_connections=100,
+                keepalive_expiry=90.0,
+            ),
+            # Generous read budget for the paginated analytics scans; fail fast
+            # on connect so a Supabase blip doesn't hang a request for 120 s
+            # (the old PostgREST default).
+            timeout=httpx.Timeout(30.0, connect=10.0),
+        )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.error(f"Failed to create shared httpx client: {e}")
+        _shared_http_client = None
+
 db = None
 
 if SUPABASE_URL and SUPABASE_KEY:
     try:
-        # Construct the REST URL (usually SU_URL + /rest/v1)
-        rest_url = f"{SUPABASE_URL.rstrip('/')}/rest/v1"
         headers = {
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
             "Content-Type": "application/json",
             "Prefer": "return=minimal,resolution=merge-duplicates"
         }
-        db = SyncPostgrestClient(rest_url, headers=headers)
-        logger.info("Supabase PostgREST client initialized successfully.")
+        db = SyncPostgrestClient(_REST_URL, headers=headers, http_client=_shared_http_client)
+        logger.info("Supabase PostgREST client initialized successfully (shared pool).")
     except Exception as e:
         logger.error(f"Failed to initialize PostgREST client: {e}")
 else:
@@ -36,14 +77,19 @@ def get_db() -> SyncPostgrestClient:
     return db
 
 def get_user_db(jwt: str) -> SyncPostgrestClient:
-    """Supabase client scoped to a user's JWT — RLS applies."""
+    """Supabase client scoped to a user's JWT — RLS applies.
+
+    Cheap to construct: it reuses the process-wide `_shared_http_client`
+    connection pool, so no new socket/TLS handshake is created here. Only the
+    per-user Authorization header differs, and that's carried on the returned
+    client's own headers and merged into each request.
+    """
     if not SUPABASE_URL:
         return None
-    rest_url = f"{SUPABASE_URL.rstrip('/')}/rest/v1"
     headers = {
         "apikey": SUPABASE_ANON_KEY,
         "Authorization": f"Bearer {jwt}",
         "Content-Type": "application/json",
         "Prefer": "return=minimal,resolution=merge-duplicates"
     }
-    return SyncPostgrestClient(rest_url, headers=headers)
+    return SyncPostgrestClient(_REST_URL, headers=headers, http_client=_shared_http_client)

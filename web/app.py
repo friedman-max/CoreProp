@@ -1593,13 +1593,21 @@ def health():
 def root():
     from engine.database import SUPABASE_URL, SUPABASE_ANON_KEY
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    # Inject runtime config so the frontend doesn't need to fetch /api/ui-config
-    config_script = (
+    # Inject runtime config so the frontend doesn't need to fetch /api/ui-config.
+    # Also preconnect to the Supabase origin so the TLS+HTTP/2 handshake for the
+    # first auth/session/data call is already warm by the time api.jsx runs
+    # (the origin isn't known at static-build time, so it's injected here).
+    head_inject = (
         f'<script>window.__COREPROP_CONFIG='
         f'{{"supabase_url":"{SUPABASE_URL}","supabase_anon_key":"{SUPABASE_ANON_KEY}"}}'
         f'</script>'
     )
-    html = html.replace("</head>", config_script + "\n</head>", 1)
+    if SUPABASE_URL:
+        head_inject = (
+            f'<link rel="preconnect" href="{SUPABASE_URL}" crossorigin>'
+            f'\n' + head_inject
+        )
+    html = html.replace("</head>", head_inject + "\n</head>", 1)
     from fastapi.responses import HTMLResponse
     return HTMLResponse(content=html)
 
@@ -2563,8 +2571,12 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         return {"slips": [], "total": 0}
 
     try:
-        # 1. Fetch the latest 300 slips (5 pages × 60 slips/page on the UI)
-        slips_res = db.table("slips").select("*").order("timestamp", desc=True).limit(300).execute()
+        # 1. Fetch the latest 300 slips (5 pages × 60 slips/page on the UI).
+        # Project only the columns the payout logic + UI consume — select("*")
+        # was dragging every billing/CLV/user_id column on the slip header into
+        # RAM and over the wire for no reason.
+        _slip_cols = "id, timestamp, slip_type, n_legs, proj_slip_ev_pct"
+        slips_res = db.table("slips").select(_slip_cols).order("timestamp", desc=True).limit(300).execute()
         slip_data = slips_res.data
         if not slip_data:
             return {"slips": [], "total": 0}
@@ -2577,11 +2589,16 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         # vanish entirely), which is how a real winning slip goes missing.
         # Paginate to pull every leg.
         legs_by_slip = {}
+        # Project only the columns the payout logic + UI consume (see
+        # page-backtest.jsx btMapSlip). select("*") pulled raw_true_prob,
+        # closing_prob, clv_pct, dedup_key, user_id, team, ind_ev_pct — none
+        # of which the Backtest tab renders — inflating every leg row.
+        _leg_cols = "slip_id, leg_num, player, league, prop, line, side, true_prob, result, stat_actual"
         _page_size = 1000
         _offset = 0
         while True:
             _page = (
-                db.table("legs").select("*").in_("slip_id", sids)
+                db.table("legs").select(_leg_cols).in_("slip_id", sids)
                   .order("slip_id", desc=False)
                   .range(_offset, _offset + _page_size - 1)
                   .execute()
