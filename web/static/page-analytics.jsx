@@ -5,7 +5,7 @@ const RANGES = ["1D", "1W", "1M", "3M", "1Y", "MAX"];
 const _RANGE_DAYS = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365 };
 
 function AnalyticsPage() {
-  const [range, setRange] = useState("1M");
+  const [range, setRange] = useState("1D");
   const [hover, setHover] = useState(null);
   const [data, setData] = useState(null);
   const [loadState, setLoadState] = useState("loading");
