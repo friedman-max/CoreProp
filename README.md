@@ -90,7 +90,9 @@ built in CoreProp and constructs it on PrizePicks for you.
 │     └─ pricing.jsx         Stripe checkout page
 │
 ├─ coreprop-extension/       Chrome MV3 extension (PrizePicks auto-build)
-├─ migration_001.sql … 017.sql   Supabase schema migrations
+├─ migrations/               Supabase schema
+│  ├─ schema.sql             Consolidated schema for a fresh project
+│  └─ migration_001 … 017.sql    Numbered migrations (history + source of truth)
 ├─ tests/                    pytest suite (engine + API)
 └─ data/                     Local snapshots / artefacts
 ```
@@ -107,8 +109,11 @@ source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Apply the SQL migrations against your Supabase project in numeric order
-(`migration_001.sql` through `migration_017.sql`), then create a `.env`:
+Set up the Supabase schema, then create a `.env`. For a brand-new project,
+run `migrations/schema.sql` once (it's the flattened equivalent of every
+migration). For an existing project, apply the numbered
+`migrations/migration_0NN.sql` files in order; they remain the source of truth
+and historical record.
 
 ```env
 SUPABASE_URL=https://your-project.supabase.co
