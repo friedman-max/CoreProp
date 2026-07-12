@@ -1287,7 +1287,13 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 }/*EDITMODE-END*/;
 
 function App() {
-  const [view, setView] = useState("landing");   // landing | pricing | ev
+  // Start on the app (+EV Bets) if a session is already restored at first
+  // render. Supabase's getSession() usually resolves a tick LATER (see the
+  // reconcile effect below), so this only wins the fast path; the effect
+  // handles the common case where the session lands after mount.
+  const [view, setView] = useState(
+    () => (window.cpApi && window.cpApi.isLoggedIn()) ? "ev" : "landing"
+  );   // landing | pricing | ev
   const [authOpen, setAuthOpen] = useState(false);
   const [loggedIn, setLoggedIn] = useState(() => !!(window.cpApi && window.cpApi.isLoggedIn()));
   const [active, setActive] = useState("+EV Bets");
@@ -1370,19 +1376,31 @@ function App() {
     return () => clearTimeout(id);
   }, [loggedIn]);
 
-  // Subscribe to Supabase session changes.
+  // Subscribe to Supabase session changes + reconcile the initial view.
+  //
+  // getSession() resolves ASYNCHRONOUSLY (Supabase reads the persisted session
+  // a tick after load), so at first render isLoggedIn() is usually still false
+  // and `view` inits to "landing". Two things guarantee a signed-in refresh
+  // lands on the app instead of the marketing page:
+  //   1. reconcile() runs on mount for the case where the session already
+  //      resolved between render and this effect firing (the subscribe
+  //      notification would otherwise have been missed).
+  //   2. the subscribe callback uses the FUNCTIONAL setView updater, so it
+  //      decides from the LIVE view — never a stale closure of `view` (the
+  //      old bug: the callback captured view="landing" and, once the session
+  //      landed, flipped the loggedIn flag but never moved the view).
   useEffect(() => {
     if (!window.cpApi) return;
-    setLoggedIn(window.cpApi.isLoggedIn());
-    return window.cpApi.subscribe((session) => {
-      const next = !!session?.user;
-      setLoggedIn(next);
-      if (next && view === "landing") {
-        setView("ev");
-      } else if (!next && view === "ev") {
-        setView("landing");
-      }
-    });
+    const reconcile = (isIn) => {
+      setLoggedIn(isIn);
+      setView(v => {
+        if (isIn && v === "landing") return "ev";
+        if (!isIn && v === "ev") return "landing";
+        return v;
+      });
+    };
+    reconcile(window.cpApi.isLoggedIn());
+    return window.cpApi.subscribe((session) => reconcile(!!session?.user));
   }, []);
 
   const onLogin = () => setAuthOpen(true);

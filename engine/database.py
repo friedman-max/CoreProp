@@ -31,25 +31,43 @@ _REST_URL = f"{SUPABASE_URL.rstrip('/')}/rest/v1" if SUPABASE_URL else None
 # only carries raw TCP/TLS connections, not auth state. httpx.Client is
 # thread-safe for concurrent requests, which is what our ThreadPoolExecutor
 # scrapers and background daemon threads need.
+#
+# HTTP/1.1 pool (NOT HTTP/2) on purpose. FastAPI runs our sync endpoints in a
+# large threadpool, and background daemon threads (results checker, CLV,
+# observatory, auto-log) hit Supabase too — so many requests run concurrently.
+# Over HTTP/2 they would all multiplex onto ONE shared TCP connection; when the
+# Cloudflare/PgBouncer edge in front of Supabase reset or GOAWAY'd that idle-
+# then-reused connection, the paginated analytics scans failed and their errors
+# were swallowed by evaluate_analytics's per-section try/except → the Analytics
+# tab silently showed no data. An HTTP/1.1 keep-alive pool hands each concurrent
+# request its own warm connection, so a single bad connection only affects one
+# request (httpx discards it and reconnects) and can't blank the whole tab —
+# while still eliminating the per-request TLS handshake this pool exists for.
 _shared_http_client = None
 if _REST_URL:
     try:
-        _shared_http_client = httpx.Client(
-            base_url=_REST_URL,
-            follow_redirects=True,
-            http2=True,
-            # Reuse warm connections across the 30 s poll cadence. httpx's
-            # default keepalive_expiry is only 5 s, which would drop the
-            # connection between polls and re-handshake every time.
+        # retries=2 reconnects when a pooled connection turns out to be stale
+        # (the edge closed it while idle) before the request is sent, so a
+        # reused-but-dead keep-alive connection doesn't surface as a failed
+        # request. Only connection-establishment errors are retried; a real
+        # HTTP error response is returned as-is.
+        _transport = httpx.HTTPTransport(
+            http1=True,
+            http2=False,
+            retries=2,
             limits=httpx.Limits(
                 max_keepalive_connections=20,
                 max_connections=100,
-                keepalive_expiry=90.0,
+                keepalive_expiry=60.0,
             ),
+        )
+        _shared_http_client = httpx.Client(
+            base_url=_REST_URL,
+            follow_redirects=True,
+            transport=_transport,
             # Generous read budget for the paginated analytics scans; fail fast
-            # on connect so a Supabase blip doesn't hang a request for 120 s
-            # (the old PostgREST default).
-            timeout=httpx.Timeout(30.0, connect=10.0),
+            # on connect so a Supabase blip doesn't hang a request for 120 s.
+            timeout=httpx.Timeout(60.0, connect=10.0),
         )
     except Exception as e:  # pragma: no cover - defensive
         logger.error(f"Failed to create shared httpx client: {e}")
