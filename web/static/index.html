@@ -1365,12 +1365,14 @@ function App() {
   useEffect(() => {
     if (!loggedIn || !window.cpApi) return;
     const id = setTimeout(() => {
+      // Only the endpoints the six live tabs actually use. The old
+      // /api/observatory* and /api/calibration/{curves,heatmap} entries were
+      // removed server-side (simplify-v1) — prefetching them just fired four
+      // 404s, each paying a Supabase-auth round trip, on every login.
       window.cpApi.prefetch([
         "/api/bootstrap/core", "/api/backtest/keys", "/api/config",
         "/api/matched", "/api/prizepicks", "/api/fanduel", "/api/draftkings", "/api/pinnacle",
         "/api/backtest/slips", "/api/analytics",
-        "/api/observatory", "/api/observatory/multipliers",
-        "/api/calibration/heatmap", "/api/calibration/curves",
       ]);
     }, 400);
     return () => clearTimeout(id);
