@@ -5,7 +5,7 @@ const RANGES = ["1D", "1W", "1M", "3M", "1Y", "MAX"];
 const _RANGE_DAYS = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365 };
 
 function AnalyticsPage() {
-  const [range, setRange] = useState("1D");
+  const [range, setRange] = useState("1W");
   const [hover, setHover] = useState(null);
   const [data, setData] = useState(null);
   const [loadState, setLoadState] = useState("loading");
@@ -88,10 +88,13 @@ function AnalyticsPage() {
       cumAbs: p.pnl,           // keep absolute for reference
     }));
 
-    // Anchor points so the drawn axis spans the FULL window regardless of
-    // where the bets fall. `anchor: true` marks synthetic points (no dot, no
-    // hover, no per-slip delta). For MAX the domain is naturally first→now, so
-    // only the trailing "now" anchor is added.
+    // Endpoint points so the drawn axis spans the FULL window and there's a
+    // visible, hoverable marker at the first and last date shown. `endpoint:
+    // true` marks these synthetic points — they render a neutral dot and are
+    // hoverable (showing window start / current cumulative), but carry no
+    // per-slip delta since they aren't slips. For MAX the domain naturally
+    // starts at the first slip (already a real dot), so only the trailing
+    // "now" endpoint is added.
     const out = [];
     if (range !== "MAX" && isFinite(startMs)) {
       // Leading flat segment: 0u from the window start until the first real
@@ -99,7 +102,7 @@ function AnalyticsPage() {
       // draws a flat run from window-open to that bet.
       const firstT = pts.length ? pts[0].date.getTime() : endMs;
       if (firstT > startMs) {
-        out.push({ date: new Date(startMs), pnl: 0, delta: 0, slipId: null, anchor: true });
+        out.push({ date: new Date(startMs), pnl: 0, delta: 0, slipId: null, endpoint: true, endpointKind: "start" });
       }
     }
     out.push(...pts);
@@ -108,7 +111,7 @@ function AnalyticsPage() {
     const lastPnl = pts.length ? pts[pts.length - 1].pnl : 0;
     const lastT = pts.length ? pts[pts.length - 1].date.getTime() : -Infinity;
     if (endMs > lastT) {
-      out.push({ date: new Date(endMs), pnl: lastPnl, delta: 0, slipId: null, anchor: true });
+      out.push({ date: new Date(endMs), pnl: lastPnl, delta: 0, slipId: null, endpoint: true, endpointKind: "end" });
     }
     return out;
   }, [fullSeries, range, windowBounds]);
@@ -242,9 +245,11 @@ function AnalyticsPage() {
     : (filtered.length
         ? `${filtered[0].date.toLocaleDateString(undefined,{month:"short",day:"numeric"})} → ${filtered[filtered.length-1].date.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}`
         : "");
-  const hoverDeltaText = hover && typeof hover.delta === "number"
-    ? `${hover.delta >= 0 ? "+" : ""}${hover.delta.toFixed(2)}u this slip`
-    : null;
+  const hoverDeltaText = hover && hover.endpoint
+    ? (hover.endpointKind === "start" ? "window start" : "now")
+    : (hover && typeof hover.delta === "number"
+        ? `${hover.delta >= 0 ? "+" : ""}${hover.delta.toFixed(2)}u this slip`
+        : null);
 
   // By this point the loading/error/empty states have already returned early
   // above, so stat cards only render with real data — but keep an explicit
@@ -272,7 +277,9 @@ function AnalyticsPage() {
                 fontSize: 13,
                 fontFamily: "JetBrains Mono,ui-monospace,monospace",
                 fontWeight: 700,
-                color: hover.delta > 0 ? "#22C55E" : hover.delta < 0 ? "#EF4444" : "#FBBF24",
+                color: hover.endpoint ? "#9CA3AF"
+                     : hover.delta > 0 ? "#22C55E"
+                     : hover.delta < 0 ? "#EF4444" : "#FBBF24",
               }}>{hoverDeltaText}</div>
             )}
           </div>
@@ -381,7 +388,9 @@ function PnLChart({ series, onHover, hover }) {
     const tHover = tMin + ratio * tSpan;
     let best = -1, bestDt = Infinity;
     for (let i = 0; i < series.length; i++) {
-      if (series[i].anchor) continue;   // leading/trailing flat anchors aren't slips
+      // Endpoints (window start / "now") ARE hoverable; only skip legacy
+      // hidden anchors if any remain.
+      if (series[i].anchor) continue;
       const dt = Math.abs(series[i].date.getTime() - tHover);
       if (dt < bestDt) { bestDt = dt; best = i; }
     }
@@ -404,7 +413,13 @@ function PnLChart({ series, onHover, hover }) {
   const hoverIdx = hover ? series.findIndex(p => p.date.getTime() === hover.date.getTime() && p.pnl === hover.pnl) : -1;
 
   // Per-slip dot color: green if this slip won, red if it lost, yellow if push.
-  const dotColor = (delta) => delta > 0 ? "#22C55E" : delta < 0 ? "#EF4444" : "#FBBF24";
+  // Endpoint markers (window start / "now") are neutral so they read as axis
+  // bookends, not as a slip outcome.
+  const dotColor = (p) => {
+    if (p && p.endpoint) return "#9CA3AF";
+    const delta = typeof p === "number" ? p : (p ? p.delta : 0);
+    return delta > 0 ? "#22C55E" : delta < 0 ? "#EF4444" : "#FBBF24";
+  };
 
   return (
     <div ref={ref} className="pnl-chart">
@@ -436,16 +451,17 @@ function PnLChart({ series, onHover, hover }) {
         {/* Step-after equity curve */}
         <path d={pathD} fill="none" stroke={lineColor} strokeWidth="2.25" strokeLinejoin="miter" strokeLinecap="square" />
 
-        {/* Per-slip dots colored by individual outcome. Synthetic axis anchors
-            (leading flat-line start, trailing "now") get no dot. */}
+        {/* Per-slip dots colored by individual outcome, plus neutral endpoint
+            markers at the first date shown (window start) and the last ("now").
+            Legacy hidden anchors, if any, still get no dot. */}
         {series.map((p, i) => (
           p.anchor ? null : (
             <circle
               key={i}
               cx={xs(i)}
               cy={ys(p.pnl)}
-              r={hoverIdx === i ? 5 : 3}
-              fill={dotColor(p.delta)}
+              r={hoverIdx === i ? 5 : (p.endpoint ? 3.5 : 3)}
+              fill={dotColor(p)}
               stroke="#0a0a0d"
               strokeWidth="1.25"
             />
@@ -458,9 +474,9 @@ function PnLChart({ series, onHover, hover }) {
             <line x1={xs(hoverIdx)} x2={xs(hoverIdx)} y1={padT} y2={H - padB}
                   stroke="rgba(255,255,255,.45)" strokeWidth="1.25" strokeDasharray="4,4" />
             <circle cx={xs(hoverIdx)} cy={ys(series[hoverIdx].pnl)} r="10"
-                    fill={dotColor(series[hoverIdx].delta)} fillOpacity="0.22" />
+                    fill={dotColor(series[hoverIdx])} fillOpacity="0.22" />
             <circle cx={xs(hoverIdx)} cy={ys(series[hoverIdx].pnl)} r="5.5"
-                    fill={dotColor(series[hoverIdx].delta)} stroke="#0a0a0d" strokeWidth="2" />
+                    fill={dotColor(series[hoverIdx])} stroke="#0a0a0d" strokeWidth="2" />
           </g>
         )}
 
