@@ -2612,7 +2612,26 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         
         for s in slip_data:
             s["slip_id"] = s["id"]
-            s["legs"] = sorted(legs_by_slip.get(s["id"], []), key=lambda x: x["leg_num"])
+            # Dedup by leg_num before sorting. A correct slip has one row per
+            # leg_num; a slip corrupted by the old lost-response double-insert
+            # bug (fixed in engine.backtest.insert_legs_idempotent) has two
+            # rows per leg_num — e.g. 12 rows for a 6-leg slip. Collapsing to
+            # the first row per leg_num makes such a slip render and score at
+            # its intended size (payout tables only define 2-6 legs, so a
+            # 12-leg slip would otherwise score as a guaranteed loss).
+            _seen_leg_nums = set()
+            _deduped = []
+            for _l in sorted(legs_by_slip.get(s["id"], []), key=lambda x: (x.get("leg_num") is None, x.get("leg_num"))):
+                _ln = _l.get("leg_num")
+                # Only collapse rows that carry a leg_num (the double-insert bug
+                # always writes one). A null leg_num is never deduped, so no
+                # distinct leg is ever dropped if the column is somehow absent.
+                if _ln is not None:
+                    if _ln in _seen_leg_nums:
+                        continue
+                    _seen_leg_nums.add(_ln)
+                _deduped.append(_l)
+            s["legs"] = _deduped
         # Defensively drop orphaned slip headers that have no legs. The header
         # and its legs are two separate PostgREST inserts (no cross-table
         # transaction), so a failure or crash between them can leave a legless
@@ -3017,20 +3036,20 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
                         r["player"], r["prop"], r["line"], r["side"], r["game_start"] or "",
                     ),
                 })
+            # Insert legs idempotently — shared with the auto-log path. Never
+            # double-inserts on a lost-response retry (the 12-leg-slip bug),
+            # keeps dedup_key effective, and strips optional columns only when
+            # the DB names them. A cross-slip duplicate propagates as 23505.
+            from engine.backtest import insert_legs_idempotent, _is_duplicate_err
             try:
-                db_client.table("legs").insert(db_legs).execute()
+                insert_legs_idempotent(db_client, slip_id, db_legs)
             except Exception as legs_exc:
                 err_msg = str(legs_exc)
-                # Pre-migration_008 schema: drop dedup_key and retry once.
-                if "dedup_key" in err_msg.lower():
-                    for dl in db_legs:
-                        dl.pop("dedup_key", None)
-                    db_client.table("legs").insert(db_legs).execute()
                 # Unique-violation: another slip (auto or manual) already
                 # contains a leg with this canonical fingerprint. Roll
                 # back the slip header and surface a clear 409 so the UI
                 # can tell the user they already have this leg.
-                elif "23505" in err_msg or "duplicate key" in err_msg.lower():
+                if _is_duplicate_err(err_msg):
                     try:
                         db_client.table("slips").delete().eq("id", slip_id).execute()
                     except Exception as cleanup_exc:
@@ -3042,8 +3061,7 @@ def add_slip_to_backtest(req: BacktestAddSlipRequest, user: dict = Depends(get_c
                         status_code=409,
                         detail="One or more legs in this slip duplicate a leg already in your backtest.",
                     )
-                else:
-                    raise
+                raise
             logger.info("Backtest: manually added slip %s to Supabase", slip_id)
         except HTTPException:
             raise

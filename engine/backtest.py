@@ -182,6 +182,90 @@ def make_bet_key(player: str, start_time: str) -> tuple[str, str]:
     return (_normalize(player), time_key)
 
 
+# Optional leg columns that may be absent on an un-migrated deploy. Stripped
+# from the payload ONLY when the DB error actually names the column — never
+# preemptively (stripping dedup_key blindly on any error was what let a
+# retried batch bypass the (user_id, dedup_key) unique index).
+_OPTIONAL_LEG_COLS = ("dedup_key", "team", "raw_true_prob", "closing_books", "books")
+
+
+def _is_duplicate_err(msg: str) -> bool:
+    """Postgres unique_violation (SQLSTATE 23505) surfaced through PostgREST."""
+    m = (msg or "").lower()
+    return "23505" in m or "duplicate key" in m
+
+
+def insert_legs_idempotent(db, slip_id: str, db_legs: list[dict]) -> None:
+    """Insert a slip's legs exactly once, tolerant of lost-response retries.
+
+    The failure this exists to prevent: a PostgREST batch insert is atomic on
+    the server, but the CLIENT can't distinguish a genuine failure from a
+    LOST RESPONSE — a read timeout / connection reset / 5xx from the
+    Cloudflare-PgBouncer edge AFTER Postgres already committed the rows. The
+    previous code retried the same batch on any non-23505 error, so a lost
+    response double-inserted every leg and produced a 12-leg slip from a
+    6-leg config (and the retry stripped dedup_key first, so the unique index
+    couldn't catch it either).
+
+    Because `slip_id` is freshly generated for this write and belongs to no
+    other slip, ANY legs already present under it can only be a partial write
+    from THIS call. So the safe, idempotent rule is: on any error, re-read
+    which leg_nums already landed under this slip_id and insert only the ones
+    still missing. Repeat until nothing is missing.
+
+    Column-compat: only strip an optional column when the error names it
+    (un-migrated schema), and re-derive the missing set each pass so a genuine
+    duplicate-key rejection from a DIFFERENT slip still propagates.
+    """
+    def _existing_leg_nums() -> set:
+        try:
+            got = (
+                db.table("legs").select("leg_num").eq("slip_id", slip_id).execute().data
+            ) or []
+            return {r.get("leg_num") for r in got}
+        except Exception:
+            # If we can't read back, assume nothing landed and let the insert
+            # (and its own error handling) decide — never silently drop legs.
+            return set()
+
+    pending = list(db_legs)
+    last_exc = None
+    for _ in range(len(_OPTIONAL_LEG_COLS) + 2):
+        # Drop any leg that already committed under this slip_id (partial
+        # write from a prior attempt in this same call).
+        already = _existing_leg_nums()
+        if already:
+            pending = [dl for dl in pending if dl.get("leg_num") not in already]
+        if not pending:
+            return  # every leg is present exactly once
+        try:
+            db.table("legs").insert(pending).execute()
+            return
+        except Exception as exc:
+            last_exc = exc
+            msg = str(exc)
+            # A duplicate-key error here is meaningful: after removing this
+            # slip's own already-landed legs, a 23505 means the leg collides
+            # with a DIFFERENT slip (the cross-slip dedup index). Propagate so
+            # the caller rolls back the header and abandons the slip.
+            if _is_duplicate_err(msg):
+                raise
+            # Un-migrated column? Strip the one the error names and retry.
+            stripped = False
+            for col in _OPTIONAL_LEG_COLS:
+                if col in msg.lower() and any(col in dl for dl in pending):
+                    for dl in pending:
+                        dl.pop(col, None)
+                    stripped = True
+                    break
+            if stripped:
+                continue
+            # Otherwise it's a lost-response / transient error: loop, re-read
+            # what landed, and insert only the remainder (idempotent).
+    if last_exc is not None:
+        raise last_exc
+
+
 class BacktestLogger:
     """
     Builds and logs the best available +EV slips to Supabase.
@@ -566,26 +650,20 @@ class BacktestLogger:
                         r["player"], r["prop"], r["line"], r["side"], r["game_start"] or "",
                     ),
                 })
-            # Optional column compatibility: each migration may not yet be
-            # applied on the deployed schema. Strip optionals one at a time
-            # and retry until the insert succeeds (or all retries are
-            # exhausted, in which case the original error is raised).
-            # `dedup_key` is listed so older deploys (pre-migration_008)
-            # still log slips correctly; once the migration runs, the
-            # column is present and the unique index becomes the backstop.
-            _OPTIONAL_LEG_COLS = ("dedup_key", "team", "raw_true_prob")
+            # Insert legs idempotently: never double-inserts on a lost-response
+            # retry (the 12-leg-slip bug), keeps dedup_key so the unique index
+            # stays effective, and strips an optional column only when the DB
+            # error names it. A genuine cross-slip duplicate (23505 after this
+            # slip's own legs are excluded) propagates to the rollback below.
             try:
-                db.table("legs").insert(db_legs).execute()
+                insert_legs_idempotent(db, slip_id, db_legs)
             except Exception as legs_exc:
-                # Postgres unique_violation = SQLSTATE 23505. Means another
-                # worker / earlier cycle already logged a leg with the same
-                # canonical fingerprint for this user. The slip header has
-                # already been written, so roll it back and silently abandon
-                # — auto-logger will try again on the next refresh cycle
-                # with the duplicate already excluded from the candidate
-                # pool by the next dedup-set load.
                 err_msg = str(legs_exc)
-                if "23505" in err_msg or "duplicate key" in err_msg.lower():
+                if _is_duplicate_err(err_msg):
+                    # Another slip already contains one of these legs (the
+                    # cross-slip dedup index fired). Roll back the header and
+                    # abandon — auto-logger retries next cycle with the
+                    # duplicate excluded from the pool.
                     try:
                         db.table("slips").delete().eq("id", slip_id).execute()
                     except Exception as cleanup_exc:
@@ -598,38 +676,7 @@ class BacktestLogger:
                         "(unique-index rejected the insert: %s)", slip_id, self.user_id, err_msg[:200],
                     )
                     return None
-                last = legs_exc
-                ok = False
-                for col in _OPTIONAL_LEG_COLS:
-                    if not any(col in dl for dl in db_legs):
-                        continue
-                    for dl in db_legs:
-                        dl.pop(col, None)
-                    try:
-                        db.table("legs").insert(db_legs).execute()
-                        ok = True
-                        break
-                    except Exception as retry_exc:
-                        # Same unique-violation handling if the retry trips
-                        # the constraint after stripping an unrelated column.
-                        retry_msg = str(retry_exc)
-                        if "23505" in retry_msg or "duplicate key" in retry_msg.lower():
-                            try:
-                                db.table("slips").delete().eq("id", slip_id).execute()
-                            except Exception as cleanup_exc:
-                                logger.warning(
-                                    "Backtest: failed to roll back orphan slip header %s after duplicate-leg "
-                                    "rejection: %s", slip_id, cleanup_exc,
-                                )
-                            logger.info(
-                                "Backtest: skipped Auto-Slip %s — duplicate leg(s) for user %s",
-                                slip_id, self.user_id,
-                            )
-                            return None
-                        last = retry_exc
-                        continue
-                if not ok:
-                    raise last
+                raise
             logger.info("Backtest: logged Auto-Slip %s (%d-leg EV=%.2f%%) for user %s", slip_id, n_legs, best_ev * 100, self.user_id)
         except Exception as db_exc:
             logger.error("Backtest: Supabase write failed for slip %s: %s", slip_id, db_exc)

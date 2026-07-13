@@ -170,9 +170,16 @@ class _StatefulQuery:
         self.db = db
         self.name = name
         self._filter_ids = None
+        self._eq_slip_id = None   # from .eq("slip_id", X) — the idempotent readback
     def select(self, *a, **k): return self
     def gte(self, *a, **k): return self
-    def eq(self, *a, **k): return self
+    def eq(self, col=None, val=None, *a, **k):
+        # insert_legs_idempotent reads back with .eq("slip_id", slip_id); honor
+        # it so the fake filters like real PostgREST (a no-op eq would return
+        # every slip's legs and make the helper think legs already exist).
+        if col == "slip_id":
+            self._eq_slip_id = val
+        return self
     def order(self, *a, **k): return self
     def limit(self, *a, **k): return self
     def in_(self, col, vals):
@@ -194,6 +201,8 @@ class _StatefulQuery:
         rows = self.db.legs
         if self._filter_ids is not None:
             rows = [l for l in rows if l.get("slip_id") in self._filter_ids]
+        if self._eq_slip_id is not None:
+            rows = [l for l in rows if l.get("slip_id") == self._eq_slip_id]
         return _Res(rows)
 
 
@@ -219,3 +228,125 @@ def test_worker_loop_logs_multiple_distinct_slips_then_stops():
     # 2 slips × 3 legs, all distinct players.
     assert len(db.legs) == 6
     assert len({l["player"] for l in db.legs}) == 6
+
+
+# ── Lost-response double-insert (the "12-leg slip" bug) ──────────────────────
+# A PostgREST batch legs-insert is atomic server-side, but the CLIENT can't
+# tell a genuine failure from a LOST RESPONSE (read timeout / reset / 5xx from
+# the edge AFTER Postgres committed the rows). The old code retried the same
+# batch on any non-23505 error, double-inserting every leg → a 6-leg config
+# produced a 12-leg slip. insert_legs_idempotent must re-read what landed and
+# insert only the missing legs, so the slip ends up with exactly n_legs.
+
+class _LostResponseLegsQuery:
+    """legs table whose FIRST insert commits the rows and THEN raises a
+    lost-response error (as httpx would on a read timeout). Subsequent reads
+    see the committed rows; subsequent inserts behave normally."""
+    def __init__(self, db):
+        self.db = db
+        self._filter_slip = None
+        self._op = None
+        self._pending = None
+    def select(self, *a, **k): return self
+    def eq(self, col, val):
+        if col == "slip_id":
+            self._filter_slip = val
+        return self
+    def in_(self, *a, **k): return self
+    def order(self, *a, **k): return self
+    def limit(self, *a, **k): return self
+    def gte(self, *a, **k): return self
+    def insert(self, rows):
+        self._op = "insert"
+        self._pending = rows if isinstance(rows, list) else [rows]
+        return self
+    def delete(self):
+        self._op = "delete"
+        return self
+    def execute(self):
+        class _Res:
+            def __init__(self, data): self.data = data
+        if self._op == "insert":
+            # Commit server-side FIRST...
+            self.db.legs.extend(self._pending)
+            self.db.insert_calls += 1
+            # ...then simulate a lost response on the very first insert only.
+            if self.db.insert_calls == 1:
+                import httpx
+                raise httpx.ReadTimeout("response lost after commit")
+            return _Res([])
+        if self._op == "delete":
+            return _Res([])
+        # select readback: rows for this slip_id
+        rows = [l for l in self.db.legs if l.get("slip_id") == self._filter_slip]
+        return _Res(rows)
+
+
+class _LostResponseDB:
+    def __init__(self):
+        self.slips = []
+        self.legs = []
+        self.insert_calls = 0
+    def table(self, name):
+        if name == "slips":
+            # Reuse the simple stateful slips query (insert/select/delete).
+            return _LostResponseSlipsQuery(self)
+        return _LostResponseLegsQuery(self)
+
+
+class _LostResponseSlipsQuery:
+    def __init__(self, db):
+        self.db = db
+        self._op = None
+        self._pending = None
+        self._del_id = None
+    def select(self, *a, **k): return self
+    def eq(self, col, val): self._del_id = val; return self
+    def in_(self, *a, **k): return self
+    def order(self, *a, **k): return self
+    def limit(self, *a, **k): return self
+    def gte(self, *a, **k): return self
+    def insert(self, rows):
+        self._op = "insert"
+        self._pending = rows if isinstance(rows, list) else [rows]
+        return self
+    def delete(self):
+        self._op = "delete"
+        return self
+    def execute(self):
+        class _Res:
+            def __init__(self, data): self.data = data
+        if self._op == "insert":
+            self.db.slips.extend(self._pending)
+        elif self._op == "delete":
+            self.db.slips = [s for s in self.db.slips if s.get("id") != self._del_id]
+        return _Res([{"id": s["id"], "timestamp": s.get("timestamp", "")}
+                     for s in self.db.slips])
+
+
+def test_lost_response_retry_does_not_double_insert_legs():
+    from engine.backtest import BacktestLogger
+    bets = [_bet(i, ev=0.05 + 0.001 * i) for i in range(6)]
+    db = _LostResponseDB()
+    bl = BacktestLogger(user_id="u1", db_client=db)
+    result = bl.try_log_slip(bets, slip_type="Power", n_legs=6)
+
+    # The slip is logged successfully despite the lost-response error...
+    assert result is not None, "slip should still log after a recovered lost response"
+    # ...and has EXACTLY 6 legs, not 12. Each leg_num appears once.
+    assert len(db.legs) == 6, f"expected 6 legs, got {len(db.legs)} (double-insert regression)"
+    leg_nums = sorted(l["leg_num"] for l in db.legs)
+    assert leg_nums == [1, 2, 3, 4, 5, 6], f"leg_num set corrupted: {leg_nums}"
+
+
+def test_insert_legs_idempotent_helper_is_a_noop_when_all_present():
+    # If every leg already landed (a lost response AFTER a full commit), the
+    # helper's readback sees all leg_nums present and inserts nothing more.
+    from engine.backtest import insert_legs_idempotent
+    db = _LostResponseDB()
+    legs = [{"slip_id": "S1", "leg_num": i, "player": f"P{i}"} for i in range(1, 7)]
+    # Pre-seed as if the first (lost-response) insert already committed them.
+    db.legs.extend(legs)
+    db.insert_calls = 1  # so no further insert would raise
+    insert_legs_idempotent(db, "S1", list(legs))
+    assert len(db.legs) == 6, "helper must not re-insert already-present legs"

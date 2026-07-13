@@ -329,7 +329,7 @@ def evaluate_analytics(user_jwt: str) -> dict:
     all_legs: list = []
     if db:
         try:
-            cols = "result, true_prob, player, prop, side, league, slip_id, closing_prob, clv_pct"
+            cols = "result, true_prob, player, prop, side, league, slip_id, leg_num, closing_prob, clv_pct"
             page_size = 1000
             offset = 0
             while True:
@@ -348,6 +348,29 @@ def evaluate_analytics(user_jwt: str) -> dict:
         except Exception as exc:
             logger.warning("Analytics: legs fetch failed: %s", exc)
             all_legs = []
+
+    # Dedup by (slip_id, leg_num). A slip corrupted by the old lost-response
+    # double-insert bug (fixed in engine.backtest.insert_legs_idempotent) has
+    # two rows per leg_num — which would otherwise double-count in the per-leg
+    # Brier/hit-rate arrays AND inflate n_eff in the P&L payout math (a 6-leg
+    # Power slip would look 12-leg and score as a guaranteed loss). Keep one
+    # row per (slip_id, leg_num) so every metric counts each leg once.
+    if all_legs:
+        _seen_leg_keys = set()
+        _deduped_legs = []
+        for _l in all_legs:
+            _ln = _l.get("leg_num")
+            # Only dedup rows that carry a leg_num. The double-insert bug always
+            # writes leg_num, so keying on it catches every duplicate; a row
+            # without leg_num (legacy/edge) is never collapsed, so distinct
+            # legs can't be lost if the column is absent.
+            if _ln is not None:
+                _k = (_l.get("slip_id"), _ln)
+                if _k in _seen_leg_keys:
+                    continue
+                _seen_leg_keys.add(_k)
+            _deduped_legs.append(_l)
+        all_legs = _deduped_legs
 
     # Slip → timestamp map. Legs don't have their own timestamp; they
     # inherit it from the slip via slip_id. Pulled here once so both
