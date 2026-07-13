@@ -1158,11 +1158,28 @@ def _run_pipeline_body():
                     # Standard +EV pool. Green devils are EXCLUDED here — they
                     # only auto-log when the user opts in, and then as their own
                     # separate slip so they never contaminate +EV backtests.
-                    std_pool = [b for b in bets
-                                if (b.get("odds_type") or "standard") == "standard" and _eligible(b)]
+                    std_bets = [b for b in bets
+                                if (b.get("odds_type") or "standard") == "standard"]
+                    std_pool = [b for b in std_bets if _eligible(b)]
+                    # Diagnostic: WHY the pool is the size it is. Bucket every
+                    # standard bet's true_prob so a pool=0 result is legible —
+                    # "40 bets but only 1 clears the 0.65 floor" vs "no bets at
+                    # all" vs "dropped by cell rules". Cheap; one line per cycle.
+                    _probs = [float(b.get("true_prob") or 0.0) for b in std_bets]
+                    _ge_floor = sum(1 for p in _probs if p >= min_prob)
+                    _hist = {
+                        "<0.55": sum(1 for p in _probs if p < 0.55),
+                        "0.55-0.60": sum(1 for p in _probs if 0.55 <= p < 0.60),
+                        "0.60-0.65": sum(1 for p in _probs if 0.60 <= p < 0.65),
+                        ">=0.65": sum(1 for p in _probs if p >= 0.65),
+                    }
                     logger.info(
-                        "auto_backtest    user=%s pool=%d (floor=%.3f, %s-%d)",
+                        "auto_backtest    user=%s pool=%d (floor=%.3f, %s-%d) | "
+                        "std_bets=%d clear_floor=%d hist=%s user_min=%s cell_drops=%s",
                         uid, len(std_pool), min_prob, slip_type, n_legs,
+                        len(std_bets), _ge_floor, _hist,
+                        ("set" if user_min is not None else "default"),
+                        cfg.CELL_DROPS_ENABLED,
                     )
                     _log_pool(std_pool)
 

@@ -455,6 +455,11 @@ class BacktestLogger:
                 break
 
         if len(best_legs) < n_legs:
+            logger.info(
+                "Backtest: skip slip user=%s — only %d/%d eligible legs after dedup "
+                "(pool=%d, used_pairs=%d). Not enough distinct players/games left.",
+                self.user_id, len(best_legs), n_legs, len(pool), len(used_pair_keys),
+            )
             return None
 
         # Two-team enforcement. If all selected legs share a single team,
@@ -518,6 +523,12 @@ class BacktestLogger:
         slip_be = BREAK_EVEN.get(be_key, OPTIMAL_BREAK_EVEN)
 
         if avg_prob < slip_be:
+            logger.info(
+                "Backtest: skip slip user=%s — avg leg prob %.4f < break-even %.4f "
+                "(%s-%d). Legs cleared the per-leg floor but their average is below "
+                "the slip's break-even.",
+                self.user_id, avg_prob, slip_be, slip_type, n_legs,
+            )
             return None
 
         # Use the correct EV function for the slip type. A 2-leg Flex is
@@ -531,6 +542,12 @@ class BacktestLogger:
             best_ev = flex_slip_ev(true_probs)
 
         if best_ev is None or best_ev <= 0:
+            logger.info(
+                "Backtest: skip slip user=%s — slip EV %s <= 0 (%s-%d, avg_prob=%.4f). "
+                "Legs are individually +EV but the slip's combined EV is non-positive.",
+                self.user_id, "None" if best_ev is None else f"{best_ev:.4f}",
+                slip_type, n_legs, avg_prob,
+            )
             return None
 
         # ── Pre-insert invariant check ─────────────────────────────────
