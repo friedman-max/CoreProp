@@ -218,21 +218,41 @@ def insert_legs_idempotent(db, slip_id: str, db_legs: list[dict]) -> None:
     duplicate-key rejection from a DIFFERENT slip still propagates.
     """
     def _existing_leg_nums() -> set:
+        # Reconcile ONLY after an error — read which of THIS slip's legs already
+        # landed. Never called on the happy path, so it can't gate a normal
+        # insert. On read failure, return empty so we don't wrongly conclude
+        # legs exist and skip inserting them.
         try:
             got = (
                 db.table("legs").select("leg_num").eq("slip_id", slip_id).execute().data
             ) or []
-            return {r.get("leg_num") for r in got}
+            return {r.get("leg_num") for r in got if r.get("leg_num") is not None}
         except Exception:
-            # If we can't read back, assume nothing landed and let the insert
-            # (and its own error handling) decide — never silently drop legs.
             return set()
 
+    # Happy path: a single plain batch insert, exactly as before this helper
+    # existed. No pre-insert readback — that extra round-trip (and its
+    # dependence on the SELECT seeing exactly this slip's legs) was gating
+    # every normal insert and, if the readback ever over-returned, made us skip
+    # inserting entirely and write a legless slip. The reconcile logic below
+    # runs ONLY when the first insert raises.
     pending = list(db_legs)
+    try:
+        db.table("legs").insert(pending).execute()
+        return
+    except Exception as first_exc:
+        if _is_duplicate_err(str(first_exc)):
+            # The whole batch is a genuine cross-slip duplicate — propagate so
+            # the caller rolls back the header. (A partial commit that then
+            # 23505s is handled by the reconcile loop below.)
+            raise
+
+    # Error path: the insert failed for a non-duplicate reason. This is where a
+    # lost response (rows may have committed) or an un-migrated column lands.
+    # Re-read what actually landed under this slip and insert only the missing
+    # legs, stripping an optional column only when the error names it.
     last_exc = None
     for _ in range(len(_OPTIONAL_LEG_COLS) + 2):
-        # Drop any leg that already committed under this slip_id (partial
-        # write from a prior attempt in this same call).
         already = _existing_leg_nums()
         if already:
             pending = [dl for dl in pending if dl.get("leg_num") not in already]
@@ -244,13 +264,8 @@ def insert_legs_idempotent(db, slip_id: str, db_legs: list[dict]) -> None:
         except Exception as exc:
             last_exc = exc
             msg = str(exc)
-            # A duplicate-key error here is meaningful: after removing this
-            # slip's own already-landed legs, a 23505 means the leg collides
-            # with a DIFFERENT slip (the cross-slip dedup index). Propagate so
-            # the caller rolls back the header and abandons the slip.
             if _is_duplicate_err(msg):
                 raise
-            # Un-migrated column? Strip the one the error names and retry.
             stripped = False
             for col in _OPTIONAL_LEG_COLS:
                 if col in msg.lower() and any(col in dl for dl in pending):
@@ -260,8 +275,7 @@ def insert_legs_idempotent(db, slip_id: str, db_legs: list[dict]) -> None:
                     break
             if stripped:
                 continue
-            # Otherwise it's a lost-response / transient error: loop, re-read
-            # what landed, and insert only the remainder (idempotent).
+            # Transient/lost-response: loop, re-read what landed, insert the rest.
     if last_exc is not None:
         raise last_exc
 

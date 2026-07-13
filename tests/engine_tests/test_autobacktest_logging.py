@@ -339,14 +339,26 @@ def test_lost_response_retry_does_not_double_insert_legs():
     assert leg_nums == [1, 2, 3, 4, 5, 6], f"leg_num set corrupted: {leg_nums}"
 
 
-def test_insert_legs_idempotent_helper_is_a_noop_when_all_present():
-    # If every leg already landed (a lost response AFTER a full commit), the
-    # helper's readback sees all leg_nums present and inserts nothing more.
+def test_insert_legs_idempotent_happy_path_inserts_once():
+    # Corrected contract: the happy path is a SINGLE plain insert with NO
+    # pre-insert readback. (The old pre-read gated normal inserts and, if the
+    # readback ever over-returned, made the helper skip inserting entirely and
+    # write a legless slip — the "slips stopped being added" regression.)
     from engine.backtest import insert_legs_idempotent
     db = _LostResponseDB()
+    db.insert_calls = 1  # skip the one simulated lost-response on the first call
     legs = [{"slip_id": "S1", "leg_num": i, "player": f"P{i}"} for i in range(1, 7)]
-    # Pre-seed as if the first (lost-response) insert already committed them.
-    db.legs.extend(legs)
-    db.insert_calls = 1  # so no further insert would raise
     insert_legs_idempotent(db, "S1", list(legs))
-    assert len(db.legs) == 6, "helper must not re-insert already-present legs"
+    assert len(db.legs) == 6, "happy path must insert all legs exactly once"
+    assert sorted(l["leg_num"] for l in db.legs) == [1, 2, 3, 4, 5, 6]
+
+
+def test_insert_legs_idempotent_reconciles_after_lost_response():
+    # After a lost-response error where the rows DID commit server-side, the
+    # reconcile readback must see them and NOT insert a second copy.
+    from engine.backtest import insert_legs_idempotent
+    db = _LostResponseDB()  # first legs-insert commits rows then raises ReadTimeout
+    legs = [{"slip_id": "S1", "leg_num": i, "player": f"P{i}"} for i in range(1, 7)]
+    insert_legs_idempotent(db, "S1", list(legs))
+    assert len(db.legs) == 6, f"expected 6 legs after reconcile, got {len(db.legs)}"
+    assert sorted(l["leg_num"] for l in db.legs) == [1, 2, 3, 4, 5, 6]
