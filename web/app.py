@@ -1804,6 +1804,206 @@ def get_backtest_keys(user: dict = Depends(get_current_user)):
     return {"keys": keys}
 
 
+@app.get("/api/backtest/diagnose")
+def diagnose_auto_backtest(user: dict = Depends(get_current_user)):
+    """Self-service, read-only diagnosis of why auto-backtest may not be
+    logging slips for THE CALLING USER. Writes nothing (dry-run). Runs the
+    exact live path — read user_config, build the eligible pool from the
+    current bet cache, run try_log_slip against a rollback-only fake DB — and
+    reports precisely where it stops.
+
+    Hit it from the browser console while signed in:
+        fetch('/api/backtest/diagnose',
+              {headers:{Authorization:'Bearer '+cpApi.getSession().access_token}})
+          .then(r=>r.json()).then(console.log)
+    """
+    uid = user["id"]
+    report: dict = {"user_id": uid, "checks": []}
+
+    def add(name, ok, detail):
+        report["checks"].append({"check": name, "ok": bool(ok), "detail": detail})
+
+    # 1. Is the pipeline producing bets at all? (worker only runs post-scrape)
+    with _lock:
+        bets_payload = list(_state.get("bets") or [])
+        last_refresh = _state.get("last_refresh")
+        scrape_errors = dict(_state.get("scrape_errors") or {})
+    add("bet_cache_populated", bool(bets_payload),
+        f"{len(bets_payload)} bets in state cache; last_refresh={last_refresh}; "
+        f"scrape_errors={scrape_errors}")
+
+    # 2. Read THIS user's config via the service client (same as the worker).
+    from engine.database import get_db
+    db = get_db()
+    if db is None:
+        add("db_reachable", False, "service-role DB client is None (SUPABASE_SERVICE_KEY missing?)")
+        report["verdict"] = "DB unreachable — auto-backtest cannot run."
+        return report
+    add("db_reachable", True, "service-role client OK")
+
+    try:
+        cfg_res = db.table("user_config").select("*").eq("user_id", uid).execute()
+        cfg_row = (cfg_res.data or [None])[0]
+    except Exception as e:
+        add("user_config_readable", False, f"query failed: {e}")
+        report["verdict"] = "Could not read user_config."
+        return report
+
+    if not cfg_row:
+        add("user_config_row_exists", False,
+            "no user_config row for this user — the worker iterates rows where "
+            "auto_backtest=true, so a missing row means it never runs for you.")
+        report["verdict"] = ("No user_config row. Toggle Auto-Backtest off then on "
+                             "in the Slip Builder to create/persist the row.")
+        return report
+    add("user_config_row_exists", True, "row present")
+
+    auto_on = bool(cfg_row.get("auto_backtest"))
+    add("auto_backtest_enabled_in_db", auto_on,
+        f"user_config.auto_backtest = {cfg_row.get('auto_backtest')!r} "
+        f"(the UI toggle writes this; if false, the worker skips you entirely)")
+
+    # Resolve prefs exactly as the worker does.
+    slip_type = cfg_row.get("auto_slip_type") or "Flex"
+    try:
+        n_legs = max(2, min(6, int(cfg_row.get("auto_slip_legs") or 6)))
+    except (TypeError, ValueError):
+        n_legs = 6
+    raw_min = cfg_row.get("auto_slip_min_prob")
+    try:
+        user_min = float(raw_min) if raw_min is not None else None
+    except (TypeError, ValueError):
+        user_min = None
+    min_prob = user_min if user_min is not None else max(
+        cfg.DEFAULT_LEG_THRESHOLD, cfg.AUTO_SLIP_MIN_PROB_FLOOR)
+    report["resolved_prefs"] = {
+        "slip_type": slip_type, "n_legs": n_legs,
+        "auto_slip_min_prob": raw_min, "effective_min_prob": min_prob,
+        "min_source": "explicit" if user_min is not None else "default_floor",
+    }
+
+    # 3. Build the eligible pool exactly as the worker does + histogram.
+    from engine.constants import is_excluded_league
+    std_bets = [b for b in bets_payload if (b.get("odds_type") or "standard") == "standard"]
+    probs = [float(b.get("true_prob") or 0.0) for b in std_bets]
+    hist = {
+        "<0.55": sum(1 for p in probs if p < 0.55),
+        "0.55-0.60": sum(1 for p in probs if 0.55 <= p < 0.60),
+        "0.60-0.65": sum(1 for p in probs if 0.60 <= p < 0.65),
+        ">=0.65": sum(1 for p in probs if p >= 0.65),
+    }
+
+    def _cell_ok(b):
+        if not cfg.CELL_DROPS_ENABLED:
+            return True
+        return ((b.get("league") or "").upper(), (b.get("side") or "").lower()) not in cfg.CELL_DROPS
+
+    def _eligible(b):
+        return (float(b.get("true_prob") or 0.0) >= min_prob
+                and _cell_ok(b) and not is_excluded_league(b.get("league")))
+
+    pool = [b for b in std_bets if _eligible(b)]
+    report["pool"] = {
+        "std_bets": len(std_bets), "eligible_pool": len(pool),
+        "clear_min_prob": sum(1 for p in probs if p >= min_prob),
+        "true_prob_hist": hist,
+        "cell_drops_enabled": cfg.CELL_DROPS_ENABLED,
+    }
+    add("eligible_pool_nonempty", len(pool) >= n_legs,
+        f"{len(pool)} eligible bets (need >= {n_legs}); {report['pool']['clear_min_prob']} "
+        f"of {len(std_bets)} standard bets clear min_prob={min_prob}")
+
+    # 4. Cross-slip dedup set size (empty = nothing logged in the last 48h).
+    from engine.backtest import BacktestLogger
+    bl_read = BacktestLogger(user_id=uid, jwt=user["jwt"])
+    try:
+        used_pairs = bl_read._load_used_keys_from_db()
+    except Exception as e:
+        used_pairs = set()
+        add("dedup_readable", False, f"dedup read failed: {e}")
+    report["dedup_used_pairs_48h"] = len(used_pairs)
+
+    # 5. DRY-RUN try_log_slip against a rollback-only fake DB (writes NOTHING):
+    #    it reads real dedup via the user client, but every insert is a no-op
+    #    and every slips/legs read returns []. This surfaces the exact gate
+    #    (too few legs / avg-prob / EV) without persisting anything.
+    class _DryRunDB:
+        def __init__(self, real):
+            self._real = real
+        def table(self, name):
+            return _DryRunQuery(self._real, name)
+
+    class _DryRunQuery:
+        def __init__(self, real, name):
+            self._q = real.table(name)  # real read chain for slips/legs dedup
+            self._name = name
+            self._op = None
+        def select(self, *a, **k): self._q = self._q.select(*a, **k); return self
+        def eq(self, *a, **k): self._q = self._q.eq(*a, **k); return self
+        def in_(self, *a, **k): self._q = self._q.in_(*a, **k); return self
+        def gte(self, *a, **k): self._q = self._q.gte(*a, **k); return self
+        def order(self, *a, **k): self._q = self._q.order(*a, **k); return self
+        def limit(self, *a, **k): self._q = self._q.limit(*a, **k); return self
+        def insert(self, rows): self._op = "insert"; return self
+        def delete(self, *a, **k): self._op = "delete"; return self
+        def execute(self):
+            if self._op in ("insert", "delete"):
+                class _R:  # writes are no-ops in dry-run
+                    data = []
+                return _R()
+            return self._q.execute()
+
+    user_db = get_user_db(user["jwt"])
+    dry = _DryRunDB(user_db)
+    bl_dry = BacktestLogger(user_id=uid, db_client=dry)
+
+    import logging as _logging
+    class _Capture(_logging.Handler):
+        def __init__(self): super().__init__(); self.msgs = []
+        def emit(self, rec): self.msgs.append(rec.getMessage())
+    cap = _Capture()
+    bt_logger = _logging.getLogger("engine.backtest")
+    bt_logger.addHandler(cap)
+    try:
+        if slip_type.lower() == "flex":
+            dry_result = None
+            for try_n in range(n_legs, 3, -1):
+                dry_result = bl_dry.try_log_slip(pool[:40], slip_type=slip_type, n_legs=try_n)
+                if dry_result is not None:
+                    break
+        else:
+            dry_result = bl_dry.try_log_slip(pool[:40], slip_type=slip_type, n_legs=n_legs)
+    except Exception as e:
+        dry_result = None
+        cap.msgs.append(f"try_log_slip raised: {e}")
+    finally:
+        bt_logger.removeHandler(cap)
+
+    add("dry_run_would_log", dry_result is not None,
+        "a slip WOULD be logged" if dry_result is not None
+        else "try_log_slip returned None — see skip_reasons")
+    report["skip_reasons"] = [m for m in cap.msgs if "skip slip" in m or "raised" in m][-5:]
+
+    # Verdict.
+    if not bets_payload:
+        report["verdict"] = ("Bet cache empty — the scrape likely failed (see scrape_errors), "
+                             "so the auto-log worker never ran this cycle.")
+    elif not auto_on:
+        report["verdict"] = ("auto_backtest is FALSE in the DB even though the UI shows it on — "
+                             "the toggle write isn't persisting. Re-toggle it and re-run this.")
+    elif len(pool) < n_legs:
+        report["verdict"] = (f"Eligible pool ({len(pool)}) is smaller than n_legs ({n_legs}). "
+                             "See pool.true_prob_hist — legs may sit below effective_min_prob.")
+    elif dry_result is None:
+        report["verdict"] = ("Pool is fine but try_log_slip rejects the slip — see skip_reasons "
+                             "for the exact gate (avg-prob / EV / 2-team).")
+    else:
+        report["verdict"] = ("Everything passes in dry-run: a slip WOULD log. If the backtest is "
+                             "still empty, the failure is at the WRITE step (check server logs for "
+                             "'Supabase write failed').")
+    return report
+
+
 @app.get("/api/bootstrap")
 def get_bootstrap_legacy(request: Request):
     """Back-compat shim: old clients (or stale cached HTML) may still call
