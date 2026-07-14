@@ -99,6 +99,15 @@ function EVPage() {
   const [allBets, setAllBets] = useState([]);
   const [loadState, setLoadState] = useState("loading"); // loading | ok | error
   const [errMsg, setErrMsg] = useState("");
+  // Server-side freshness signals from /api/bootstrap/core, so the meta bar can
+  // show honest data-age (the pipeline preserves the previous snapshot on a
+  // failed scrape, so a "live" pill over hours-old odds is a real risk) and any
+  // per-book scraper errors from the last cycle.
+  const [lastRefresh, setLastRefresh] = useState(null);   // ISO string or null
+  const [scrapeErrors, setScrapeErrors] = useState(null); // {book: reason} or null
+  const [intervalMin, setIntervalMin] = useState(5);
+  // Ticks every 20s so the relative data-age recomputes without a refetch.
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
   const [autoBacktest, setAutoBacktest] = useState(false);
   // Green devils (PrizePicks goblins) — discounted, higher-hit-rate lines.
@@ -146,6 +155,9 @@ function EVPage() {
           return row;
         });
         setAllBets(ui);
+        if (data.last_refresh) setLastRefresh(data.last_refresh);
+        setScrapeErrors(data.scrape_errors || {});
+        if (typeof data.interval_min === "number") setIntervalMin(data.interval_min);
         setLoadState("ok");
       } catch (ex) {
         if (cancelled) return;
@@ -157,6 +169,30 @@ function EVPage() {
     const id = setInterval(load, 30000); // refresh every 30s
     return () => { cancelled = true; clearInterval(id); };
   }, []);
+
+  // Recompute relative data-age between fetches so the freshness pill counts up
+  // even if a scrape cycle silently fails and last_refresh stops advancing.
+  React.useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 20000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Freshness pill model. Amber once data is older than one scrape interval,
+  // red at 3x (a stuck/failed pipeline). Also folds in last-cycle scraper
+  // errors so a partial failure (e.g. Pinnacle down) is visible, not hidden
+  // behind a green "live" badge.
+  const freshness = useMemoE(() => {
+    if (!lastRefresh) return null;
+    const ageMs = Math.max(0, nowTick - new Date(lastRefresh).getTime());
+    const ageMin = ageMs / 60000;
+    const label = ageMin < 1 ? "just now"
+      : ageMin < 60 ? `${Math.round(ageMin)}m old`
+      : `${Math.floor(ageMin / 60)}h ${Math.round(ageMin % 60)}m old`;
+    const intv = intervalMin || 5;
+    const level = ageMin > intv * 3 ? "stale" : ageMin > intv + 1 ? "aging" : "fresh";
+    const failed = scrapeErrors ? Object.keys(scrapeErrors) : [];
+    return { label, level, failed };
+  }, [lastRefresh, nowTick, intervalMin, scrapeErrors]);
 
   // Load the user's saved prefs from /api/config on mount so values
   // persist across reloads / devices for that account. Once hydrated, the
@@ -567,9 +603,37 @@ function EVPage() {
           <span className="ev-meta-dot">·</span>
           <span>
             {loadState === "loading" && "Loading…"}
-            {loadState === "ok" && <>Updated <em className="ev-pulse">live</em></>}
+            {loadState === "ok" && (
+              freshness
+                ? <>
+                    Data <span
+                      className="ev-fresh"
+                      style={{
+                        color: freshness.level === "stale" ? "#FCA5A5"
+                             : freshness.level === "aging" ? "#FCD34D"
+                             : "#22c55e",
+                        fontStyle: "normal", fontWeight: 600,
+                      }}
+                    >{freshness.label}</span>
+                    {freshness.level === "fresh" && <em className="ev-pulse" style={{ marginLeft: 6 }}>live</em>}
+                  </>
+                : <>Updated <em className="ev-pulse">live</em></>
+            )}
             {loadState === "error" && <span style={{color:"#FCA5A5"}}>Error: {errMsg}</span>}
           </span>
+          {loadState === "ok" && freshness && freshness.failed.length > 0 && (
+            <>
+              <span className="ev-meta-dot">·</span>
+              <span
+                style={{ color: "#FCD34D", fontWeight: 600 }}
+                title={"Last scrape cycle had errors:\n" +
+                  Object.entries(scrapeErrors).map(([b, r]) => `  • ${b}: ${r}`).join("\n") +
+                  "\n\nOdds from these books may be stale (previous snapshot preserved)."}
+              >
+                ⚠ {freshness.failed.map(b => b.slice(0, 3).toUpperCase()).join(", ")} failed
+              </span>
+            </>
+          )}
           <span className="ev-meta-pag">{bets.length} of {allBets.length}</span>
         </div>
 

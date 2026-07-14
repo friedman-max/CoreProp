@@ -1,4 +1,4 @@
-nd# Python bytecode and caches
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
 *$py.class
@@ -32,6 +32,11 @@ build/
 dist/
 *.egg-info/
 .eggs/
+# ...but the precompiled frontend bundles MUST be tracked: Render's build env is
+# pip-only (no node), so it can't run ./build.sh — it serves the committed
+# web/static/dist/*.js directly. Un-ignore them.
+!web/static/dist/
+!web/static/dist/*.js
 
 # Logs
 *.log

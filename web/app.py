@@ -229,14 +229,18 @@ def _json_bytes(obj) -> bytes:
     return json.dumps(obj, separators=(",", ":"), default=str).encode("utf-8")
 
 
-def _serialize_one(key: str, data, last_iso: str, interval_min=None) -> bytes:
+def _serialize_one(key: str, data, last_iso: str, interval_min=None, scrape_errors=None) -> bytes:
     """Encode a single dataset's response body as JSON bytes."""
     if key == "bets":
         payload = {"bets": data, "total": len(data), "is_scraping": False, "last_refresh": last_iso}
     elif key == "matches":
         payload = {"matches": data, "total": len(data), "is_scraping": False, "last_refresh": last_iso}
     elif key == "core":
-        payload = {"bets": data, "total": len(data), "is_scraping": False, "last_refresh": last_iso, "interval_min": interval_min}
+        # scrape_errors rides along on the core payload so the +EV page can show
+        # a data-freshness / scraper-health pill without a second /api/status
+        # round trip on every load. {} means the last cycle was clean.
+        payload = {"bets": data, "total": len(data), "is_scraping": False, "last_refresh": last_iso,
+                   "interval_min": interval_min, "scrape_errors": scrape_errors or {}}
     else:  # pp_lines / fd_lines / dk_lines / pin_lines — line datasets
         payload = {"lines": data, "total": len(data), "is_scraping": False, "last_refresh": last_iso}
     return _json_bytes(payload)
@@ -251,6 +255,7 @@ def _refresh_payload_cache(
     serialized_pin,
     last_refresh,
     interval_min,
+    scrape_errors=None,
 ):
     """Build all pre-serialized response bytes in one pass. Called from the
     pipeline with the just-built state so we never dumps() per-request."""
@@ -266,7 +271,7 @@ def _refresh_payload_cache(
     fd_bytes      = _serialize_one("fd_lines", serialized_fd, last_iso)
     dk_bytes      = _serialize_one("dk_lines", serialized_dk, last_iso)
     pin_bytes     = _serialize_one("pin_lines", serialized_pin, last_iso)
-    core_bytes    = _serialize_one("core", serialized_bets, last_iso, interval_min)
+    core_bytes    = _serialize_one("core", serialized_bets, last_iso, interval_min, scrape_errors)
 
     with _payload_lock:
         _payload_cache["bets"]      = bets_bytes
@@ -304,6 +309,7 @@ def _rebuild_cache_from_state():
             _state["pin_lines"],
             _state["last_refresh"],
             _state["interval_min"],
+            _state.get("scrape_errors") or {},
         )
 
 
@@ -939,6 +945,7 @@ def _run_pipeline_body():
             _state["scrape_errors"] = errors
             interval_min_snapshot = _state["interval_min"]
             last_refresh_snapshot = _state["last_refresh"]
+            scrape_errors_snapshot = dict(errors)
 
         # Rebuild the pre-serialized payload cache so subsequent GETs avoid
         # per-request json.dumps. Done outside the state lock because json
@@ -952,6 +959,7 @@ def _run_pipeline_body():
             serialized_pin,
             last_refresh_snapshot,
             interval_min_snapshot,
+            scrape_errors_snapshot,
         )
         # Books bytes are now in the payload cache — the Python lists in
         # _state are redundant (never read elsewhere). Releasing them here
