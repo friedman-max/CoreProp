@@ -21,28 +21,15 @@ const EV_FLEX_PAYOUTS = {
   5: { 3: 0.4, 4: 2.0, 5: 10.0 },
   6: { 4: 0.4, 5: 2.0, 6: 25.0 },
 };
-// Goblin/demon payout adjustment. Mirrors engine/constants.py
-// ODDS_TYPE_PAYOUT_FACTOR + slip_payout_factor. The real multiplier isn't in
-// the PrizePicks public feed, so goblin is a CONSERVATIVE < 1.0 factor: a slip
-// with goblin legs is never shown as MORE +EV than the standard table implies.
-const EV_ODDS_TYPE_FACTOR = { standard: 1.0, goblin: 0.85, demon: 1.5 };
-function slipPayoutFactor(legs) {
-  return (legs || []).reduce(
-    (f, l) => f * (EV_ODDS_TYPE_FACTOR[String(l.oddsType || "standard").toLowerCase()] || 1.0),
-    1.0,
-  );
-}
 function slipEvPct(slipTypeRaw, legs) {
   const probs = (legs || []).map(l => Math.max(0, Math.min(1, (l.truePct || 0) / 100)));
   const n = probs.length;
   if (n < 2) return null;
   const slipType = String(slipTypeRaw || "power").toLowerCase();
-  // Scale the base-table payout by the goblin/demon factor (1.0 for standard).
-  const gd = slipPayoutFactor(legs);
   if (slipType === "power") {
     const pay = EV_POWER_PAYOUTS[n];
     if (!pay) return null;
-    return (probs.reduce((a, p) => a * p, 1) * pay * gd - 1) * 100;
+    return (probs.reduce((a, p) => a * p, 1) * pay - 1) * 100;
   }
   // Flex: distribution over exact hit counts (Poisson-binomial).
   let dist = [1];
@@ -54,12 +41,12 @@ function slipEvPct(slipTypeRaw, legs) {
     }
     dist = next;
   }
-  if (n === 2) return (dist[2] * EV_POWER_PAYOUTS[2] * gd - 1) * 100;
+  if (n === 2) return (dist[2] * EV_POWER_PAYOUTS[2] - 1) * 100;
   const table = EV_FLEX_PAYOUTS[n];
   if (!table) return null;
   let expected = 0;
   for (let k = 0; k < dist.length; k++) expected += dist[k] * (table[k] || 0);
-  return (expected * gd - 1) * 100;
+  return (expected - 1) * 100;
 }
 
 // Per-leg break-even % for an n-leg slip of a given type, DERIVED from the

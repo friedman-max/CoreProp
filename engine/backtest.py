@@ -186,7 +186,7 @@ def make_bet_key(player: str, start_time: str) -> tuple[str, str]:
 # from the payload ONLY when the DB error actually names the column — never
 # preemptively (stripping dedup_key blindly on any error was what let a
 # retried batch bypass the (user_id, dedup_key) unique index).
-_OPTIONAL_LEG_COLS = ("dedup_key", "team", "raw_true_prob", "closing_books", "books", "odds_type")
+_OPTIONAL_LEG_COLS = ("dedup_key", "team", "raw_true_prob", "closing_books", "books")
 
 
 def _is_duplicate_err(msg: str) -> bool:
@@ -531,24 +531,15 @@ class BacktestLogger:
             )
             return None
 
-        # Green-devil / demon payout adjustment. Goblins pay LESS than the
-        # standard table, so their slip EV must be scaled down — otherwise a
-        # goblin slip looks more +EV than it is and clears this gate wrongly.
-        # slip_payout_factor is 1.0 for an all-standard slip (no change).
-        from engine.constants import slip_payout_factor
-        _payout_factor = slip_payout_factor(
-            [(b.get("odds_type") or "standard") for b in best_legs]
-        )
-
         # Use the correct EV function for the slip type. A 2-leg Flex is
         # identical to a 2-leg Power (FLEX_PAYOUTS has no n=2 tier, so
         # flex_slip_ev would return None and silently drop the slip) — this
         # mirrors the "Flex 2-leg = Power 2-leg" rule used in the payout math
         # (web/app.py get_backtest_slips, frontend btSlipEvPct).
         if slip_type.lower() == "power" or len(true_probs) == 2:
-            best_ev = power_slip_ev(true_probs, _payout_factor)
+            best_ev = power_slip_ev(true_probs)
         else:
-            best_ev = flex_slip_ev(true_probs, _payout_factor)
+            best_ev = flex_slip_ev(true_probs)
 
         if best_ev is None or best_ev <= 0:
             logger.info(
@@ -641,10 +632,6 @@ class BacktestLogger:
                 "result":           "pending",
                 "stat_actual":      "",
                 "team":             (bet.get("team") or "").strip(),
-                # Persist the PrizePicks odds variant so goblin/demon slips are
-                # identifiable and re-scoreable later (the payout scoring paths
-                # apply slip_payout_factor from this). Defaults to 'standard'.
-                "odds_type":        (bet.get("odds_type") or "standard"),
             })
 
         # Write to Supabase using provided client or user-scoped DB
@@ -684,7 +671,6 @@ class BacktestLogger:
                     "result":        r["result"],
                     "stat_actual":   None if r["stat_actual"] == "" else r["stat_actual"],
                     "team":          r["team"] or None,
-                    "odds_type":     r["odds_type"],
                     # Canonical fingerprint — backed by the partial
                     # UNIQUE INDEX on (user_id, dedup_key) added in
                     # migration_008. Second insertion of the same

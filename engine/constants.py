@@ -42,43 +42,6 @@ FLEX_PAYOUTS = {
     6: {4: 0.4,  5: 2.0,  6: 25.0},
 }
 
-# ── Green-devil (goblin) / demon payout adjustment ──────────────────────────
-# PrizePicks goblins (easier line, LOWER payout) and demons (harder line, HIGHER
-# payout) change a slip's effective multiplier. The PUBLIC projections feed the
-# scraper reads exposes only a boolean `adjusted_odds` and the moved line_score
-# — it does NOT expose the numeric multiplier (that lives behind PrizePicks'
-# authenticated entry-pricing API). So the exact goblin/demon payout is NOT
-# knowable from our data; these factors are a CONSERVATIVE APPROXIMATION.
-#
-# Model: each leg contributes a per-leg payout factor; the slip's payout is the
-# base Power/Flex table value scaled by the product of its legs' factors. A
-# pure-standard slip has factor 1.0 (no change — standard scoring is unaffected).
-# Goblin factor is < 1.0 so a goblin slip is NEVER credited MORE payout/EV than
-# the standard table would give (erring toward under-crediting, per the rule
-# that we must never make a goblin look more +EV than reality). 0.85 reflects a
-# goblin leg's reduced effective per-leg odds (~1.6x vs the ~1.85x standard
-# 6-Power per-leg) — an estimate, tunable here in one place. Demon > 1.0 is
-# defined for completeness though demons are never scraped/logged today.
-#
-# To get EXACT values, capture the multiplier from PrizePicks' authenticated
-# entry-preview endpoint (out of scope; see the odds_type column persisted on
-# each leg, which makes historical goblin slips re-scoreable once captured).
-ODDS_TYPE_PAYOUT_FACTOR = {
-    "standard": 1.0,
-    "goblin":   0.85,
-    "demon":    1.50,
-}
-
-
-def slip_payout_factor(leg_odds_types) -> float:
-    """Multiplicative payout adjustment for a slip from its legs' odds types.
-    1.0 for an all-standard slip. See ODDS_TYPE_PAYOUT_FACTOR for the model and
-    its (approximate) basis. Unknown odds types default to 1.0 (no adjustment)."""
-    f = 1.0
-    for ot in (leg_odds_types or []):
-        f *= ODDS_TYPE_PAYOUT_FACTOR.get((ot or "standard").strip().lower(), 1.0)
-    return f
-
 # The most efficient single-leg implied decimal odds (Power 6 / 1.849 multiplier)
 # DEPRECATED for ranking / EV display: this is the per-leg break-even ONLY for
 # a 6-leg Power slip. Legs near this threshold are EV-negative inside shorter

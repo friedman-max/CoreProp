@@ -358,18 +358,6 @@ alter table market_observatory add column if not exists closing_books jsonb defa
 
 
 -- ─────────────────────────────────────────────────────────────────────────
--- migration_018 — persist PrizePicks odds variant on each leg
---   'standard' | 'goblin' | 'demon'. The payout scoring paths apply
---   engine.constants.slip_payout_factor from this. Existing rows default to
---   'standard' (factor 1.0), so backfilled history scores unchanged.
--- ─────────────────────────────────────────────────────────────────────────
-
-alter table legs add column if not exists odds_type text default 'standard';
-create index if not exists idx_legs_odds_type
-  on legs(odds_type) where odds_type is not null and odds_type <> 'standard';
-
-
--- ─────────────────────────────────────────────────────────────────────────
 -- migration_009 + migration_017 — observatory upsert guard (final version)
 --   Preserves first_seen_at, bumps last_seen_at, freezes resolution state on
 --   ALREADY-graded rows, but ALLOWS the pending → graded transition (017 fix).

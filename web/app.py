@@ -224,40 +224,6 @@ def _build_etag(last_refresh) -> str:
     return f'W/"{h}"'
 
 
-# Whether the legs.odds_type column (migration_018) exists on the deployed
-# schema. None = not yet probed. Deploys land BEFORE the human runs the SQL, so
-# a read that names odds_type would 400 ("column does not exist") and blank the
-# Backtest/Analytics tabs. We probe once per process and cache: if the column
-# is absent, reads omit it and everything scores as standard (factor 1.0) until
-# the migration runs — no blank tab, no error. Flips to True automatically the
-# first successful read after the migration is applied.
-_legs_has_odds_type = None
-
-
-def _legs_leg_cols(base_cols: str) -> str:
-    """Append ', odds_type' to a legs column projection only if that column is
-    known (or not yet known) to exist. Returns base_cols unchanged once we've
-    observed the column is missing, so pre-migration_018 deploys don't 400."""
-    if _legs_has_odds_type is False:
-        return base_cols
-    return base_cols + ", odds_type"
-
-
-def _note_odds_type_missing(exc: Exception) -> bool:
-    """If `exc` is PostgREST complaining that odds_type doesn't exist, remember
-    that (so subsequent reads drop the column) and return True. Otherwise False."""
-    global _legs_has_odds_type
-    msg = str(exc).lower()
-    if "odds_type" in msg and ("does not exist" in msg or "column" in msg or "42703" in msg):
-        _legs_has_odds_type = False
-        logger.warning(
-            "legs.odds_type column not present yet (apply migration_018.sql); "
-            "scoring all legs as standard until then."
-        )
-        return True
-    return False
-
-
 def _json_bytes(obj) -> bytes:
     """Compact JSON encoding. separators=(',',':') trims ~15% off list payloads."""
     return json.dumps(obj, separators=(",", ":"), default=str).encode("utf-8")
@@ -2849,30 +2815,17 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         # page-backtest.jsx btMapSlip). select("*") pulled raw_true_prob,
         # closing_prob, clv_pct, dedup_key, user_id, team, ind_ev_pct — none
         # of which the Backtest tab renders — inflating every leg row.
-        _base_leg_cols = "slip_id, leg_num, player, league, prop, line, side, true_prob, result, stat_actual"
-        _leg_cols = _legs_leg_cols(_base_leg_cols)  # adds odds_type when present
+        _leg_cols = "slip_id, leg_num, player, league, prop, line, side, true_prob, result, stat_actual"
         _page_size = 1000
         _offset = 0
-        global _legs_has_odds_type
         while True:
-            try:
-                _page = (
-                    db.table("legs").select(_leg_cols).in_("slip_id", sids)
-                      .order("slip_id", desc=False)
-                      .range(_offset, _offset + _page_size - 1)
-                      .execute()
-                      .data
-                ) or []
-            except Exception as _col_exc:
-                # Pre-migration_018: odds_type doesn't exist yet. Drop it and
-                # retry this page without it (scores as standard).
-                if _note_odds_type_missing(_col_exc) and _leg_cols != _base_leg_cols:
-                    _leg_cols = _base_leg_cols
-                    continue
-                raise
-            # First successful read that included odds_type confirms it exists.
-            if _legs_has_odds_type is None and "odds_type" in _leg_cols:
-                _legs_has_odds_type = True
+            _page = (
+                db.table("legs").select(_leg_cols).in_("slip_id", sids)
+                  .order("slip_id", desc=False)
+                  .range(_offset, _offset + _page_size - 1)
+                  .execute()
+                  .data
+            ) or []
             for l in _page:
                 legs_by_slip.setdefault(l["slip_id"], []).append(l)
             if len(_page) < _page_size:
@@ -2912,16 +2865,13 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         return {"slips": [], "total": 0}
 
     # Compute payout per slip (Common Logic)
-    from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS, slip_payout_factor
+    from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS
 
     for slip in all_slips:
         legs = slip.get("legs", [])
         n_legs = int(slip.get("n_legs") or len(legs))
         slip_type = (slip.get("slip_type") or "").lower()
         results = [l.get("result", "pending") for l in legs]
-        # Green-devil / demon payout factor from the legs' persisted odds_type
-        # (1.0 for an all-standard slip). Goblin slips pay less than the table.
-        gd_factor = slip_payout_factor([l.get("odds_type") or "standard" for l in legs])
 
         completed = all(r in ("hit", "miss", "push", "dnp") for r in results)
         slip["completed"] = completed
@@ -2941,10 +2891,6 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
                 else:
                     payout = FLEX_PAYOUTS.get(n_eff, {}).get(hits_eff, 0)
 
-            # Scale a winning payout by the goblin/demon factor. Applied only to
-            # the payout (not the 0 for a loss), so a losing slip stays 0.
-            if payout:
-                payout = round(payout * gd_factor, 4)
             slip["payout"] = payout
             slip["hits"] = hits_eff
         else:
