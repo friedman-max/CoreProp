@@ -315,7 +315,7 @@ def evaluate_analytics(user_jwt: str) -> dict:
         frontend can recompute every metric for the chart's selected
         date range without another round trip.
     """
-    from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS
+    from engine.constants import POWER_PAYOUTS, FLEX_PAYOUTS, slip_payout_factor
 
     # Fetch every leg; both the calibration metrics and the slip aggregation
     # read from this list. PostgREST silently caps an unbounded select at 1000
@@ -328,26 +328,36 @@ def evaluate_analytics(user_jwt: str) -> dict:
     db = get_user_db(user_jwt)
     all_legs: list = []
     if db:
-        try:
-            cols = "result, true_prob, player, prop, side, league, slip_id, leg_num, closing_prob, clv_pct"
-            page_size = 1000
-            offset = 0
-            while True:
-                page = (
-                    db.table("legs")
-                      .select(cols)
-                      .order("slip_id", desc=False)
-                      .range(offset, offset + page_size - 1)
-                      .execute()
-                      .data
-                ) or []
-                all_legs.extend(page)
-                if len(page) < page_size:
-                    break
-                offset += page_size
-        except Exception as exc:
-            logger.warning("Analytics: legs fetch failed: %s", exc)
-            all_legs = []
+        _base_cols = "result, true_prob, player, prop, side, league, slip_id, leg_num, closing_prob, clv_pct"
+        # odds_type (migration_018) may not exist yet on the deployed schema —
+        # naming a missing column 400s and would blank Analytics. Try with it,
+        # fall back without it (everything then scores as standard, factor 1.0).
+        for cols in (_base_cols + ", odds_type", _base_cols):
+            try:
+                all_legs = []
+                page_size = 1000
+                offset = 0
+                while True:
+                    page = (
+                        db.table("legs")
+                          .select(cols)
+                          .order("slip_id", desc=False)
+                          .range(offset, offset + page_size - 1)
+                          .execute()
+                          .data
+                    ) or []
+                    all_legs.extend(page)
+                    if len(page) < page_size:
+                        break
+                    offset += page_size
+                break  # success
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "odds_type" in cols and "odds_type" in msg:
+                    continue  # retry without the not-yet-migrated column
+                logger.warning("Analytics: legs fetch failed: %s", exc)
+                all_legs = []
+                break
 
     # Dedup by (slip_id, leg_num). A slip corrupted by the old lost-response
     # double-insert bug (fixed in engine.backtest.insert_legs_idempotent) has
@@ -516,6 +526,14 @@ def evaluate_analytics(user_jwt: str) -> dict:
                         payout = POWER_PAYOUTS.get(2, 0) if hits_eff == 2 else 0
                     else:
                         payout = FLEX_PAYOUTS.get(n_eff, {}).get(hits_eff, 0)
+
+                # Scale a winning payout by the goblin/demon factor from the
+                # legs' odds_type (1.0 for an all-standard slip). Keeps realized
+                # P&L consistent with the EV the slip was logged at.
+                if payout:
+                    payout = float(payout) * slip_payout_factor(
+                        [l.get("odds_type") or "standard" for l in legs]
+                    )
 
                 pnl = float(payout) - 1.0  # 1-unit stake per slip
                 cum_pnl += pnl

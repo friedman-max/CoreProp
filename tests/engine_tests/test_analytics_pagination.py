@@ -106,8 +106,10 @@ class AnalyticsPaginationTests(unittest.TestCase):
         timeline = out.get("pnl_timeline", [])
         win_points = [p for p in timeline if p.get("slip_id") == win_sid]
         self.assertTrue(win_points, "winning slip past the 1000-row cap is missing from the P&L timeline")
-        # 6-leg Power all-hit pays 40x → pnl = 40 - 1 = 39 on a 1-unit stake.
-        self.assertAlmostEqual(win_points[0]["pnl"], 39.0, places=4)
+        # 6-leg Power all-hit pays 37.5x (PrizePicks' current table) → pnl =
+        # 37.5 - 1 = 36.5 on a 1-unit stake. (Legs carry no odds_type, so the
+        # goblin/demon factor is 1.0 — standard scoring.)
+        self.assertAlmostEqual(win_points[0]["pnl"], 36.5, places=4)
         self.assertGreaterEqual(out.get("won_slips", 0), 1)
 
 

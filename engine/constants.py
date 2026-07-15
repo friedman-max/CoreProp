@@ -14,27 +14,70 @@ BREAK_EVEN = {
     ("4", "flex"):  0.5503,
     ("5", "power"): 0.5493,   # (1/20)^(1/5)
     ("5", "flex"):  0.5425,
-    ("6", "power"): 0.5407,   # (1/40)^(1/6)
+    ("6", "power"): 0.5466,   # (1/37.5)^(1/6) — PrizePicks lowered the 6-Power
+                              # top payout from 40x to 37.5x; the break-even
+                              # rises with it (was 0.5407 at 40x).
     ("6", "flex"):  0.5421,
 }
 
-# Power slip payout multipliers (decimal, e.g. 3x means you get 3x your stake back)
+# Power slip payout multipliers (decimal, e.g. 3x means you get 3x your stake back).
+# Matches PrizePicks' current published Power Play table. NOTE: the 6-pick pays
+# 37.5x today (PrizePicks reduced it from the older 40x); the frontend mirror in
+# web/static/ev-page.jsx (EV_POWER_PAYOUTS) MUST stay identical to this table.
 POWER_PAYOUTS = {
     2: 3.0,
     3: 6.0,
     4: 10.0,
     5: 20.0,
-    6: 40.0,
+    6: 37.5,
 }
 
 # Flex payout tiers: {n_picks: {k_correct: decimal_multiplier}}
-# Only tiers that pay out are listed; missing k → 0
+# Only tiers that pay out are listed; missing k → 0. Matches the current
+# published Flex Play table; mirror EV_FLEX_PAYOUTS in ev-page.jsx.
 FLEX_PAYOUTS = {
     3: {2: 1.0, 3: 3.0},
     4: {3: 1.5,  4: 6.0},
     5: {3: 0.4,  4: 2.0,  5: 10.0},
     6: {4: 0.4,  5: 2.0,  6: 25.0},
 }
+
+# ── Green-devil (goblin) / demon payout adjustment ──────────────────────────
+# PrizePicks goblins (easier line, LOWER payout) and demons (harder line, HIGHER
+# payout) change a slip's effective multiplier. The PUBLIC projections feed the
+# scraper reads exposes only a boolean `adjusted_odds` and the moved line_score
+# — it does NOT expose the numeric multiplier (that lives behind PrizePicks'
+# authenticated entry-pricing API). So the exact goblin/demon payout is NOT
+# knowable from our data; these factors are a CONSERVATIVE APPROXIMATION.
+#
+# Model: each leg contributes a per-leg payout factor; the slip's payout is the
+# base Power/Flex table value scaled by the product of its legs' factors. A
+# pure-standard slip has factor 1.0 (no change — standard scoring is unaffected).
+# Goblin factor is < 1.0 so a goblin slip is NEVER credited MORE payout/EV than
+# the standard table would give (erring toward under-crediting, per the rule
+# that we must never make a goblin look more +EV than reality). 0.85 reflects a
+# goblin leg's reduced effective per-leg odds (~1.6x vs the ~1.85x standard
+# 6-Power per-leg) — an estimate, tunable here in one place. Demon > 1.0 is
+# defined for completeness though demons are never scraped/logged today.
+#
+# To get EXACT values, capture the multiplier from PrizePicks' authenticated
+# entry-preview endpoint (out of scope; see the odds_type column persisted on
+# each leg, which makes historical goblin slips re-scoreable once captured).
+ODDS_TYPE_PAYOUT_FACTOR = {
+    "standard": 1.0,
+    "goblin":   0.85,
+    "demon":    1.50,
+}
+
+
+def slip_payout_factor(leg_odds_types) -> float:
+    """Multiplicative payout adjustment for a slip from its legs' odds types.
+    1.0 for an all-standard slip. See ODDS_TYPE_PAYOUT_FACTOR for the model and
+    its (approximate) basis. Unknown odds types default to 1.0 (no adjustment)."""
+    f = 1.0
+    for ot in (leg_odds_types or []):
+        f *= ODDS_TYPE_PAYOUT_FACTOR.get((ot or "standard").strip().lower(), 1.0)
+    return f
 
 # The most efficient single-leg implied decimal odds (Power 6 / 1.849 multiplier)
 # DEPRECATED for ranking / EV display: this is the per-leg break-even ONLY for

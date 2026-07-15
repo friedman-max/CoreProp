@@ -12,22 +12,37 @@ function fmtGameTime(iso) {
 // backend engine/ev_calculator.py (Power = product×payout−1; Flex = expected
 // payout over the Poisson-binomial hit-count distribution). Payout tables
 // match engine/constants.py. Returns null for <2 legs / unknown leg count.
-const EV_POWER_PAYOUTS = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 40.0 };
+// KEEP IN SYNC with engine/constants.py POWER_PAYOUTS / FLEX_PAYOUTS. The
+// 6-pick Power pays 37.5x (PrizePicks lowered it from 40x).
+const EV_POWER_PAYOUTS = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 37.5 };
 const EV_FLEX_PAYOUTS = {
   3: { 2: 1.0, 3: 3.0 },
   4: { 3: 1.5, 4: 6.0 },
   5: { 3: 0.4, 4: 2.0, 5: 10.0 },
   6: { 4: 0.4, 5: 2.0, 6: 25.0 },
 };
+// Goblin/demon payout adjustment. Mirrors engine/constants.py
+// ODDS_TYPE_PAYOUT_FACTOR + slip_payout_factor. The real multiplier isn't in
+// the PrizePicks public feed, so goblin is a CONSERVATIVE < 1.0 factor: a slip
+// with goblin legs is never shown as MORE +EV than the standard table implies.
+const EV_ODDS_TYPE_FACTOR = { standard: 1.0, goblin: 0.85, demon: 1.5 };
+function slipPayoutFactor(legs) {
+  return (legs || []).reduce(
+    (f, l) => f * (EV_ODDS_TYPE_FACTOR[String(l.oddsType || "standard").toLowerCase()] || 1.0),
+    1.0,
+  );
+}
 function slipEvPct(slipTypeRaw, legs) {
   const probs = (legs || []).map(l => Math.max(0, Math.min(1, (l.truePct || 0) / 100)));
   const n = probs.length;
   if (n < 2) return null;
   const slipType = String(slipTypeRaw || "power").toLowerCase();
+  // Scale the base-table payout by the goblin/demon factor (1.0 for standard).
+  const gd = slipPayoutFactor(legs);
   if (slipType === "power") {
     const pay = EV_POWER_PAYOUTS[n];
     if (!pay) return null;
-    return (probs.reduce((a, p) => a * p, 1) * pay - 1) * 100;
+    return (probs.reduce((a, p) => a * p, 1) * pay * gd - 1) * 100;
   }
   // Flex: distribution over exact hit counts (Poisson-binomial).
   let dist = [1];
@@ -39,12 +54,12 @@ function slipEvPct(slipTypeRaw, legs) {
     }
     dist = next;
   }
-  if (n === 2) return (dist[2] * EV_POWER_PAYOUTS[2] - 1) * 100;
+  if (n === 2) return (dist[2] * EV_POWER_PAYOUTS[2] * gd - 1) * 100;
   const table = EV_FLEX_PAYOUTS[n];
   if (!table) return null;
   let expected = 0;
   for (let k = 0; k < dist.length; k++) expected += dist[k] * (table[k] || 0);
-  return (expected - 1) * 100;
+  return (expected * gd - 1) * 100;
 }
 
 // Per-leg break-even % for an n-leg slip of a given type, DERIVED from the
@@ -99,14 +114,13 @@ function EVPage() {
   const [allBets, setAllBets] = useState([]);
   const [loadState, setLoadState] = useState("loading"); // loading | ok | error
   const [errMsg, setErrMsg] = useState("");
-  // Server-side freshness signals from /api/bootstrap/core, so the meta bar can
-  // show honest data-age (the pipeline preserves the previous snapshot on a
-  // failed scrape, so a "live" pill over hours-old odds is a real risk) and any
-  // per-book scraper errors from the last cycle.
+  // Server-side data-age from /api/bootstrap/core, so the meta bar shows honest
+  // freshness: the pipeline preserves the previous snapshot on a failed scrape,
+  // so an unconditional "live" pill over hours-old odds would be misleading.
   const [lastRefresh, setLastRefresh] = useState(null);   // ISO string or null
-  const [scrapeErrors, setScrapeErrors] = useState(null); // {book: reason} or null
   const [intervalMin, setIntervalMin] = useState(5);
-  // Ticks every 20s so the relative data-age recomputes without a refetch.
+  // Ticks frequently so the relative data-age (and the "live" pulse) updates as
+  // the snapshot ages, without waiting on the next 30s data fetch.
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
   const [autoBacktest, setAutoBacktest] = useState(false);
@@ -156,7 +170,6 @@ function EVPage() {
         });
         setAllBets(ui);
         if (data.last_refresh) setLastRefresh(data.last_refresh);
-        setScrapeErrors(data.scrape_errors || {});
         if (typeof data.interval_min === "number") setIntervalMin(data.interval_min);
         setLoadState("ok");
       } catch (ex) {
@@ -170,17 +183,17 @@ function EVPage() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // Recompute relative data-age between fetches so the freshness pill counts up
-  // even if a scrape cycle silently fails and last_refresh stops advancing.
+  // Recompute relative data-age every 5s so the pill (and the "live" pulse)
+  // transitions promptly as the snapshot ages — even if a scrape cycle fails
+  // and last_refresh stops advancing — instead of lagging the 30s data fetch.
   React.useEffect(() => {
-    const id = setInterval(() => setNowTick(Date.now()), 20000);
+    const id = setInterval(() => setNowTick(Date.now()), 5000);
     return () => clearInterval(id);
   }, []);
 
-  // Freshness pill model. Amber once data is older than one scrape interval,
-  // red at 3x (a stuck/failed pipeline). Also folds in last-cycle scraper
-  // errors so a partial failure (e.g. Pinnacle down) is visible, not hidden
-  // behind a green "live" badge.
+  // Freshness pill model. "live" only while the data is genuinely current
+  // (under one scrape interval); amber once it's older than an interval, red at
+  // 3x (a stuck/failed pipeline).
   const freshness = useMemoE(() => {
     if (!lastRefresh) return null;
     const ageMs = Math.max(0, nowTick - new Date(lastRefresh).getTime());
@@ -190,9 +203,11 @@ function EVPage() {
       : `${Math.floor(ageMin / 60)}h ${Math.round(ageMin % 60)}m old`;
     const intv = intervalMin || 5;
     const level = ageMin > intv * 3 ? "stale" : ageMin > intv + 1 ? "aging" : "fresh";
-    const failed = scrapeErrors ? Object.keys(scrapeErrors) : [];
-    return { label, level, failed };
-  }, [lastRefresh, nowTick, intervalMin, scrapeErrors]);
+    // "live" pulse only while the snapshot is brand-new ("just now"); it drops
+    // the moment the data reads "1m old" so the badge tracks reality.
+    const isLive = ageMin < 1;
+    return { label, level, isLive };
+  }, [lastRefresh, nowTick, intervalMin]);
 
   // Load the user's saved prefs from /api/config on mount so values
   // persist across reloads / devices for that account. Once hydrated, the
@@ -615,25 +630,12 @@ function EVPage() {
                         fontStyle: "normal", fontWeight: 600,
                       }}
                     >{freshness.label}</span>
-                    {freshness.level === "fresh" && <em className="ev-pulse" style={{ marginLeft: 6 }}>live</em>}
+                    {freshness.isLive && <em className="ev-pulse" style={{ marginLeft: 6 }}>live</em>}
                   </>
                 : <>Updated <em className="ev-pulse">live</em></>
             )}
             {loadState === "error" && <span style={{color:"#FCA5A5"}}>Error: {errMsg}</span>}
           </span>
-          {loadState === "ok" && freshness && freshness.failed.length > 0 && (
-            <>
-              <span className="ev-meta-dot">·</span>
-              <span
-                style={{ color: "#FCD34D", fontWeight: 600 }}
-                title={"Last scrape cycle had errors:\n" +
-                  Object.entries(scrapeErrors).map(([b, r]) => `  • ${b}: ${r}`).join("\n") +
-                  "\n\nOdds from these books may be stale (previous snapshot preserved)."}
-              >
-                ⚠ {freshness.failed.map(b => b.slice(0, 3).toUpperCase()).join(", ")} failed
-              </span>
-            </>
-          )}
           <span className="ev-meta-pag">{bets.length} of {allBets.length}</span>
         </div>
 

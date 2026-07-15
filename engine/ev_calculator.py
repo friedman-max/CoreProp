@@ -168,10 +168,13 @@ class BetResult:
 # Slip EV calculations
 # ---------------------------------------------------------------------------
 
-def power_slip_ev(true_probs: list[float]) -> Optional[float]:
+def power_slip_ev(true_probs: list[float], payout_factor: float = 1.0) -> Optional[float]:
     """
     EV for a Power slip: all legs must hit.
     Returns None if the pick count isn't supported.
+
+    `payout_factor` scales the table payout for green-devil (goblin) / demon
+    slips (see engine.constants.slip_payout_factor); 1.0 = standard, unchanged.
     """
     n = len(true_probs)
     payout = POWER_PAYOUTS.get(n)
@@ -180,14 +183,17 @@ def power_slip_ev(true_probs: list[float]) -> Optional[float]:
     combined = 1.0
     for p in true_probs:
         combined *= p
-    return combined * payout - 1.0
+    return combined * payout * payout_factor - 1.0
 
 
-def flex_slip_ev(true_probs: list[float]) -> Optional[float]:
+def flex_slip_ev(true_probs: list[float], payout_factor: float = 1.0) -> Optional[float]:
     """
     EV for a Flex slip using full enumeration over all 2^n outcome combinations.
     Each leg has its own true_prob (independent).
     Returns None if the pick count isn't supported.
+
+    `payout_factor` scales every payout tier for goblin/demon slips
+    (see engine.constants.slip_payout_factor); 1.0 = standard, unchanged.
     """
     n = len(true_probs)
     payout_tiers = FLEX_PAYOUTS.get(n)
@@ -200,7 +206,7 @@ def flex_slip_ev(true_probs: list[float]) -> Optional[float]:
         for i, hit in enumerate(outcome):
             prob *= true_probs[i] if hit else (1.0 - true_probs[i])
         k = sum(outcome)
-        payout = payout_tiers.get(k, 0.0)
+        payout = payout_tiers.get(k, 0.0) * payout_factor
         ev += prob * payout
 
     return ev
@@ -252,6 +258,7 @@ def power_slip_ev_corr(
     corr_matrix: np.ndarray,
     n_sims: int = _MC_N_SIMS_DEFAULT,
     seed: Optional[int] = None,
+    payout_factor: float = 1.0,
 ) -> Optional[float]:
     """Correlation-aware Power EV via Gaussian copula Monte Carlo.
 
@@ -259,6 +266,9 @@ def power_slip_ev_corr(
     same-game stacks. This function samples correlated outcomes and computes
     P(all hit) directly, which at default n_sims has a standard error of
     ~0.7% on a 5% probability.
+
+    `payout_factor` scales the table payout for goblin/demon slips
+    (see engine.constants.slip_payout_factor); 1.0 = standard, unchanged.
     """
     n = len(probs)
     payout = POWER_PAYOUTS.get(n)
@@ -267,13 +277,13 @@ def power_slip_ev_corr(
     if n == 0:
         return None
     if n == 1:
-        return probs[0] * payout - 1.0
+        return probs[0] * payout * payout_factor - 1.0
 
     rng = np.random.default_rng(seed)
     p_arr = np.asarray(probs, dtype=float)
     hits = _sample_correlated_bernoullis(p_arr, corr_matrix, n_sims, rng)
     all_hit_rate = float((hits.sum(axis=1) == n).mean())
-    return all_hit_rate * payout - 1.0
+    return all_hit_rate * payout * payout_factor - 1.0
 
 
 def flex_slip_ev_corr(
@@ -281,12 +291,16 @@ def flex_slip_ev_corr(
     corr_matrix: np.ndarray,
     n_sims: int = _MC_N_SIMS_DEFAULT,
     seed: Optional[int] = None,
+    payout_factor: float = 1.0,
 ) -> Optional[float]:
     """Correlation-aware Flex EV via Gaussian copula Monte Carlo.
 
     Flex payouts depend on the number of hits, so we compute the full
     distribution of hit counts under the correlation structure rather than
     enumerating 2^n independent outcomes.
+
+    `payout_factor` scales every payout tier for goblin/demon slips
+    (see engine.constants.slip_payout_factor); 1.0 = standard, unchanged.
     """
     n = len(probs)
     payout_tiers = FLEX_PAYOUTS.get(n)
@@ -302,7 +316,7 @@ def flex_slip_ev_corr(
     for k, pay in payout_tiers.items():
         if pay == 0.0:
             continue
-        ev += float((hit_counts == k).mean()) * pay
+        ev += float((hit_counts == k).mean()) * pay * payout_factor
     return ev
 
 

@@ -6,13 +6,24 @@ const { useState: useStateBT, useMemo: useMemoBT } = React;
 // Mirror engine/constants.py exactly. Used to recompute slip payout from
 // leg outcomes when the API's `payout` or `completed` flags are missing
 // (e.g. older slips whose legs use "won"/"lost" instead of "hit"/"miss").
-const BT_POWER_PAYOUTS = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 40.0 };
+// KEEP IN SYNC with engine/constants.py: Power-6 pays 37.5x (not the old 40x).
+const BT_POWER_PAYOUTS = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 37.5 };
 const BT_FLEX_PAYOUTS = {
   3: { 2: 1.0, 3: 3.0 },
   4: { 3: 1.5, 4: 6.0 },
   5: { 3: 0.4, 4: 2.0, 5: 10.0 },
   6: { 4: 0.4, 5: 2.0, 6: 25.0 },
 };
+// Goblin/demon payout adjustment — mirrors engine/constants.py
+// ODDS_TYPE_PAYOUT_FACTOR / slip_payout_factor. Goblin < 1.0 so a goblin slip
+// is never scored above the standard table. Reads odds_type off the raw leg.
+const BT_ODDS_TYPE_FACTOR = { standard: 1.0, goblin: 0.85, demon: 1.5 };
+function btPayoutFactor(legs) {
+  return (legs || []).reduce(
+    (f, l) => f * (BT_ODDS_TYPE_FACTOR[String((l && (l.oddsType || l.odds_type)) || "standard").toLowerCase()] || 1.0),
+    1.0,
+  );
+}
 
 // Slip-level expected value % using the per-leg true probabilities.
 // EV per unit stake = sum_outcomes( P(outcome) * payout(outcome) ) − 1.
@@ -24,11 +35,13 @@ function btSlipEvPct(slipTypeRaw, legs) {
   if (n < 2) return null;
   const slipType = String(slipTypeRaw || "power").toLowerCase();
 
+  const gd = btPayoutFactor(legs);  // goblin/demon factor (1.0 for standard)
+
   if (slipType === "power") {
     const pAll = probs.reduce((a, p) => a * p, 1);
     const pay = BT_POWER_PAYOUTS[n];
     if (!pay) return null;
-    return (pAll * pay - 1) * 100;
+    return (pAll * pay * gd - 1) * 100;
   }
 
   // Flex: distribution over exact hit counts via Poisson-binomial.
@@ -44,7 +57,7 @@ function btSlipEvPct(slipTypeRaw, legs) {
   }
   if (n === 2) {
     // Flex 2-leg = Power 2-leg.
-    return (dist[2] * BT_POWER_PAYOUTS[2] - 1) * 100;
+    return (dist[2] * BT_POWER_PAYOUTS[2] * gd - 1) * 100;
   }
   const table = BT_FLEX_PAYOUTS[n];
   if (!table) return null;
@@ -53,7 +66,7 @@ function btSlipEvPct(slipTypeRaw, legs) {
     const pay = table[k] || 0;
     expected += dist[k] * pay;
   }
-  return (expected - 1) * 100;
+  return (expected * gd - 1) * 100;
 }
 
 // Normalise the various result wordings the legs table may carry.
@@ -94,6 +107,8 @@ function btComputeSlipOutcome(s) {
   } else {
     payout = ((BT_FLEX_PAYOUTS[nEff] || {})[hitsEff]) || 0;
   }
+  // Scale a winning payout by the goblin/demon factor (1.0 for all-standard).
+  if (payout) payout *= btPayoutFactor(s.legs);
 
   let result;
   if (nEff === 0) result = "push";
@@ -124,6 +139,7 @@ function btMapSlip(s) {
       line,
       prop: [propName, sideShort, line].filter(Boolean).join(" ").trim(),
       pct: l.true_prob != null ? l.true_prob * 100 : 0,
+      oddsType: l.odds_type || "standard",
       // Normalise to hit/miss/push/dnp/pending so summary stats and the
       // leg-actual pill render consistently regardless of how the row was
       // written ("won"/"lost"/"1"/"0" all map to hit/miss).
@@ -256,9 +272,9 @@ function BacktestPage() {
   const legHits = doneLegs.filter(l => l.result === "hit").length;
   const slipHits = done.filter(s => s.result === "hit").length;
 
-  // PrizePicks payout tables (must mirror engine/constants.py).
+  // PrizePicks payout tables (must mirror engine/constants.py; Power-6 = 37.5x).
   // For Power, payout when all hit. For Flex, payout when all hit.
-  const POWER_PAY = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 40.0 };
+  const POWER_PAY = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 37.5 };
   const FLEX_MAX_PAY = { 3: 3.0, 4: 6.0, 5: 10.0, 6: 25.0 };
 
   // Per-slip break-even hit rate. For each slip a "win" means payout > stake,
