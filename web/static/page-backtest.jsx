@@ -552,7 +552,7 @@ function SlipCard({ slip, onDelete }) {
             <li key={i} className={"bt-slip-leg leg-" + b.result}>
               <div className="bt-leg-body">
                 <div className="bt-leg-name">
-                  {b.player}
+                  <span className="bt-leg-player">{b.player}</span>
                   {b.gameTime && <span className="bt-leg-time" title="Game start time">{b.gameTime}</span>}
                 </div>
                 <div className="bt-leg-prop">

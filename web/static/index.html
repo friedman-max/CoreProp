@@ -1082,20 +1082,28 @@ body::before{
 }
 .bt-slip-compact .bt-slip-leg:last-child{border-bottom:0}
 
-/* Player name — very prominent */
+/* Player name row — name + game time. Only the name truncates; the time is
+   held at its full width so "PM"/"AM" is never clipped to an ellipsis. */
 .bt-leg-name{
+  display:flex;
+  align-items:baseline;
+  gap:8px;
   font-size:15.5px;
   font-weight:800;
   letter-spacing:-.005em;
   color:var(--text);
   line-height:1.2;
-  white-space:nowrap;
+}
+.bt-leg-player{
+  min-width:0;
   overflow:hidden;
   text-overflow:ellipsis;
+  white-space:nowrap;
 }
 /* Game start time next to the player name — muted mono, doesn't compete with it */
 .bt-leg-time{
-  margin-left:8px;
+  flex:0 0 auto;
+  white-space:nowrap;
   font-family:"JetBrains Mono",monospace;
   font-weight:600;
   font-size:11px;
