@@ -2815,7 +2815,7 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         # page-backtest.jsx btMapSlip). select("*") pulled raw_true_prob,
         # closing_prob, clv_pct, dedup_key, user_id, team, ind_ev_pct — none
         # of which the Backtest tab renders — inflating every leg row.
-        _leg_cols = "slip_id, leg_num, player, league, prop, line, side, true_prob, result, stat_actual"
+        _leg_cols = "slip_id, leg_num, player, league, prop, line, side, true_prob, result, stat_actual, game_start"
         _page_size = 1000
         _offset = 0
         while True:

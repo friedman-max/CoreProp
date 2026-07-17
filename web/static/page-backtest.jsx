@@ -117,6 +117,13 @@ function btMapSlip(s) {
     const actual = (l.stat_actual !== null && l.stat_actual !== undefined && l.stat_actual !== "")
       ? String(l.stat_actual)
       : (l.actual_value !== null && l.actual_value !== undefined && l.actual_value !== "" ? String(l.actual_value) : null);
+    // Game start time for this leg, formatted short (e.g. "7/16 7:05 PM"). The
+    // column is game_start (see legs table); older rows without it show nothing.
+    const gs = l.game_start || l.start_time || null;
+    const gsDate = gs ? new Date(gs) : null;
+    const gameTime = gsDate && !isNaN(gsDate.getTime())
+      ? gsDate.toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })
+      : "";
     return {
       player: l.player || l.player_name || "—",
       league: l.league || "",
@@ -130,6 +137,7 @@ function btMapSlip(s) {
       // written ("won"/"lost"/"1"/"0" all map to hit/miss).
       result: btNormLegResult(l.result),
       actual,
+      gameTime,
     };
   });
   const computed = btComputeSlipOutcome(s);
@@ -543,7 +551,10 @@ function SlipCard({ slip, onDelete }) {
           return (
             <li key={i} className={"bt-slip-leg leg-" + b.result}>
               <div className="bt-leg-body">
-                <div className="bt-leg-name">{b.player}</div>
+                <div className="bt-leg-name">
+                  {b.player}
+                  {b.gameTime && <span className="bt-leg-time" title="Game start time">{b.gameTime}</span>}
+                </div>
                 <div className="bt-leg-prop">
                   {b.league && <span className="bt-leg-league">{b.league}</span>}
                   <span className="bt-leg-prop-name">{b.propName}</span>
