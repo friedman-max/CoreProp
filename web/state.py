@@ -95,7 +95,7 @@ _payload_cache: dict = {
 
 
 # ── Pending-slip store ─────────────────────────────────────────────────
-# user_id -> (slip_data, expires_at_monotonic). Written by POST
+# token -> (slip_data, expires_at_monotonic). Written by POST
 # /api/pending-slip (authenticated), read by GET /api/pending-slip from
 # the browser extension at app.prizepicks.com — no auth required.
 

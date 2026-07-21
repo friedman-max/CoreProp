@@ -2651,12 +2651,14 @@ class PendingSlipRequest(BaseModel):
 def set_pending_slip(req: PendingSlipRequest, user: dict = Depends(get_current_user)):
     """Store a slip for the PP browser extension to pick up. TTL: 5 min.
 
-    Returns a single-use `token` that the website passes to PrizePicks (via the
-    opened URL) so the extension fetches back exactly this slip. The extension
-    runs in the app.prizepicks.com origin and sends no CoreProp credentials, so
-    the token — not the user's JWT — is what scopes the GET to one slip. Keying
-    storage by an unguessable token (instead of the shared "most recent" slot)
-    is what prevents one user's extension from picking up another user's slip.
+    Returns a `token` that the website passes to PrizePicks (via the opened
+    URL) so the extension fetches back exactly this slip. GET does not consume
+    the token; it lives until the extension DELETEs it or the TTL expires. The
+    extension runs in the app.prizepicks.com origin and sends no CoreProp
+    credentials, so the token (not the user's JWT) is what scopes the GET to
+    one slip. Keying storage by an unguessable token (instead of the shared
+    "most recent" slot) is what prevents one user's extension from picking up
+    another user's slip.
     """
     import secrets
     token = secrets.token_urlsafe(16)
@@ -2668,6 +2670,7 @@ def set_pending_slip(req: PendingSlipRequest, user: dict = Depends(get_current_u
         "legs": req.legs,
     }
     with _pending_slips_lock:
+        _evict_expired_pending(time.monotonic())
         _pending_slips[token] = (payload, expires_at)
     return {"ok": True, "token": token}
 
@@ -2681,22 +2684,28 @@ def _evict_expired_pending(now: float) -> None:
 @app.get("/api/pending-slip")
 def get_pending_slip(token: str = Query("", alias="cp_slip")):
     """
-    Return the pending slip matching `token`, or {} if none.
+    Return the pending slip matching `token` (legs/slip_type/n_legs only,
+    never user_id: the caller is unauthenticated).
     No auth — called by the Chrome extension from app.prizepicks.com context;
     the token (issued by POST and relayed through the opened PrizePicks URL) is
     what authorizes the read, so one user's extension can never receive another
-    user's slip. A blank/unknown token returns {} rather than any slip.
+    user's slip. A blank/unknown token returns {"found": false, "reason": ...}
+    rather than any slip; the extension's data.legs check treats it as no slip.
     """
     now = time.monotonic()
     with _pending_slips_lock:
         _evict_expired_pending(now)
         if not token:
-            return {}
+            return {"found": False, "reason": "blank_token"}
         entry = _pending_slips.get(token)
         if not entry:
-            return {}
+            return {"found": False, "reason": "unknown_token"}
         slip_data, _ = entry
-        return slip_data
+        return {
+            "legs": slip_data["legs"],
+            "slip_type": slip_data.get("slip_type"),
+            "n_legs": slip_data.get("n_legs"),
+        }
 
 
 @app.delete("/api/pending-slip")

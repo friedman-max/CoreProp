@@ -8,9 +8,10 @@ services:
     #   and most polls short-circuit via ETag (304). With responses <10ms, a
     #   second concurrent thread would only add a second response buffer in
     #   RAM at the exact moment we'd otherwise OOM.
-    # --max-requests 100: recycle the worker aggressively. Each restart
-    #   returns accumulated heap fragmentation to the OS.
-    startCommand: gunicorn web.app:app -k uvicorn.workers.UvicornWorker --workers 1 --threads 1 --timeout 180 --max-requests 100 --max-requests-jitter 25 --bind 0.0.0.0:$PORT
+    # --max-requests 1000: recycle the worker to return accumulated heap
+    #   fragmentation to the OS, but not so often that a recycle lands in the
+    #   short POST->GET window of an in-memory pending slip and wipes it.
+    startCommand: gunicorn web.app:app -k uvicorn.workers.UvicornWorker --workers 1 --threads 1 --timeout 180 --max-requests 1000 --max-requests-jitter 100 --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9

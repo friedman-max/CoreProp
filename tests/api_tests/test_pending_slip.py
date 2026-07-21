@@ -43,7 +43,7 @@ def test_get_without_token_returns_empty_even_when_a_slip_exists(client):
     app.dependency_overrides.clear()
 
     # No token -> no slip, even though one is stored.
-    assert c.get("/api/pending-slip").json() == {}
+    assert c.get("/api/pending-slip").json() == {"found": False, "reason": "blank_token"}
 
 
 def test_token_scopes_read_to_the_issuing_user(client):
@@ -61,9 +61,10 @@ def test_token_scopes_read_to_the_issuing_user(client):
     a = c.get("/api/pending-slip", params={"cp_slip": tokA}).json()
     b = c.get("/api/pending-slip", params={"cp_slip": tokB}).json()
     assert a["legs"] == [{"player": "A"}]
-    assert a["user_id"] == "userA"
     assert b["legs"] == [{"player": "B"}]
-    assert b["user_id"] == "userB"
+    # GET is unauthenticated; the response must never expose user_id.
+    assert "user_id" not in a
+    assert "user_id" not in b
 
 
 def test_delete_only_clears_the_given_token(client):
@@ -76,5 +77,5 @@ def test_delete_only_clears_the_given_token(client):
 
     # Clearing A's token must not wipe B's still-pending slip.
     c.delete("/api/pending-slip", params={"cp_slip": tokA})
-    assert c.get("/api/pending-slip", params={"cp_slip": tokA}).json() == {}
+    assert c.get("/api/pending-slip", params={"cp_slip": tokA}).json() == {"found": False, "reason": "unknown_token"}
     assert c.get("/api/pending-slip", params={"cp_slip": tokB}).json()["legs"] == [{"player": "B"}]
