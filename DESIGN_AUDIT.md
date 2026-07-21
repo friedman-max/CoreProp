@@ -62,26 +62,27 @@ Mostly inherits the shared palette too. One small note: a 🗑 emoji used as a d
 
 ---
 
-## 3. New direction: "Blue Wave"
+## 3. New direction (as built in `design-preview.html`)
 
-Grounded in the logo (blue-to-cyan wave/swoosh, no purple anywhere) and the three inspiration sites:
+An earlier draft of this doc proposed a literal "wave" background motif and a blue re-color. That was wrong — a decorative wave is just a different flavor of the same slop, and re-coloring alone changes nothing. The direction below is what's actually built in the prototype, and it's about **craft and honesty**, not a color swap.
 
-- **Tesla** → confident oversized type, enormous negative space, a near-monochrome palette, motion used sparingly and only when it means something. Nothing competes for attention.
-- **OddsJam** → data-first, legible, utilitarian. Real borders instead of blur-glow. Icons instead of emoji. Reads as "a serious tool," not a marketing page pretending to be a tool.
-- **Cursor** → dark theme done with restraint: *one* accent color, crisp 1px borders, no glassmorphism stacking, understated hover/focus motion.
+Grounded in the three inspiration sites:
+- **Tesla** → confident oversized type, enormous negative space, near-monochrome. Motion only when it means something.
+- **OddsJam** → data-first and utilitarian. The dense multi-book table *is* the hero, not a decorative card.
+- **Cursor** → dark done with restraint: one accent, crisp borders, no glassmorphism stacking, no ambient animation.
 
-### Token changes
+### What changed, concretely
 
-| Token | Current | Proposed |
+| Area | Old (slop) | New (built) |
 |---|---|---|
-| Primary accent | `#6366F1` (indigo) | Retire from UI. Use `--logo-2 #3DA9F0` as the single system accent (buttons, links, focus rings, active states). |
-| Secondary accent | — | `--logo-1 #7EE7F5` for highlights/hover only, `--logo-3 #5B6BF0` used sparingly (e.g. a single gradient stop, never solo). |
-| Background | `#0a0a0d` (neutral near-black) | `#060910` / `#081019` — a near-black with a blue undertone, so the dark theme itself reads "ocean," not "generic dark mode." |
-| Decorative hero bg | Blurred orbs (`filter:blur(80px)` circles) | One SVG wave motif echoing the actual logo swoosh — a signature visual instead of a generic blob. |
-| Card border treatment | Spinning conic-gradient glow | Static 1px border, `--logo-2` at low opacity on hover only. No infinite animation. |
-| Headline treatment | Gradient text on nearly every H1/H2 | Reserve gradient text for the logo mark only. Headlines are solid `--text`, high contrast, large. |
-| Spacing | Ad hoc (9px, 13px, 14px, 22px, ...) | Strict 4px base scale: 4/8/12/16/24/32/48/64. |
-| Fonts | Inter + JetBrains Mono | Keep both — they're not the problem, the effects piled around them are. JetBrains Mono for numeric/odds data is actually a good, purposeful choice (OddsJam does the same). |
+| Type | Inter (the "default AI SaaS" face) | **Geist / Geist Mono** — the clean, non-Inter face Linear/Vercel use. Mono for every number (odds, %, prices) reads "serious tool." |
+| Accent | Indigo `#6366F1` everywhere | Retired. **One** accent — the logo blue `#3da9f0` — used sparingly (one word in the H1, section tags, focus). The data's own green (true%) carries the rest. No purple. |
+| Hero background | Blurred orbs / spinning glow | Gone. One faint self-drawing accent line (decoration, claims nothing). Otherwise negative space. |
+| Hero visual | A toy "meter" card | **The real +EV table, preserved** — player / league / prop / multi-book odds / true%, exactly the app's element, labelled `sample`. |
+| Headlines | Rainbow gradient text | Solid, high-contrast, tight tracking. Weight 600, not 800. |
+| "Live edge engine" badge | Present | **Removed.** Replaced by a factual books strip (FanDuel / DraftKings / Pinnacle / Novig). |
+| Fabricated stats | "3 years", "4,200+ sharps", "2,847 bets", fake testimonials | **All removed.** Copy claims only what's true; sample UI is labelled `sample`. |
+| Signature element | — | A scroll-triggered **devig animation**: real two-sided math on sample prices (Over −138 + Under +115 = 104.5% → strip the 4.5% vig → 55.5% true). This is the honest, product-specific version of the "+EV graph" you asked for — it shows the actual mechanic, not a fake profit curve. |
 
 ---
 
@@ -103,15 +104,15 @@ None of this is disclosed as illustrative. Fabricated testimonials and user metr
 Constraints that shaped this recommendation: no frontend build framework (plain global-scope React, precompiled via `build.sh`/esbuild), all styling centralized in CSS custom properties in `index.html`, single free-tier Render service with no PR preview environments configured in `render.yaml`.
 
 **Built on this branch, ready now:**
-1. **`web/static/design-preview.html`** — a standalone, zero-backend, zero-auth mockup of the new direction (nav, hero with a wave motif instead of orbs, a +EV pick card, a pricing card). It doesn't import any app code and isn't linked from anywhere the live app routes to, so it's zero-risk to merge. Open it directly:
+1. **`web/static/design-preview.html`** — a standalone, zero-backend, zero-auth **single honest page** (no before/after toggle — that toggle was itself the source of the top-right corner overlap, so it's gone). It doesn't import any app code and isn't linked from anywhere the live app routes to, so it's zero-risk to merge. Open it directly:
    - Locally: `open web/static/design-preview.html` (no server needed), or
-   - Via the running app once this branch is deployed/run locally: `/static/design-preview.html`
-   - It includes a **live "Current / Blue Wave" toggle** in the top-right corner that swaps the entire page between the current token set and the proposed one, so you can flip back and forth on the exact same layout instead of eyeballing two static screenshots.
+   - Via a static server: `python3 -m http.server 8743 --directory web/static` then open `http://localhost:8743/design-preview.html` (this is the `coreprop-design-preview` launch config).
+   - Sections: nav → hero (with the real +EV table) → scroll-triggered devig animation → value strip → CTA. Scroll down to trigger the devig math animation.
 
-**Next steps, in order of effort, once a direction is picked:**
-2. Lift the same toggle mechanic into the real `index.html` behind a `?theme=wave` URL param or `localStorage` flag, mapped to a `[data-theme="wave"]` CSS block. Because every color already routes through `:root` custom properties, this is a small diff, not a rewrite — and it lets you A/B the *real* app (+EV, Analytics, Backtest, with real data) instead of a mockup.
-3. Run the full app locally (`uvicorn web.app:app --reload` or `python main.py`) to review before merging to `main`.
-4. If you want to share a link with someone who won't run the repo locally, the static prototype could go on a free Vercel/Netlify/Render-static deploy — kept separate from the paid backend service rather than adding a second paid Render environment.
+**Next steps, in order of effort, once you're happy with the direction:**
+2. Port the token layer into the real `index.html`: swap Inter→Geist, retire indigo for the logo blue, delete the orb/glow/gradient-text rules, remove the fabricated landing data (§4). Because every color already routes through `:root` custom properties, the color part is a small diff; the font + copy changes are mechanical.
+3. Run the full app locally (`uvicorn web.app:app --reload` or `python main.py`) to review the real +EV / Analytics / Backtest tabs under the new tokens before merging to `main`.
+4. To share a link with someone who won't run the repo, drop `design-preview.html` on a free Vercel/Netlify static deploy — kept separate from the paid backend service.
 
 ---
 
