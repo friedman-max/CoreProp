@@ -456,6 +456,7 @@ function SlipCard({ slip, onDelete }) {
     pending: { t: "PENDING", cls: "is-pending" },
   }[slip.result];
   const [placeState, setPlaceState] = React.useState("idle");
+  const [placeErr, setPlaceErr] = React.useState(null);
 
   // Slip-level +EV%: expected return per 1u stake, in %.
   const evPct = React.useMemo(
@@ -469,17 +470,33 @@ function SlipCard({ slip, onDelete }) {
   //      Chrome extension's content script picks up the queued slip,
   //      builds it on PrizePicks via DOM automation, and clears the queue.
   const placeOnPP = async () => {
-    if (placeState === "sending") return;
+    if (placeState !== "idle") return;
     setPlaceState("sending");
+    setPlaceErr(null);
+    // Open the tab synchronously, before any await: Chrome's transient user
+    // activation expires (~5s) while the POST runs, so a window.open after
+    // the await gets blocked. No "noopener" here since a null handle would
+    // be indistinguishable from a blocked popup, and we redirect it below.
+    const ppTab = window.open("about:blank", "_blank");
+    const badLeg = (msg) => {
+      const err = new Error(msg);
+      err.badLeg = true;
+      return err;
+    };
     try {
-      const legs = (slip.bets || []).map(b => ({
-        player: b.player,
-        league: b.league,
-        prop:   b.propName || b.prop,
-        line:   b.line,
-        side:   b.side === "O" ? "over" : "under",
-      }));
-      if (!legs.length) throw new Error("slip has no legs");
+      const legs = (slip.bets || []).map(b => {
+        // Don't default a blank side to "under": that would place the wrong bet.
+        if (!b.side || !String(b.side).trim()) throw badLeg("Leg missing over/under side.");
+        if (!Number.isFinite(parseFloat(b.line))) throw badLeg("Leg has an invalid line.");
+        return {
+          player: b.player,
+          league: b.league,
+          prop:   b.propName || b.prop,
+          line:   b.line,
+          side:   b.side === "O" ? "over" : "under",
+        };
+      });
+      if (!legs.length) throw badLeg("Slip has no legs.");
       const res = await window.cpApi.apiFetch("/api/pending-slip", {
         method: "POST",
         body: {
@@ -488,19 +505,31 @@ function SlipCard({ slip, onDelete }) {
           n_legs:    legs.length,
         },
       });
-      // Open PrizePicks so the extension's content script fires. Same
-      // user-gesture chain as the click guarantees the popup isn't blocked.
       // Pass the single-use token in the URL so the extension fetches back
       // exactly this slip (not whatever another user queued most recently).
       const ppUrl = res && res.token
         ? "https://app.prizepicks.com/?cp_slip=" + encodeURIComponent(res.token)
         : "https://app.prizepicks.com/";
-      window.open(ppUrl, "_blank", "noopener,noreferrer");
+      if (!ppTab) {
+        // Blocked popup: don't claim success, hand the user the link instead.
+        setPlaceErr({ msg: "Popup blocked. Click to open PrizePicks:", url: ppUrl });
+        setPlaceState("error");
+        setTimeout(() => setPlaceState(s => s === "error" ? "idle" : s), 3000);
+        return;
+      }
+      ppTab.location.href = ppUrl;
       setPlaceState("queued");
       setTimeout(() => setPlaceState(s => s === "queued" ? "idle" : s), 4000);
     } catch (ex) {
       console.error("place failed:", ex);
+      if (ppTab) ppTab.close();
       setPlaceState("error");
+      if (ex && ex.status === 401) {
+        // Persistent: retrying is pointless until the user signs back in.
+        setPlaceErr({ msg: "Session expired. Sign in again." });
+        return;
+      }
+      setPlaceErr({ msg: ex && ex.badLeg ? ex.message : "Couldn't reach CoreProp. Try again." });
       setTimeout(() => setPlaceState(s => s === "error" ? "idle" : s), 3000);
     }
   };
@@ -572,7 +601,7 @@ function SlipCard({ slip, onDelete }) {
         type="button"
         className={"bt-slip-place bt-slip-place-" + placeState}
         onClick={placeOnPP}
-        disabled={placeState === "sending"}
+        disabled={placeState !== "idle"}
         title="Send this slip's legs to the PrizePicks Chrome extension"
       >
         {placeState === "sending" ? "Sending to extension…"
@@ -580,6 +609,14 @@ function SlipCard({ slip, onDelete }) {
           : placeState === "error" ? "Retry"
           : "Place on PrizePicks"}
       </button>
+      {placeErr && (
+        <div className="bt-del-error">
+          {placeErr.msg}
+          {placeErr.url && (
+            <> <a href={placeErr.url} target="_blank" rel="noopener">Open PrizePicks</a></>
+          )}
+        </div>
+      )}
     </article>
   );
 }
