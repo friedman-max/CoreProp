@@ -3,7 +3,6 @@
   "name": "CoreProp — PrizePicks Slip Builder",
   "version": "1.2.0",
   "description": "Automatically builds your CoreProp slip on PrizePicks.",
-  "permissions": ["storage"],
   "host_permissions": [
     "https://app.prizepicks.com/*",
     "http://localhost:8000/*",

@@ -14,28 +14,12 @@
 // "Place on PrizePicks" button POSTs the slip to whichever of these the
 // user has open — localhost when developing, onrender in production.
 // The extension doesn't know which is in play, so it asks all of them
-// and uses whichever has the slip. Single fetch per URL, no retries.
+// and uses whichever has the slip.
 const COREPROP_URLS = [
   "http://localhost:8000",
   "http://127.0.0.1:8000",
   "https://coreprop.onrender.com",
 ];
-
-async function tryFetch(path, init) {
-  let lastErr = null;
-  for (const base of COREPROP_URLS) {
-    try {
-      const resp = await fetch(`${base}${path}`, init);
-      const text = await resp.text();
-      let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-      return { ok: resp.ok, status: resp.status, data, base };
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  return { ok: false, status: 0, error: lastErr ? lastErr.message : "Unknown network error" };
-}
 
 /**
  * Fetch the pending slip from each known CoreProp backend exactly once.
@@ -43,9 +27,8 @@ async function tryFetch(path, init) {
  * server has one, return the first successful (empty) response. If every
  * URL fails outright, return a network error.
  *
- * This is the "get the slip right the first time" version: one round of
- * single fetches, no retries, no polling. The extension never asks the
- * same URL twice.
+ * One round of single fetches per call; the content script decides
+ * whether to retry.
  */
 async function fetchPendingSlipFromAny(token) {
   let firstEmpty = null;
@@ -87,7 +70,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "coreprop:clear-pending-slip") {
     const q = msg.token ? `?cp_slip=${encodeURIComponent(msg.token)}` : "";
-    tryFetch(`/api/pending-slip${q}`, { method: "DELETE" }).then(sendResponse);
+    // The slip may live on a different base than the first one that answers,
+    // so DELETE against every backend, best-effort.
+    Promise.allSettled(COREPROP_URLS.map(base =>
+      fetch(`${base}/api/pending-slip${q}`, { method: "DELETE" })
+    )).then(results => {
+      const ok = results.some(r => r.status === "fulfilled" && r.value.ok);
+      sendResponse({ ok, status: ok ? 200 : 0 });
+    });
     return true;
   }
 

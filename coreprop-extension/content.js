@@ -5,7 +5,13 @@
  * Never submits — user reviews and places the wager manually.
  */
 
-const COREPROP_URL = "http://localhost:8000";
+// Captured synchronously at load: PP's SPA router can strip ?cp_slip from
+// the URL via history.replaceState before run()'s deferred read.
+const CP_SLIP_TOKEN = (() => {
+  try { return new URLSearchParams(location.search).get("cp_slip") || ""; }
+  catch (e) { return ""; }
+})();
+
 const DEBUG = true;
 
 function log(...args) { if (DEBUG) console.log("[CoreProp]", ...args); }
@@ -198,6 +204,7 @@ function sendToBackground(message) {
 // The website opens PrizePicks with ?cp_slip=<token>; that token scopes the
 // pending-slip fetch to this user's slip. Without it the server returns {}.
 function pendingSlipToken() {
+  if (CP_SLIP_TOKEN) return CP_SLIP_TOKEN;
   try { return new URLSearchParams(location.search).get("cp_slip") || ""; }
   catch (e) { return ""; }
 }
@@ -254,8 +261,7 @@ function discoverCards() {
   //   - "Over" / "Under" labels
   const allButtons = document.querySelectorAll('button, [role="button"]');
   allButtons.forEach(btn => {
-    const txt = (btn.innerText || "").trim().toLowerCase();
-    if (["more", "less", "over", "under"].includes(txt)) {
+    if (["more", "less", "over", "under"].includes(sideButtonWord(btn))) {
       // Walk up to find the card container
       let parent = btn.parentElement;
       for (let i = 0; i < 8 && parent; i++) {
@@ -273,6 +279,16 @@ function discoverCards() {
 }
 
 /**
+ * First word of a button's text. Demon/goblin cards render the payout
+ * multiplier inside the button ("More\n2.25x"), so exact-equality checks
+ * miss them; match the leading token instead, mirroring the tolerant
+ * startsWith matching used for sport tabs.
+ */
+function sideButtonWord(btn) {
+  return ((btn.innerText || "").trim().toLowerCase().split(/\s+/)[0]) || "";
+}
+
+/**
  * Inside a card element, find the More/Less/Over/Under button matching `side`.
  *  - PrizePicks default: side "over" maps to "More", "under" maps to "Less"
  *  - Some boards still show literal "Over"/"Under"
@@ -281,8 +297,7 @@ function findSideButton(card, side) {
   const want = side === "over" ? ["more", "over", "higher"] : ["less", "under", "lower"];
   const btns = card.querySelectorAll('button, [role="button"]');
   for (const b of btns) {
-    const t = (b.innerText || "").trim().toLowerCase();
-    if (want.includes(t)) return b;
+    if (want.includes(sideButtonWord(b))) return b;
   }
   return null;
 }
@@ -898,16 +913,16 @@ async function buildLeg(leg, index) {
   // tab, so typing "Anthony Edwards" while WNBA is active would either
   // return nothing or — worse — match a different player whose name
   // happens to collide. Verify the active league before typing; if it's
-  // not what this leg wants, re-switch. If even the retry fails, bail
-  // on this leg rather than searching on the wrong sport.
+  // not what this leg wants, re-switch. This check is advisory: the search
+  // is player-name scoped and cardMatchesLeg verifies prop+line+player
+  // before any click, so an unconfirmed tab can't stage a wrong pick.
+  // Proceed and let the card match decide.
   const legLabels = LEAGUE_TAB_LABELS[(leg.league || "").toUpperCase()] || [leg.league];
   if (!isCurrentLeague(legLabels)) {
     log(`Leg ${index} — active sport ≠ ${leg.league}, re-switching before search`);
     await switchToLeague(leg.league);
     if (!isCurrentLeague(legLabels)) {
-      log(`Leg ${index} — could not confirm switch to ${leg.league}, aborting leg`);
-      setLegStatus(index, "error", `Could not switch to ${leg.league} for this leg`);
-      return false;
+      log(`Leg ${index}: could not confirm switch to ${leg.league}, proceeding with search anyway`);
     }
   }
 
@@ -963,14 +978,26 @@ async function run() {
 
   await sleep(1000);
 
-  const { slip, error } = await fetchPendingSlip();
+  let { slip, error } = await fetchPendingSlip();
+
+  // A backend worker recycle between the site's POST and our GET can return
+  // {} even though a slip was just posted. When a token is present, retry the
+  // empty result a few times before giving up. No token means {} is the
+  // legitimate answer, so don't retry; hard network errors surface right away.
+  for (let attempt = 1; attempt <= 5 && !slip && !error && pendingSlipToken(); attempt++) {
+    log(`No slip yet (attempt ${attempt}/5), retrying`);
+    setStatus(`Checking for pending slip (attempt ${attempt + 1})…`);
+    await sleep(1500);
+    ({ slip, error } = await fetchPendingSlip());
+  }
 
   if (error) {
     setStatus("Could not reach CoreProp.", "#f87171");
     setFooter(
       `<b>${escapeHtml(error)}</b><br>` +
-      `Verify the server is running at <code>http://localhost:8000</code>. ` +
-      `If you reload the extension at <code>chrome://extensions</code>, the new background worker will be picked up.`,
+      `Could not reach any CoreProp backend (localhost or coreprop.onrender.com). ` +
+      `If you're using the deployed site, the server may be waking up; wait a few seconds and click Place again.<br>` +
+      `If you updated the extension, reload it at <code>chrome://extensions</code>.`,
       "#f87171"
     );
     return;
@@ -1021,7 +1048,9 @@ async function run() {
     }
   }
 
-  await clearPendingSlip();
+  // Only clear the slip once something was staged; a total failure leaves
+  // it on the server so a page reload can retry.
+  if (success > 0) await clearPendingSlip();
 
   if (success === legs.length) {
     setStatus(`✅ All ${legs.length} legs added.`, "#22c55e");
