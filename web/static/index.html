@@ -863,6 +863,20 @@ body::before{
 .pnl-range-btn{background:transparent;border:0;color:var(--text-3);padding:6px 12px;border-radius:6px;font-weight:600;font-size:11.5px;cursor:default;letter-spacing:.04em;font-family:"JetBrains Mono",monospace}
 .pnl-range-btn:hover{color:var(--text)}
 .pnl-range-btn.is-on{background:#1f1f2e;color:white}
+/* The Custom range button gets the app's purple when active so it reads as the
+ * special "opens a picker" option and ties visually to the picker's focus ring. */
+.pnl-range-btn.is-custom.is-on{background:linear-gradient(180deg,var(--primary-2),var(--primary));color:#fff;box-shadow:0 1px 0 rgba(255,255,255,.22) inset}
+
+/* Custom date-range picker — matches the segmented range control above it (same
+ * inset panel + radius) with two rounded date fields and the purple focus ring
+ * used everywhere else in the app. */
+.pnl-custom{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;background:#0a0a12;border:1px solid var(--hair);padding:6px 8px;border-radius:10px}
+.pnl-custom-field{display:inline-flex;align-items:center;gap:8px}
+.pnl-custom-field>span{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-family:"JetBrains Mono",ui-monospace,monospace}
+.pnl-custom-input{background:#14141e;border:1px solid var(--hair-2);color:var(--text);border-radius:8px;padding:7px 10px;font-size:12.5px;font-family:"JetBrains Mono",ui-monospace,monospace;outline:none;color-scheme:dark;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease}
+.pnl-custom-input:hover{border-color:var(--primary-2)}
+.pnl-custom-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-hi)}
+.pnl-custom-arrow{color:var(--text-4);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
 
 /* Calibration curves */
 .cal-curves{background:linear-gradient(180deg,#0c0c14,#0a0a12);border:1px solid var(--hair);border-radius:12px;padding:18px 18px 12px;margin-bottom:14px;min-height:380px}

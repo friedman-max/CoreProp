@@ -6,6 +6,10 @@ const _RANGE_DAYS = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365 };
 
 function AnalyticsPage() {
   const [range, setRange] = useState("1W");
+  // Custom range: two YYYY-MM-DD strings. Only consulted when range==="CUSTOM".
+  // Empty until the user first opens Custom, at which point they default to the
+  // full data span (first slip → today) so the chart isn't blank.
+  const [custom, setCustom] = useState({ start: "", end: "" });
   const [hover, setHover] = useState(null);
   const [data, setData] = useState(null);
   const [loadState, setLoadState] = useState("loading");
@@ -50,11 +54,19 @@ function AnalyticsPage() {
   // bound so every slip is included).
   const nowMs = useMemo(() => Date.now(), [data]);
   const windowBounds = useMemo(() => {
+    if (range === "CUSTOM") {
+      // Parse the date inputs in LOCAL time. Start = midnight of the start day;
+      // end = end-of-day of the end day so the whole end date is included.
+      const s = custom.start ? new Date(custom.start + "T00:00:00").getTime() : -Infinity;
+      const e = custom.end   ? new Date(custom.end   + "T23:59:59.999").getTime() : nowMs;
+      // Tolerate an inverted range (end before start) by swapping.
+      return e >= s ? { startMs: s, endMs: e } : { startMs: e, endMs: s };
+    }
     const endMs = nowMs;
     if (range === "MAX") return { startMs: -Infinity, endMs };
     const days = _RANGE_DAYS[range] || 30;
     return { startMs: endMs - days * 86400000, endMs };
-  }, [range, nowMs]);
+  }, [range, nowMs, custom]);
 
   const filtered = useMemo(() => {
     if (!fullSeries.length) return [];
@@ -79,7 +91,10 @@ function AnalyticsPage() {
       baseline = startIdx > 0
         ? fullSeries[startIdx - 1].pnl
         : (fullSeries[0].pnl - (fullSeries[0].delta || 0));
-      inWindow = fullSeries.slice(startIdx);
+      // Cap the top of the window too. For the fixed presets endMs is "now" so
+      // this is a no-op (no slip is in the future), but for a CUSTOM range whose
+      // end is in the past it correctly drops slips that settle after the window.
+      inWindow = fullSeries.slice(startIdx).filter(p => p.date.getTime() <= endMs);
     }
 
     const pts = inWindow.map(p => ({
@@ -120,20 +135,20 @@ function AnalyticsPage() {
   const windowLegs = useMemo(() => {
     if (!data?.resolved_legs) return [];
     if (range === "MAX") return data.resolved_legs;
-    const { startMs } = windowBounds;
+    const { startMs, endMs } = windowBounds;
     return data.resolved_legs.filter(l => {
       const t = l.timestamp ? new Date(l.timestamp).getTime() : NaN;
-      return !isNaN(t) && t >= startMs;
+      return !isNaN(t) && t >= startMs && t <= endMs;
     });
   }, [data, range, windowBounds]);
 
   const windowClv = useMemo(() => {
     if (!data?.clv_legs) return [];
     if (range === "MAX") return data.clv_legs;
-    const { startMs } = windowBounds;
+    const { startMs, endMs } = windowBounds;
     return data.clv_legs.filter(l => {
       const t = l.timestamp ? new Date(l.timestamp).getTime() : NaN;
-      return !isNaN(t) && t >= startMs;
+      return !isNaN(t) && t >= startMs && t <= endMs;
     });
   }, [data, range, windowBounds]);
 
@@ -218,6 +233,18 @@ function AnalyticsPage() {
 
   const hovered = hover ?? filtered[filtered.length - 1];
 
+  // Switch to the custom range. On first open, seed the inputs with the full
+  // data span (first slip → today) so the chart shows something immediately
+  // rather than an empty window the user has to fill in by hand.
+  const enterCustom = () => {
+    setCustom(c => {
+      if (c.start && c.end) return c;
+      const first = fullSeries.length ? fullSeries[0].date : new Date(nowMs - 30 * 86400000);
+      return { start: toISODate(first), end: toISODate(new Date(nowMs)) };
+    });
+    setRange("CUSTOM");
+  };
+
   if (loadState === "loading") {
     return <main className="bd-page an-page"><div style={{padding:"32px",color:"var(--text-3)"}}>Loading analytics…</div></main>;
   }
@@ -291,9 +318,28 @@ function AnalyticsPage() {
           {RANGES.map(r => (
             <button key={r} className={"pnl-range-btn " + (range === r ? "is-on" : "")} onClick={() => setRange(r)}>{r}</button>
           ))}
+          <button className={"pnl-range-btn is-custom " + (range === "CUSTOM" ? "is-on" : "")} onClick={enterCustom}>Custom</button>
         </div>
 
-        <div className="an-section-h">Window stats <span className="an-section-sub">stats for: {range}</span></div>
+        {range === "CUSTOM" && (
+          <div className="pnl-custom">
+            <label className="pnl-custom-field">
+              <span>From</span>
+              <input type="date" className="pnl-custom-input"
+                     value={custom.start} max={custom.end || undefined}
+                     onChange={e => setCustom(c => ({ ...c, start: e.target.value }))} />
+            </label>
+            <span className="pnl-custom-arrow">→</span>
+            <label className="pnl-custom-field">
+              <span>To</span>
+              <input type="date" className="pnl-custom-input"
+                     value={custom.end} min={custom.start || undefined}
+                     onChange={e => setCustom(c => ({ ...c, end: e.target.value }))} />
+            </label>
+          </div>
+        )}
+
+        <div className="an-section-h">Window stats <span className="an-section-sub">stats for: {range === "CUSTOM" ? `${custom.start} → ${custom.end}` : range}</span></div>
         <div className="bt-summary">
           <StatCard loading={anLoading} label="Brier Score" value={brier.toFixed(4)} tone={brier < 0.25 ? "good" : "neutral"} />
           <StatCard loading={anLoading} label="Log Loss" value={logLoss.toFixed(4)} />
@@ -566,6 +612,15 @@ function ReliabilityChart({ points }) {
       </svg>
     </div>
   );
+}
+
+// Local-time YYYY-MM-DD for <input type="date"> values (avoids the UTC shift
+// that toISOString() would introduce near midnight).
+function toISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function niceStep(raw) {
