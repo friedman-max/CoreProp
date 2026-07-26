@@ -305,18 +305,45 @@ def update_correlation_map() -> Optional[dict]:
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()
     recency_filter = f"game_start.gte.{cutoff_iso},game_start.is.null"
     try:
-        res = (
-            db.table("market_observatory")
-              .select("player, league, game_start, result, prop")
-              .in_("result", ["hit", "miss"])
-              .or_(recency_filter)
-              .execute()
-        )
+        # `side` is REQUIRED, not decorative. engine.observatory logs every
+        # priced side with raw prob >= OBS_MIN_PROB (0.30), so any market
+        # devigging into [0.30, 0.70] — most props — writes BOTH an over and an
+        # under row, and results_checker.grade_leg makes the under the exact
+        # complement of the over. Without `side` the pair enumeration below
+        # paired each market against its own mirror image (a perfect NEGATIVE
+        # correlation), which cancelled the real signal: NBA same_game fit to
+        # rho 0.000 (heuristic: 0.144) and same_player to -0.500 (heuristic:
+        # 0.360). Both cleared MIN_PAIR_OBS because the same double-logging
+        # inflates n, so _pair_correlation preferred the garbage over the
+        # heuristic — and a same_game rho of 0 makes calculate_slip's
+        # np.allclose(corr, I) check short-circuit to the independence formula,
+        # i.e. the correlation model silently did nothing at all.
+        #
+        # Paginate for the same reason every other observatory reader does:
+        # PostgREST silently caps an unbounded select at 1000 rows. Pairs scale
+        # as n^2, so truncation here discards almost all pair information.
+        rows = []
+        _page_size = 1000
+        _offset = 0
+        while True:
+            _page = (
+                db.table("market_observatory")
+                  .select("player, league, game_start, result, prop, side")
+                  .in_("result", ["hit", "miss"])
+                  .or_(recency_filter)
+                  .order("game_start", desc=True)
+                  .range(_offset, _offset + _page_size - 1)
+                  .execute()
+                  .data
+            ) or []
+            rows.extend(_page)
+            if len(_page) < _page_size:
+                break
+            _offset += _page_size
     except Exception as exc:
         logger.warning("Correlation fit: query failed: %s", exc)
         return None
 
-    rows = res.data or []
     if not rows:
         logger.info("Correlation fit: no resolved observations yet.")
         return None
@@ -332,6 +359,7 @@ def update_correlation_map() -> Optional[dict]:
         games.setdefault((league, gs), []).append({
             "player": (r.get("player") or "").strip().lower(),
             "prop": (r.get("prop") or "UNKNOWN").strip().upper(),
+            "side": (r.get("side") or "").strip().lower(),
             "hit": hit,
         })
 
@@ -344,6 +372,25 @@ def update_correlation_map() -> Optional[dict]:
         for i in range(k):
             for j in range(i + 1, k):
                 a, b = legs[i], legs[j]
+
+                # Skip a market paired against its own complement: same player,
+                # same prop, opposite side. That pair is -1 by construction (the
+                # observatory logs both sides of most markets) and carries no
+                # information about how two DISTINCT bets co-move.
+                if (a["player"] == b["player"] and a["prop"] == b["prop"]
+                        and a["side"] and b["side"] and a["side"] != b["side"]):
+                    continue
+
+                # Only accumulate like-for-like sides. The correlation consumed
+                # by the slip-EV Monte Carlo is "do two legs I actually took hit
+                # together", and legs_metadata_from_bets is side-blind, so
+                # mixing over/under pairs here would fit a quantity the
+                # evaluation path can't ask for. Rows with no side (legacy,
+                # pre-`side` observatory writes) are still paired so historical
+                # data isn't discarded wholesale.
+                if a["side"] and b["side"] and a["side"] != b["side"]:
+                    continue
+
                 same_player = a["player"] != "" and a["player"] == b["player"]
                 
                 # Accumulate both the specific prop-pair bucket AND the general bucket.
