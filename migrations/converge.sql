@@ -399,6 +399,7 @@ end $converge$;
 do $converge$
 declare
   r record;
+  t text;               -- FOREACH ... IN ARRAY needs a SCALAR, not a record
   user_id_def text;
   n_ok      int := 0;
   n_skipped int := 0;
@@ -415,17 +416,17 @@ begin
     user_id_def := 'uuid references auth.users(id) on delete cascade';
   end if;
 
-  foreach r in array array['slips', 'legs'] loop
-    if to_regclass('public.' || r) is null then
-      raise notice 'converge columns: skipping %.user_id — table absent', r;
+  foreach t in array array['slips', 'legs'] loop
+    if to_regclass('public.' || t) is null then
+      raise notice 'converge columns: skipping %.user_id — table absent', t;
       n_skipped := n_skipped + 1;
       continue;
     end if;
     begin
-      execute format('alter table public.%I add column if not exists user_id %s', r, user_id_def);
+      execute format('alter table public.%I add column if not exists user_id %s', t, user_id_def);
       n_ok := n_ok + 1;
     exception when others then
-      raise warning 'converge: could not add %.user_id: %', r, sqlerrm;
+      raise warning 'converge: could not add %.user_id: %', t, sqlerrm;
       n_failed := n_failed + 1;
     end;
   end loop;

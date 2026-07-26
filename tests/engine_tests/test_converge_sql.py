@@ -139,6 +139,26 @@ def _do_blocks(sql: str) -> list[str]:
     return [body for _tag, body in re.findall(r"^do\s+(\$\w*\$)(.*?)\1\s*;", sql, re.I | re.M | re.S)]
 
 
+def _split_args(text: str) -> list[str]:
+    """Split a `raise` argument tail on commas at paren-depth 0, so
+    ``array_to_string(a, ', ')`` counts as ONE argument, not two."""
+    out: list[str] = []
+    depth = 0
+    buf: list[str] = []
+    for ch in text:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+    out.append("".join(buf))
+    return out
+
+
 def _lines_containing(sql: str, pattern: str) -> list[str]:
     rx = re.compile(pattern, re.I)
     return [ln for ln in sql.splitlines() if rx.search(ln)]
@@ -535,6 +555,39 @@ def test_converge_ends_with_a_verification_report():
         assert re.search(probe, tail, re.I), f"verification report: {why}"
 
 
+def test_report_checks_exactly_what_converge_creates():
+    """The report's expected-index list and the converge block's create-index
+    list must be the same set, or the report lies in one direction or the other
+    (silently ignoring a missing index, or forever reporting a phantom)."""
+    sql = _sql()
+    split = sql.index(_do_blocks(sql)[-1])
+    converged = set(re.findall(r"\('(idx_\w+|legs_user_dedup_key_unique)',\s*'", sql[:split]))
+    reported = set(re.findall(r"'(idx_\w+|legs_user_dedup_key_unique)'", sql[split:]))
+    assert converged, "no indexes parsed from the converge block"
+    assert converged == reported, (
+        f"converge-only: {sorted(converged - reported)}; report-only: {sorted(reported - converged)}"
+    )
+
+
+def test_report_hardcoded_counts_match_its_lists():
+    """`all 19 expected indexes present` must not drift from the actual list."""
+    raw = _raw()
+    report = raw[raw.index("VERIFICATION REPORT") :]
+    for label, pattern in (
+        ("indexes", r"all (\d+) expected indexes"),
+        ("constraints", r"all (\d+) user_config checks"),
+    ):
+        claimed = re.search(pattern, report)
+        assert claimed, f"report no longer states a total for {label}"
+        if label == "indexes":
+            actual = len(set(re.findall(r"'(idx_\w+|legs_user_dedup_key_unique)'", report)))
+        else:
+            actual = len(set(re.findall(r"'(user_config_\w+_chk)'", report)))
+        assert int(claimed.group(1)) == actual, (
+            f"report claims {claimed.group(1)} {label} but lists {actual}"
+        )
+
+
 def test_verification_report_states_a_verdict():
     raw = _raw().upper()
     assert "MISSING" in raw
@@ -585,6 +638,77 @@ def test_dollar_quoted_delimiters_balance():
     opens = len(re.findall(r"^do\s+\$\w*\$", sql, re.I | re.M))
     blocks = len(_do_blocks(sql))
     assert opens == blocks, f"{opens} `do $tag$` openers but only {blocks} closed blocks"
+
+
+def test_foreach_loop_variables_are_scalars():
+    """`FOREACH x IN ARRAY` requires x to be a SCALAR of the array's element
+    type. Declaring it `record` is accepted by the parser and fails at RUNTIME
+    with "FOREACH ... IN ARRAY loop variable must be of a scalar type" — which,
+    inside Supabase's single-transaction editor, aborts the whole run. Found by
+    a hand audit; pinned here so it cannot come back."""
+    sql = _sql()
+    offenders: list[str] = []
+    for m in re.finditer(r"foreach\s+(\w+)\s+in\s+array", sql, re.I):
+        var = m.group(1)
+        start = sql.rfind("declare", 0, m.start())
+        block = sql[start : sql.find("begin", start)]
+        decl = re.search(rf"^\s*{var}\s+([^\s;:]+)", block, re.M | re.I)
+        if decl and decl.group(1).lower() in {"record", "row"}:
+            offenders.append(f"{var} declared {decl.group(1)}")
+    assert not offenders, f"FOREACH IN ARRAY over a non-scalar variable: {offenders}"
+
+
+def _raise_statements() -> list[tuple[str, list[str]]]:
+    """Every ``raise notice|warning`` as (format_string, [args]).
+
+    Parsed against literal-blanked text so a ``;`` or a quote INSIDE a message
+    can't end the statement early, and so the format string is only the LEADING
+    run of adjacent literals (Postgres concatenates those) — a literal appearing
+    later, like the separator in ``array_to_string(a, ', ')``, is part of an
+    argument, not of the message.
+    """
+    sql = _sql()
+    blanked, _ = _blank_literals(sql)
+    spans = [(m.start(), m.end()) for m in re.finditer(r"'[^']*'", blanked)]
+
+    def literal_at(pos: int) -> tuple[int, int] | None:
+        return next((s for s in spans if s[0] == pos), None)
+
+    out: list[tuple[str, list[str]]] = []
+    for m in re.finditer(r"\braise\s+(?:notice|warning)\s+", blanked, re.I):
+        end = blanked.find(";", m.end())
+        stmt_end = len(blanked) if end == -1 else end
+        # Walk the leading run of adjacent string literals.
+        i = m.end()
+        parts: list[str] = []
+        while True:
+            while i < stmt_end and blanked[i] in " \t\r\n":
+                i += 1
+            span = literal_at(i)
+            if span is None or span[1] > stmt_end:
+                break
+            parts.append(sql[span[0] + 1 : span[1] - 1].replace("''", "'"))
+            i = span[1]
+        rest = sql[i:stmt_end]
+        args = [a for a in _split_args(rest.lstrip().lstrip(",")) if a.strip()]
+        out.append(("".join(parts), args))
+    return out
+
+
+def test_raise_placeholder_count_matches_its_arguments():
+    """PL/pgSQL `raise` uses bare `%` placeholders and aborts at RUNTIME with
+    "too many parameters specified for RAISE" (or too few) on a mismatch.
+    Inside Supabase's single-transaction editor that abort rolls back the whole
+    converge run, so the counts have to be right."""
+    stmts = _raise_statements()
+    assert len(stmts) > 40, f"only {len(stmts)} raise statements parsed — vacuous"
+    mismatches = [
+        f"{len(re.findall(r'(?<!%)%(?!%)', msg))} placeholder(s) vs "
+        f"{len(args)} arg(s): {msg[:70]!r}"
+        for msg, args in stmts
+        if len(re.findall(r"(?<!%)%(?!%)", msg)) != len(args)
+    ]
+    assert not mismatches, "raise argument mismatch -> runtime abort: " + "; ".join(mismatches)
 
 
 def test_every_loop_is_closed():
