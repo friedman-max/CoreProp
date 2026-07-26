@@ -331,6 +331,7 @@ class BacktestLogger:
                 db.table("legs")
                 .select("slip_id, player, game_start, prop, line, side")
                 .in_("slip_id", sids)
+                .eq("user_id", self.user_id)
                 .execute()
             )
             legs_by_slip: dict[str, list[dict]] = {}

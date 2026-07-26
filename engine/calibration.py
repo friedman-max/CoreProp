@@ -49,9 +49,15 @@ CLV_START_DATE: Optional[str] = None
 CLV_STALE_EPS = 1e-6
 
 
-def _load_resolved_rows(user_jwt: str) -> list[dict]:
+def _load_resolved_rows(user_jwt: str, user_id: Optional[str] = None) -> list[dict]:
     """
     Read resolved rows from the Supabase database.
+
+    `user_id` scopes the read in the QUERY, not just via RLS. RLS
+    (`user_id = auth.uid()`) is still the enforcement boundary, but relying on
+    it alone leaves no second layer — and `SUPABASE_ANON_KEY` falls back to the
+    service key when unset (engine/database.py), which bypasses RLS entirely
+    and would fold every user's legs into one user's metrics.
     """
     db = get_user_db(user_jwt)
     if not db:
@@ -69,9 +75,11 @@ def _load_resolved_rows(user_jwt: str) -> list[dict]:
         _page_size = 1000
         _offset = 0
         while True:
+            _q = db.table("legs").select(cols).in_("result", resolved_filter)
+            if user_id:
+                _q = _q.eq("user_id", user_id)
             _page = (
-                db.table("legs").select(cols).in_("result", resolved_filter)
-                  .order("slip_id", desc=False)
+                _q.order("slip_id", desc=False)
                   .range(_offset, _offset + _page_size - 1)
                   .execute()
                   .data
@@ -110,7 +118,7 @@ def _load_resolved_rows(user_jwt: str) -> list[dict]:
         return []
 
 
-def _load_clv_rows(user_jwt: str) -> list[dict]:
+def _load_clv_rows(user_jwt: str, user_id: Optional[str] = None) -> list[dict]:
     """Read every leg that has a tracked closing line.
 
     Phase 1A audit C5: this no longer applies the broken START_SLIP_ID
@@ -131,9 +139,11 @@ def _load_clv_rows(user_jwt: str) -> list[dict]:
         _page_size = 1000
         _offset = 0
         while True:
+            _q = db.table("legs").select("closing_prob, clv_pct, slip_id")
+            if user_id:
+                _q = _q.eq("user_id", user_id)
             _page = (
-                db.table("legs").select("closing_prob, clv_pct, slip_id")
-                  .order("slip_id", desc=False)
+                _q.order("slip_id", desc=False)
                   .range(_offset, _offset + _page_size - 1)
                   .execute()
                   .data
@@ -218,7 +228,8 @@ def log_loss(rows: list[dict]) -> Optional[float]:
     return -total / n
 
 
-def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows: Optional[list] = None) -> dict:
+def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows: Optional[list] = None,
+                         user_id: Optional[str] = None) -> dict:
     """
     Compute calibration metrics from resolved backtest data.
 
@@ -235,7 +246,7 @@ def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows:
     `_rows` is an optimization: when a caller already loaded resolved rows
     it can pass them in here to avoid a second round-trip to Supabase.
     """
-    rows = _rows if _rows is not None else _load_resolved_rows(user_jwt)
+    rows = _rows if _rows is not None else _load_resolved_rows(user_jwt, user_id)
     n = len(rows)
 
     if n == 0:
@@ -281,7 +292,7 @@ def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows:
         })
 
     # CLV — split moved (real signal) vs stale (frozen capture) per audit C5.
-    clv_rows = _clv_rows if _clv_rows is not None else _load_clv_rows(user_jwt)
+    clv_rows = _clv_rows if _clv_rows is not None else _load_clv_rows(user_jwt, user_id)
     clv = _summarize_clv(clv_rows)
 
     return {
@@ -302,7 +313,7 @@ def evaluate_calibration(user_jwt: str, _rows: Optional[list] = None, _clv_rows:
     }
 
 
-def evaluate_analytics(user_jwt: str) -> dict:
+def evaluate_analytics(user_jwt: str, user_id: Optional[str] = None) -> dict:
     """
     Analytics payload for the Analytics tab.
 
@@ -333,10 +344,12 @@ def evaluate_analytics(user_jwt: str) -> dict:
             page_size = 1000
             offset = 0
             while True:
+                # Scope in the query, not just via RLS — see _load_resolved_rows.
+                _q = db.table("legs").select(cols)
+                if user_id:
+                    _q = _q.eq("user_id", user_id)
                 page = (
-                    db.table("legs")
-                      .select(cols)
-                      .order("slip_id", desc=False)
+                    _q.order("slip_id", desc=False)
                       .range(offset, offset + page_size - 1)
                       .execute()
                       .data
@@ -384,10 +397,11 @@ def evaluate_analytics(user_jwt: str) -> dict:
             _page_size = 1000
             _offset = 0
             while True:
+                _q = db.table("slips").select("id, timestamp, slip_type")
+                if user_id:
+                    _q = _q.eq("user_id", user_id)
                 _page = (
-                    db.table("slips")
-                      .select("id, timestamp, slip_type")
-                      .order("timestamp", desc=False)
+                    _q.order("timestamp", desc=False)
                       .range(_offset, _offset + _page_size - 1)
                       .execute()
                       .data

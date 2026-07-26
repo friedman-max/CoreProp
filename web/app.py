@@ -2610,7 +2610,7 @@ def _run_pin_scrape():
 def get_calibration(user: dict = Depends(get_current_user)):
     """Return Brier Score, Log-Loss, and calibration buckets from resolved backtest data."""
     from engine.calibration import evaluate_calibration
-    return evaluate_calibration(user_jwt=user["jwt"])
+    return evaluate_calibration(user_jwt=user["jwt"], user_id=user["id"])
 
 
 @app.get("/api/analytics")
@@ -2631,7 +2631,7 @@ def get_analytics(user: dict = Depends(get_current_user)):
             return cached[1]
 
     from engine.calibration import evaluate_analytics
-    data = evaluate_analytics(user_jwt=user["jwt"])
+    data = evaluate_analytics(user_jwt=user["jwt"], user_id=uid)
     with _analytics_cache_lock:
         _analytics_cache[uid] = (now, data)
     return data
@@ -2806,8 +2806,17 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         # Project only the columns the payout logic + UI consume — select("*")
         # was dragging every billing/CLV/user_id column on the slip header into
         # RAM and over the wire for no reason.
+        # `.eq("user_id", ...)` scopes this in the QUERY. RLS
+        # (`user_id = auth.uid()`) is still the enforcement boundary, but it must
+        # not be the ONLY one: SUPABASE_ANON_KEY falls back to the service key
+        # when unset (engine/database.py), and a service-role client bypasses
+        # RLS — which would serve every user's slips from here.
         _slip_cols = "id, timestamp, slip_type, n_legs, proj_slip_ev_pct"
-        slips_res = db.table("slips").select(_slip_cols).order("timestamp", desc=True).limit(300).execute()
+        slips_res = (
+            db.table("slips").select(_slip_cols)
+              .eq("user_id", user["id"])
+              .order("timestamp", desc=True).limit(300).execute()
+        )
         slip_data = slips_res.data
         if not slip_data:
             return {"slips": [], "total": 0}
@@ -2830,6 +2839,7 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         while True:
             _page = (
                 db.table("legs").select(_leg_cols).in_("slip_id", sids)
+                  .eq("user_id", user["id"])
                   .order("slip_id", desc=False)
                   .range(_offset, _offset + _page_size - 1)
                   .execute()
@@ -3345,14 +3355,23 @@ def delete_backtest_slip(slip_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="No database connection.")
 
     try:
-        # Verify the slip belongs to this user
-        check = db.table("slips").select("id").eq("id", slip_id).execute()
+        # Verify the slip belongs to this user. The user_id filter is what makes
+        # this an OWNERSHIP check rather than a mere existence check — without
+        # it, the select only proves the row is *visible*, which is scoped by
+        # RLS alone. If RLS is off or the client is service-role (see the
+        # SUPABASE_ANON_KEY fallback in engine/database.py), any slip_id in the
+        # table would pass and the deletes below would destroy another user's
+        # slip. The deletes carry the same filter so the write itself is scoped.
+        check = (
+            db.table("slips").select("id")
+              .eq("id", slip_id).eq("user_id", user["id"]).execute()
+        )
         if not check.data:
             raise HTTPException(status_code=404, detail="Slip not found.")
 
         # Delete legs first (foreign key), then slip header
-        db.table("legs").delete().eq("slip_id", slip_id).execute()
-        db.table("slips").delete().eq("id", slip_id).execute()
+        db.table("legs").delete().eq("slip_id", slip_id).eq("user_id", user["id"]).execute()
+        db.table("slips").delete().eq("id", slip_id).eq("user_id", user["id"]).execute()
 
         _invalidate_analytics_cache(user["id"])
         logger.info("Backtest: deleted slip %s for user %s", slip_id, user["id"])

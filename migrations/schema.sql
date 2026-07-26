@@ -384,8 +384,46 @@ create trigger market_observatory_upsert_guard_trg
   for each row execute function market_observatory_upsert_guard();
 
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- migration_018 — RLS on the server-only tables
+--   SUPABASE_ANON_KEY is published to the browser (web/app.py injects it into
+--   index.html; GET /api/ui-config serves it), so PostgREST is reachable by any
+--   visitor. These four tables had no RLS, making them readable AND writable
+--   with that key — app_state_cache most dangerously, since
+--   _seed_state_from_db_sync() trusts it on boot.
+--
+--   RLS enabled with NO policy = deny-all for anon/authenticated. The
+--   service-role client (engine/database.py) bypasses RLS, so the pipeline,
+--   the hourly refits, and the results checker are unaffected. Nothing in the
+--   frontend reads these tables directly.
+-- ─────────────────────────────────────────────────────────────────────────
+
+alter table app_state_cache              enable row level security;
+alter table calibration_cells            enable row level security;
+alter table calibration_history          enable row level security;
+alter table strategy_performance_compare enable row level security;
+
+-- Grants revoked too (defence in depth: closed even if RLS is later disabled on
+-- one by accident). Guarded on role existence so this file still applies on a
+-- plain Postgres without Supabase's anon/authenticated roles.
+do $$
+declare
+  t text;
+  r text;
+begin
+  foreach t in array array['app_state_cache', 'calibration_cells',
+                           'calibration_history', 'strategy_performance_compare'] loop
+    foreach r in array array['anon', 'authenticated'] loop
+      if exists (select 1 from pg_roles where rolname = r) then
+        execute format('revoke all on public.%I from %I', t, r);
+      end if;
+    end loop;
+  end loop;
+end $$;
+
+
 -- migrations 011 (default bump — folded into 004 above) and 014 (one-time
 -- backfill repair) have no residual schema in a fresh project and are omitted
 -- here intentionally.
 
-do $$ begin raise notice 'CoreProp schema.sql applied: base tables + migrations 001-017'; end $$;
+do $$ begin raise notice 'CoreProp schema.sql applied: base tables + migrations 001-018'; end $$;
