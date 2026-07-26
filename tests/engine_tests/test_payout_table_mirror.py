@@ -237,3 +237,59 @@ def test_flex_break_evens_are_derived_from_the_flex_payouts():
             f"BREAK_EVEN[('{n_legs}', 'flex')] is {actual} but the payout schedule "
             f"{tiers} breaks even at {expected:.6f}"
         )
+
+
+# ── Stray hardcoded break-even literals ───────────────────────────────────────
+# The tables above are mirrored and checked, but a BARE NUMBER in a JSX
+# expression bypasses all of it. When PrizePicks cut 6-Power from 40x to 37.5x,
+# the per-leg break-even moved 0.5407 -> 0.5466 (engine/constants.py:17). The
+# tables were updated; hardcoded `54.08` / `0.5408` literals in the read-only
+# tabs were not. Those literals drive the green/red tone on the Leg Hit Rate and
+# Raw Hit Rate cards and the reliability chart's guide line, so a hit rate in
+# the 54.08–54.66% band renders GREEN while actually being EV-NEGATIVE — the
+# user is told a losing edge is winning.
+#
+# ev-page.jsx derives its break-even from the payout table (slipBreakEvenPct),
+# which is why it stayed correct. The fix is for every consumer to do the same
+# rather than restate the constant, so this test bans the stale literal outright.
+
+_STALE_BE_RE = re.compile(r"\b(?:54\.0[0-9]|0?\.540[0-9])\b")
+
+_BE_CONSUMERS = (
+    _STATIC / "page-backtest.jsx",
+    _STATIC / "page-analytics.jsx",
+    _STATIC / "dist" / "page-backtest.js",
+    _STATIC / "dist" / "page-analytics.js",
+)
+
+
+def test_six_power_break_even_is_5466_not_the_stale_40x_value():
+    """Guard the premise: BREAK_EVEN must hold the 37.5x-derived value."""
+    assert BREAK_EVEN[("6", "power")] == 0.5466
+    assert round((1 / POWER_PAYOUTS[6]) ** (1 / 6), 4) == 0.5466
+
+
+def _strip_js_comments(line: str) -> str:
+    """Drop `//` and `/* */`-style comment text. The literal is legitimate in a
+    comment EXPLAINING the staleness bug (and this file's own docstring), so the
+    ban applies to executable code only."""
+    line = re.sub(r"/\*.*?\*/", "", line)
+    line = re.sub(r"//.*$", "", line)
+    line = re.sub(r"^\s*\*.*$", "", line)      # JSDoc / JSX block-comment body
+    return line
+
+
+def test_no_frontend_hardcodes_the_stale_40x_break_even():
+    offenders = []
+    for path in _BE_CONSUMERS:
+        if not path.exists():
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if _STALE_BE_RE.search(_strip_js_comments(line)):
+                offenders.append(f"{path.relative_to(_ROOT)}:{n}: {line.strip()[:110]}")
+    assert not offenders, (
+        "stale 40x-era 6-Power break-even (54.07/54.08) hardcoded in the "
+        "frontend. The real value is 54.66% — a hit rate between them renders "
+        "GREEN while being EV-negative. Derive it from the payout table "
+        "instead:\n  " + "\n  ".join(offenders)
+    )

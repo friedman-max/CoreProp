@@ -8,6 +8,15 @@ const { useState: useStateBT, useMemo: useMemoBT } = React;
 // (e.g. older slips whose legs use "won"/"lost" instead of "hit"/"miss").
 // KEEP IN SYNC with engine/constants.py: Power-6 pays 37.5x (not the old 40x).
 const BT_POWER_PAYOUTS = { 2: 3.0, 3: 6.0, 4: 10.0, 5: 20.0, 6: 37.5 };
+
+// Per-leg break-even for a 6-leg Power slip — the standard reference point for
+// individual-leg quality. DERIVED from the payout table, never hardcoded: when
+// PrizePicks cut 6-Power from 40x to 37.5x this moved 54.07% -> 54.66%, and the
+// hardcoded copies here and in page-analytics.jsx went stale, tinting a
+// 54.1%-54.6% hit rate GREEN when it is actually EV-NEGATIVE. Mirrors
+// engine/constants.py BREAK_EVEN[("6","power")]; enforced by
+// tests/engine_tests/test_payout_table_mirror.py.
+const CP_LEG_BE_6_POWER_PCT = Math.pow(1 / BT_POWER_PAYOUTS[6], 1 / 6) * 100;
 const BT_FLEX_PAYOUTS = {
   3: { 2: 1.0, 3: 3.0 },
   4: { 3: 1.5, 4: 6.0 },
@@ -341,8 +350,9 @@ function BacktestPage() {
        *     slips. For a pure Power-3 dataset this collapses to 16.67%; for
        *     Power 4 it's 10%, Power 6 it's 2.5%, and so on. Mixed slip logs
        *     get the correct blended threshold.
-       *   - Leg Hit Rate BE = 54.08% (geometric BE for Power 6 — the
-       *     standard reference point for individual-leg quality).
+       *   - Leg Hit Rate BE = CP_LEG_BE_6_POWER_PCT (geometric BE for Power 6
+       *     — the standard reference point for individual-leg quality).
+       *     Derived from the payout table so a payout change can't strand it.
        *   - ROI: positive ⇒ green, negative ⇒ red. Computed as
        *     (sum_payouts - n_resolved) / n_resolved using 1-unit stake per
        *     slip, matching the backend's pnl_timeline math. */}
@@ -356,7 +366,7 @@ function BacktestPage() {
           tone={slipsDone === 0 || slipBeWeighted == null ? "neutral" : (slipHitRate >= slipBeWeighted ? "good" : "bad")}
         />
         <StatCard loading={statsLoading} label="Legs (Done / Total)" sub="Recent 300" value={`${legsDone} / ${legsTotal}`} />
-        <StatCard loading={statsLoading} label="Leg Hit Rate" sub="BE 54.08%" value={fmt(legHitRate)} tone={legsDone === 0 ? "neutral" : (legHitRate >= 54.08 ? "good" : "bad")} />
+        <StatCard loading={statsLoading} label="Leg Hit Rate" sub={`BE ${CP_LEG_BE_6_POWER_PCT.toFixed(2)}%`} value={fmt(legHitRate)} tone={legsDone === 0 ? "neutral" : (legHitRate >= CP_LEG_BE_6_POWER_PCT ? "good" : "bad")} />
         <StatCard loading={statsLoading} label="Exp. Leg Hit Rate" value={fmt(expLegHitRate)} />
         <StatCard
           loading={statsLoading}

@@ -4,6 +4,17 @@ const { useState: useStateA, useMemo: useMemoA, useRef: useRefA, useEffect: useE
 const RANGES = ["1D", "1W", "1M", "3M", "1Y", "MAX"];
 const _RANGE_DAYS = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365 };
 
+// Per-leg break-even for a 6-leg Power slip, used to tint Raw Hit Rate and to
+// place the reliability chart's guide line. Sourced from page-backtest.jsx,
+// which DERIVES it from its payout table (index.html + build.sh both load
+// page-backtest before page-analytics, so the global exists). This was
+// hardcoded as 54.08 — the pre-37.5x value — which tinted a 54.1%-54.6% hit
+// rate green when it is EV-NEGATIVE. The fallback recomputes from 37.5x rather
+// than restating a literal, so it can't silently go stale either.
+const AN_LEG_BE_PCT = typeof CP_LEG_BE_6_POWER_PCT === "number"
+  ? CP_LEG_BE_6_POWER_PCT
+  : Math.pow(1 / 37.5, 1 / 6) * 100;
+
 function AnalyticsPage() {
   const [range, setRange] = useState("1W");
   // Custom range: two YYYY-MM-DD strings. Only consulted when range==="CUSTOM".
@@ -344,7 +355,7 @@ function AnalyticsPage() {
           <StatCard loading={anLoading} label="Brier Score" value={brier.toFixed(4)} tone={brier < 0.25 ? "good" : "neutral"} />
           <StatCard loading={anLoading} label="Log Loss" value={logLoss.toFixed(4)} />
           <StatCard loading={anLoading} label="Resolved Legs" value={String(allLegs.length)} />
-          <StatCard loading={anLoading} label="Raw Hit Rate" value={rawHit.toFixed(1) + "%"} tone={rawHit >= 54.08 ? "good" : "bad"} />
+          <StatCard loading={anLoading} label="Raw Hit Rate" value={rawHit.toFixed(1) + "%"} tone={rawHit >= AN_LEG_BE_PCT ? "good" : "bad"} />
           <StatCard loading={anLoading} label="Avg Predicted Prob" value={avgPred.toFixed(1) + "%"} />
           <StatCard loading={anLoading} label="Hit Rate Delta" value={(delta >= 0 ? "+" : "") + delta.toFixed(1) + "%"} tone={delta >= 0 ? "good" : "bad"} />
           <StatCard loading={anLoading} label="Calibration Error" sub="ECE, lower better" value={(ece * 100).toFixed(1) + "%"} tone={ece <= 0.03 ? "good" : ece <= 0.06 ? "neutral" : "bad"} />
@@ -586,8 +597,8 @@ function ReliabilityChart({ points }) {
         {/* Perfect-calibration diagonal (y = x) */}
         <line x1={sx(0)} y1={sy(0)} x2={sx(1)} y2={sy(1)} stroke="rgba(255,255,255,.35)" strokeWidth="1.5" strokeDasharray="5,4" />
 
-        {/* Break-even reference (Power-6 leg BE ≈ 54.08%) — vertical guide */}
-        <line x1={sx(0.5408)} x2={sx(0.5408)} y1={padT} y2={H - padB} stroke="rgba(96,165,250,.35)" strokeWidth="1" />
+        {/* Break-even reference (Power-6 leg BE) — vertical guide */}
+        <line x1={sx(AN_LEG_BE_PCT / 100)} x2={sx(AN_LEG_BE_PCT / 100)} y1={padT} y2={H - padB} stroke="rgba(96,165,250,.35)" strokeWidth="1" />
 
         {/* Observed reliability curve */}
         <path
