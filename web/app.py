@@ -1389,6 +1389,23 @@ def _reschedule(interval_min: int):
 # Startup / shutdown
 # ---------------------------------------------------------------------------
 
+# Suppress the startup side effects that reach the network: the boot scrape, the
+# hourly refit's immediate run, and the CLV recovery pass. Set ONLY by
+# tests/conftest.py. Entering `TestClient(app)` as a context manager runs ASGI
+# lifespan events, so without this every TestClient fixture fired five live
+# scrapers — and `daemon=True` doesn't help, because the scraper
+# ThreadPoolExecutor is used as a context manager (shutdown(wait=True)) and
+# concurrent.futures registers an atexit hook that joins its workers regardless
+# of daemon status. On a PrizePicks 429 the backoff is 10s+30s+90s, which is how
+# a ~2s suite became a >2min one, chronically flaky on CI's shared IPs.
+#
+# Deliberately narrow: the scheduler still starts (registering jobs is free and
+# nothing fires inside a short test), so the suite still exercises real startup.
+_DISABLE_STARTUP_JOBS = os.getenv("COREPROP_DISABLE_STARTUP_JOBS", "").lower() in (
+    "1", "true", "yes",
+)
+
+
 @app.on_event("startup")
 def startup():
     # ── Seed state from Supabase SYNCHRONOUSLY first ──
@@ -1425,7 +1442,8 @@ def startup():
         except Exception as exc:
             logger.warning("Startup CLV recovery error: %s", exc)
 
-    threading.Thread(target=_startup_clv_recovery, daemon=True).start()
+    if not _DISABLE_STARTUP_JOBS:
+        threading.Thread(target=_startup_clv_recovery, daemon=True).start()
 
     # ── Hourly correlation refit ──
     # simplify-v1: the only model that still refits is leg-pair correlation
@@ -1493,6 +1511,13 @@ def startup():
         next_run_time=datetime.now() + timedelta(minutes=1),
         replace_existing=True,
     )
+    if _DISABLE_STARTUP_JOBS:
+        logger.info(
+            "COREPROP_DISABLE_STARTUP_JOBS set — skipping boot scrape, refit and "
+            "CLV recovery. Expected under test; NEVER set this in production."
+        )
+        return
+
     # Also run once on startup (off-thread so we don't block boot).
     threading.Thread(target=_run_periodic_models, daemon=True).start()
 

@@ -70,8 +70,25 @@ class CLVTracker:
 
         # Fetch pending legs from Supabase
         try:
-            res = db.table("legs").select("*").eq("result", "pending").execute()
-            rows = res.data or []
+            # Paginate — an unbounded select silently caps at 1000 rows. Beyond
+            # that cap a leg never received a closing line, so it was excluded
+            # from CLV entirely (the fastest honest feedback signal available).
+            # .order() makes the page window stable.
+            rows = []
+            _page_size = 1000
+            _offset = 0
+            while True:
+                _page = (
+                    db.table("legs").select("*").eq("result", "pending")
+                      .order("slip_id", desc=False)
+                      .range(_offset, _offset + _page_size - 1)
+                      .execute()
+                      .data
+                ) or []
+                rows.extend(_page)
+                if len(_page) < _page_size:
+                    break
+                _offset += _page_size
         except Exception as exc:
             logger.error("CLVTracker: cannot read pending legs from Supabase: %s", exc)
             return 0
@@ -426,8 +443,24 @@ class CLVTracker:
             # Only the partial-write recovery path uses these fields — full
             # leg rows were 3x bigger and the rest is unused.
             cols = "slip_id, leg_num, closing_prob, clv_pct, true_prob, raw_true_prob, game_start"
-            res = db.table("legs").select(cols).execute()
-            rows = res.data or []
+            # Paginate — this scans the WHOLE legs table, so it hit the silent
+            # 1000-row cap earliest of the three readers. Truncation here means
+            # missed closing lines are never finalized.
+            rows = []
+            _page_size = 1000
+            _offset = 0
+            while True:
+                _page = (
+                    db.table("legs").select(cols)
+                      .order("slip_id", desc=False)
+                      .range(_offset, _offset + _page_size - 1)
+                      .execute()
+                      .data
+                ) or []
+                rows.extend(_page)
+                if len(_page) < _page_size:
+                    break
+                _offset += _page_size
         except Exception as exc:
             logger.error("CLVTracker: cannot read legs from Supabase: %s", exc)
             return 0

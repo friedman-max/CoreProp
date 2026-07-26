@@ -151,8 +151,28 @@ class ESPNResultsChecker:
             return 0
 
         try:
-            res = db.table("legs").select("*").eq("result", "pending").execute()
-            rows = res.data or []
+            # Paginate — an unbounded select silently caps at 1000 rows. Without
+            # this, once the pending set exceeds 1000 an arbitrary (and, with no
+            # .order(), unstable) subset became invisible to the grader, so those
+            # legs never resolved. They then stayed 'pending', keeping the set
+            # above 1000: the starvation was self-reinforcing, and the lost legs
+            # are silently dropped from analytics AND from the settled sample
+            # that SIDE_BIAS is refit on.
+            rows = []
+            _page_size = 1000
+            _offset = 0
+            while True:
+                _page = (
+                    db.table("legs").select("*").eq("result", "pending")
+                      .order("slip_id", desc=False)
+                      .range(_offset, _offset + _page_size - 1)
+                      .execute()
+                      .data
+                ) or []
+                rows.extend(_page)
+                if len(_page) < _page_size:
+                    break
+                _offset += _page_size
         except Exception as exc:
             logger.error("ResultsChecker: cannot read pending legs from Supabase: %s", exc)
             return 0

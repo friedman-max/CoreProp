@@ -23,3 +23,11 @@ os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 
 # Quiet APScheduler / httpx during tests.
 os.environ.setdefault("PYTHONWARNINGS", "ignore::DeprecationWarning")
+
+# Keep the suite OFFLINE. Entering `TestClient(app)` runs ASGI lifespan events,
+# so web/app.py's startup hook would spawn the boot scrape (five live
+# third-party APIs), the hourly refit and the CLV recovery pass. That made
+# `pytest tests/` do real network I/O — and on a PrizePicks 429 its 10s/30s/90s
+# backoff stretched a ~2s suite past two minutes, with CI's shared runner IPs
+# hitting 429 routinely. See tests/api_tests/test_startup_jobs_disabled.py.
+os.environ.setdefault("COREPROP_DISABLE_STARTUP_JOBS", "1")
