@@ -1,23 +1,28 @@
 """
-Sharpness-weighted consensus engine (VWAP-style).
+Cross-book consensus engine: collapses each book's devigged price for one
+side into the single probability the app actually bets on.
 
-Combines devigged probabilities from multiple sportsbooks into a single
-"true" probability using:
+`consensus_prob` — the DECISION number (see `compute_true_probability`) — is a
+per-book weighted arithmetic mean of the devigged probs:
 
-  1. **Operator sharpness weights** — empirically derived per-book influence
-     reflecting each operator's price-discovery quality for player props.
-  2. **Market width penalty** — tighter markets (higher confidence) receive
-     more influence; wide, uncertain markets are discounted.
-  3. **Scaled single-source discount** — when only one book offers a line,
-     apply a conservative discount that scales with odds magnitude.
+    P_consensus = Σ(p_i × w_i) / Σ(w_i)
 
-The consensus formula mirrors Volume-Weighted Average Price (VWAP) from
-traditional financial markets:
+Where p_i = that book's devigged prob for the requested side (Shin (1993) for
+a two-sided market, scaled single-sided devig otherwise) and w_i = that book's
+player-prop sharpness weight (`config.CONSENSUS_BOOK_WEIGHTS`). The weights
+default OFF, so the live formula reduces to a plain unweighted mean — the
+ruler every live threshold was fit on (`config.CONSENSUS_WEIGHTS_ENABLED`
+carries the why).
 
-    P_consensus = Σ(p_i × w_i × (1/M_i)) / Σ(w_i × (1/M_i))
+Two ingredients of the original VWAP-style engine survive in reduced form:
 
-Where p_i = Power Method devigged prob, w_i = sharpness weight,
-M_i = market width (overround %).
+  1. **Scaled single-source discount** — when only one book offers a line
+     there is nothing to average, so that lone book's worst-case devig is
+     discounted by an amount that scales with odds magnitude.
+  2. **Market width** — no longer weights the mean. The historical
+     `× (1/M_i)` width penalty (a tighter market bought more influence) was
+     dropped in simplify-v1; per-book overround is now only averaged into
+     `metadata["market_width"]` for display and the observatory feed.
 """
 from __future__ import annotations
 
@@ -45,11 +50,34 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# simplify-v1: the decision number is the most-conservative devigged
-# probability across books (worst_case_prob), a pure min — so per-book
-# sharpness weights and empirical bias corrections no longer gate decisions
-# and have been removed. The VWAP `consensus_prob` is kept only as a
-# display-side reference and is now a plain unweighted mean.
+# THE DECISION NUMBER: `consensus_prob`, not `worst_case_prob`.
+#
+# simplify-v1 (71c1091) first made the pure min-across-books `worst_case_prob`
+# the decision number, on the theory that the most conservative devig is the
+# safest one. That was reverted in cc6d628 ("Fix empty +EV tab"): worst_case is
+# a min taken per side, across books AND across devig methods, so it does NOT
+# sum to 1 over over/under. As soon as books disagree even slightly, the two
+# sides' minima come from different books and BOTH land below 0.50 — balanced
+# ~50/50 PrizePicks lines could never clear the display floor and the standard
+# +EV tab was empty ("no bets above 50%") while only green devils (genuinely
+# 60%+) showed. Live check on that build: old gate 0 standard legs, new gate
+# 186. `tests/engine_tests/test_consensus_decision.py` pins both halves of
+# this (see test_worst_case_can_sink_both_sides_below_half) — do not
+# "re-simplify" the gate back onto worst_case.
+#
+# So: `consensus_prob` (the vig-stripped market mean) is what the pipeline
+# gates and displays on, and what clv_checker measures the close against.
+# `worst_case_prob` is still returned and still computed as a pure min over
+# every book including complement-derived ones, but NO caller in the app reads
+# it — web/app.py and engine/clv_checker.py both discard it (`_worst_case_prob`)
+# — except on the n_books == 1 single-source path, where it IS the return
+# value for both slots. Keep returning it: the juice/cap regression tests
+# assert on it, and it is the natural home for a conservative-floor experiment.
+#
+# What simplify-v1 removed and did NOT come back: per-book empirical bias
+# corrections inside this module. Per-book sharpness weights DID come back
+# (059f3f3) as `config.CONSENSUS_BOOK_WEIGHTS`, but default OFF — see the
+# stale-ruler note on CONSENSUS_WEIGHTS_ENABLED in config.py.
 # ---------------------------------------------------------------------------
 
 # Minimum market width (overround %) to avoid division-by-zero.
@@ -226,13 +254,23 @@ def compute_true_probability(
         (consensus_prob, worst_case_prob, metadata)
 
     Where:
-    - consensus_prob: VWAP sharpness-weighted probability (informational)
-    - worst_case_prob: most conservative probability (used for EV decisions)
+    - consensus_prob: **the decision number.** Per-book weighted mean of the
+      devigged probs (plain unweighted mean while CONSENSUS_WEIGHTS_ENABLED is
+      off). This is what the pipeline gates on (`>= config.MIN_DISPLAY_PROB`),
+      what it displays, and what clv_checker compares the close against.
+      Only books with a DIRECT price for `side` contribute.
+    - worst_case_prob: most conservative probability — the min over every
+      book's worst-case devig, including complement-derived ones. Informational
+      / defensive only: no caller in the app decides on it, because applied
+      per-side it sinks both sides of a balanced market below 50% (see the
+      decision-number block at the top of this module). The one exception is
+      the single-source path below, where it *is* both return values.
     - metadata: dict with n_books, devig_method, market_widths, etc.
 
     `league`/`prop` are retained for signature compatibility with callers
-    (clv_checker, pipeline) but no longer drive any per-book correction — the
-    decision number is the pure min-across-books worst case.
+    (clv_checker, pipeline) but no longer drive any per-book correction —
+    empirical corrections live downstream in `BetResult.__init__`, applied to
+    the decision prob only, never to `raw_true_prob`.
     """
     # ── Safeguard: reject purely complement-derived probabilities ─────────
     # If NO book has direct odds for the requested side (i.e. every book's
@@ -274,6 +312,11 @@ def compute_true_probability(
     # ------------------------------------------------------------------
     # Single-source fallback
     # ------------------------------------------------------------------
+    # The ONE place worst_case still reaches the decision number: with a single
+    # book there is no cross-book mean to take, so the conservative devig is the
+    # honest read and both return slots get the same discounted value. The
+    # both-sides-below-50% failure mode that disqualified worst_case as the
+    # general gate needs two disagreeing books, so it can't bite here.
     if n_books == 1:
         _book_name, power_prob, worst_prob, width, odds, _has_direct = entries[0]
         prob = worst_prob if worst_prob is not None else power_prob
@@ -300,7 +343,8 @@ def compute_true_probability(
     # FanDuel is the sharp prop maker, Pinnacle the weakest for props
     # (outsourced/low-limit) — the opposite of main-market intuition. With
     # weights disabled the weighted mean reduces to the plain unweighted mean.
-    # `worst_case_prob` (min worst-case devig) is unchanged and unweighted.
+    # `worst_case_prob` (min worst-case devig) is unchanged and unweighted, and
+    # on this multi-book path nothing downstream gates on it.
     prob_wsum = 0.0
     weight_sum = 0.0
     width_sum = 0.0

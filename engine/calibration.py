@@ -55,9 +55,9 @@ def _load_resolved_rows(user_jwt: str, user_id: Optional[str] = None) -> list[di
 
     `user_id` scopes the read in the QUERY, not just via RLS. RLS
     (`user_id = auth.uid()`) is still the enforcement boundary, but relying on
-    it alone leaves no second layer — and `SUPABASE_ANON_KEY` falls back to the
-    service key when unset (engine/database.py), which bypasses RLS entirely
-    and would fold every user's legs into one user's metrics.
+    it alone leaves no second layer — a disabled policy or a service-role
+    client (which bypasses RLS) would fold every user's legs into one user's
+    metrics.
     """
     db = get_user_db(user_jwt)
     if not db:

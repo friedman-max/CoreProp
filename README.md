@@ -3,7 +3,7 @@
 A +EV betting workbench. CoreProp pulls PrizePicks projections and matches
 them against FanDuel, DraftKings, Pinnacle, and Novig prop markets in real
 time, strips the vig out of the book prices to recover fair probabilities,
-takes a conservative cross-book consensus, and surfaces the plays where
+takes a cross-book consensus, and surfaces the plays where
 PrizePicks is paying more than the fair line implies. Every slip you log
 resolves itself against ESPN box scores and rolls into a live analytics view.
 
@@ -16,10 +16,12 @@ resolves itself against ESPN box scores and rolls into a live analytics view.
 
 **Find edges.** Scrapes PrizePicks plus four sportsbooks, fuzzy-matches
 players and stat types across them, and de-vigs each book line into a fair
-probability. A VWAP-style consensus is taken across books, floored to the
-conservative worst-case (min-across-books) devig so a single soft book can't
-manufacture a phantom edge. Anything where PrizePicks offers a worse implied
-probability than that consensus gets surfaced, sorted by expected value.
+probability. Those are then averaged into a cross-book consensus — the
+vig-stripped market mean for the side in question. Only books that price that
+side directly count toward it, so an under-only book can't manufacture a
+phantom "over" edge out of its complement. Anything where PrizePicks offers a
+worse implied probability than that consensus gets surfaced, sorted by
+expected value.
 
 **Build slips.** A 2-to-6-leg slip builder computes Power and Flex EV in real
 time from the per-leg probabilities, with correlation-aware slip scoring for
@@ -59,8 +61,8 @@ built in CoreProp and constructs it on PrizePicks for you.
 │
 ├─ engine/                   The math
 │  ├─ matcher.py             Cross-book fuzzy player/prop matching
-│  ├─ devig.py               Strip vig from book prices (power / worst-case)
-│  ├─ consensus.py           Cross-book consensus + worst-case floor
+│  ├─ devig.py               Strip vig from book prices (Shin / power / worst-case)
+│  ├─ consensus.py           Cross-book consensus mean (the decision number)
 │  ├─ ev_calculator.py       Per-leg and slip EV (Power / Flex)
 │  ├─ correlation.py         Pairwise leg correlation (hourly refit)
 │  ├─ calibration.py         Brier, log-loss, hit rate, CLV, P&L
@@ -144,7 +146,7 @@ Everything except Supabase has a sensible default in `config.py`. Override in
 |---|---|---|
 | `SUPABASE_URL` | — | Project URL (required) |
 | `SUPABASE_SERVICE_KEY` | — | Server-side writes (required) |
-| `SUPABASE_ANON_KEY` | falls back to service key | Browser auth flow |
+| `SUPABASE_ANON_KEY` | — | Browser auth flow (required; published to the browser, so it must be the anon key — the app refuses to start if it's missing or equal to the service key) |
 | `SUPABASE_JWT_SECRET` | — | Verifies user JWTs server-side (HS256 path) |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | Bind address |
 | `HEADLESS` | `false` | Headed browser locally to bypass Cloudflare; headless on servers |
@@ -231,11 +233,25 @@ Six tabs across the top:
 
 ## How the numbers work
 
-CoreProp's decision probability is a conservative cross-book consensus, not a
-learned model. Each book's prices are de-vigged, a VWAP-style consensus is
-computed across the books pricing a given side, and the result is floored to
-the worst-case (min-across-books) devig so one soft book can't invent an edge.
-That number drives both the +EV surface and the slip EV math.
+CoreProp's decision probability is a cross-book consensus, not a learned model.
+Each book's prices are de-vigged (Shin for two-sided markets, a scaled
+single-sided devig otherwise) and averaged across the books that price the
+requested side directly. That mean — `consensus_prob` — drives both the +EV
+surface and the slip EV math.
+
+It is deliberately *not* floored to the worst-case (min-across-books) devig,
+which is what an earlier build gated on. Because that min is taken per side,
+over and under don't sum to 1: as soon as books disagree, both sides fall below
+50% and balanced ~50/50 PrizePicks lines never surface at all — the +EV tab
+went empty. The min is still computed as a defensive reference, and it is still
+what a lone single-source book gets discounted from, but it does not gate
+anything. `tests/engine_tests/test_consensus_decision.py` locks this in.
+
+The conservatism lives elsewhere instead: complement-derived probabilities are
+excluded from the mean, extremely juiced one-way prices (past
+`MAX_SINGLE_SIDED_JUICE`) are refused outright, any single-sided devig is
+capped at `SINGLE_SIDED_PROB_CAP`, and a single-source line takes a discount
+that scales with odds magnitude.
 
 Slip EV uses the exact PrizePicks payout tables (Power all-hit multipliers and
 the Flex partial-payout grid) with a Poisson-binomial expansion over the

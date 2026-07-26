@@ -10,7 +10,38 @@ load_dotenv()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", SUPABASE_KEY) # Fallback to service key if anon key missing, but RLS works with JWT.
+
+# ── The anon key is PUBLIC. The service key must never stand in for it. ─────
+# SUPABASE_ANON_KEY is served to every visitor: web/app.py::root() injects it
+# into index.html and GET /api/ui-config returns it. This line used to read
+#     os.environ.get("SUPABASE_ANON_KEY", SUPABASE_KEY)
+# so one missing env var silently published the SERVICE-ROLE key, which
+# BYPASSES row-level security — full read/write on every table for anyone who
+# viewed page source, with nothing logged to notice it by. There is no safe
+# degraded mode for that, so we refuse to start: a failed boot costs one
+# deploy, a leaked service-role key costs a rotation and can be harvested
+# quietly first. Pasting the service key into SUPABASE_ANON_KEY is the same
+# hole, so identity with SUPABASE_KEY is rejected too.
+_anon_key = os.environ.get("SUPABASE_ANON_KEY") or None
+if SUPABASE_KEY and (_anon_key is None or _anon_key == SUPABASE_KEY):
+    raise RuntimeError(
+        "SUPABASE_ANON_KEY is "
+        + ("missing" if _anon_key is None else "set to the SUPABASE_SERVICE_KEY value")
+        + ". It is published to the browser, so it must be the project's anon "
+        "(publishable) key — never the service-role key, which bypasses RLS. "
+        "Set SUPABASE_ANON_KEY from Supabase -> Project Settings -> API -> "
+        "'anon public' and restart. Refusing to start rather than exposing the "
+        "service key to every visitor."
+    )
+
+SUPABASE_ANON_KEY = _anon_key
+if SUPABASE_ANON_KEY is None:
+    # No service key either, so there is no secret to leak — this is an
+    # unconfigured environment (bare import, analysis script). get_user_db()
+    # returns None, and callers already handle that.
+    logger.warning(
+        "SUPABASE_ANON_KEY missing; per-user (RLS-scoped) clients unavailable."
+    )
 
 # ── Per-call clients (reverted from the shared connection pool) ────────────
 # We build a fresh SyncPostgrestClient (each with its own httpx.Client) per
@@ -51,8 +82,14 @@ def get_db() -> SyncPostgrestClient:
     return db
 
 def get_user_db(jwt: str) -> SyncPostgrestClient:
-    """Supabase client scoped to a user's JWT — RLS applies."""
-    if not SUPABASE_URL:
+    """Supabase client scoped to a user's JWT — RLS applies.
+
+    The `apikey` header MUST be the anon key: it is what makes this client
+    RLS-scoped instead of all-tenant. Without one we return None (callers
+    already treat that as "no database") rather than fall back to anything
+    with wider privileges.
+    """
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
         return None
     rest_url = f"{SUPABASE_URL.rstrip('/')}/rest/v1"
     headers = {

@@ -5,9 +5,10 @@ UNFILTERED query — `db.table("slips").select(...)` with no `.eq("user_id", ...
 That returns only the caller's rows *solely* because Supabase RLS
 (`user_id = auth.uid()`, migration_001) scopes visibility. RLS is therefore a
 single point of failure with no second layer: disable it, misconfigure a policy,
-or have `SUPABASE_ANON_KEY` fall back to the service key
-(engine/database.py — the documented fallback, which BYPASSES RLS) and those
-endpoints start serving every user's history.
+or hand `get_user_db` anything with service-role privileges (which BYPASSES RLS)
+and those endpoints start serving every user's history. `SUPABASE_ANON_KEY`
+used to fall back to the service key, which made that last one a single missing
+env var — see `test_anon_key_exposure.py`, which now pins the refusal.
 
 These tests pin the defense-in-depth requirement. `_UnscopedDB` emulates a
 Postgres with RLS OFF: it holds both users' rows and honors ONLY the filters

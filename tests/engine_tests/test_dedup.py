@@ -4,9 +4,8 @@ Rigorous coverage of the slip-leg deduplication invariant.
 The invariant the test suite enforces, end-to-end:
 
     No (player, game_start[:sports_day]) pair appears in two different
-    slips emitted by a single run of the sandbox simulator (or the
-    threshold optimizer). The same applies to live-pipeline auto-slip
-    builds when the dedup window is observed.
+    slips emitted by a single auto-slip build when the dedup window is
+    observed.
 
 Past dedup fixes (commits 6908c0a, dabc8de, 4591ee2, 3e59a8b) addressed
 specific bug-classes (UTC date drift, line column omission, two-team
@@ -15,14 +14,16 @@ test. This file is the test-suite half of the contract:
 
   1. Key-construction unit tests — every drift mode that broke a prior
      fix (TZ format, line type, player spelling, missing columns).
-  2. `_select_ranked` slip-builder unit tests — single slate, multi-
-     slate, two-team swap.
-  3. End-to-end `run_simulation` invariant test — drives the sandbox
-     against a synthetic observatory DataFrame and asserts the post-
-     build dedup invariant.
-  4. `optimize_threshold` invariant test — same for the optimizer path.
-  5. The `engine.dedup` helper modules — `drop_duplicate_slips`,
+  2. `engine.dedup` field-alias tests — the observatory-shaped leg dicts
+     and the live-pipeline shape must produce the same keys.
+  3. The `engine.dedup` helper modules — `drop_duplicate_slips`,
      `check_duplicate_pairs`, `assert_no_duplicate_legs`.
+  4. The live `BacktestLogger` pre-insert invariant.
+
+The `_select_ranked` / `run_simulation` / `optimize_threshold` groups this
+docstring used to list drove the strategy simulator, which was removed in
+simplify-v1 (71c1091) along with the Sandbox tab. Their invariant now lives
+entirely in the post-emit `engine.dedup` pass exercised by groups 3 and 4.
 
 Run:  pytest tests/engine_tests/test_dedup.py -v
 """
@@ -30,8 +31,6 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import patch
-
-import pandas as pd
 
 from engine.backtest import (
     make_bet_key,
@@ -328,7 +327,7 @@ class CheckDuplicateAssertionTests(unittest.TestCase):
 
 
 # ───────────────────────────────────────────────────────────────────────
-# 8. Live BacktestLogger pre-insert invariant
+# 4. Live BacktestLogger pre-insert invariant
 # ───────────────────────────────────────────────────────────────────────
 
 class _FakeQuery:

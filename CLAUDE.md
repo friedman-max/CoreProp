@@ -94,11 +94,21 @@ each tab fetches its own dataset on first visit.
 
 ## Conventions specific to this codebase
 
-**Payout tables are mirrored in two places.** `engine/constants.py`
-(`POWER_PAYOUTS`, `FLEX_PAYOUTS`, `BREAK_EVEN`) and `web/static/ev-page.jsx`
-(`EV_POWER_PAYOUTS`, `EV_FLEX_PAYOUTS`) must stay identical. PrizePicks lowered
-6-Power from 40x to 37.5x; break-evens move with the table. There is no 2-leg
-Flex (it degenerates to 2-leg Power and has no `BREAK_EVEN` entry).
+**Payout tables are mirrored in five places.** `engine/constants.py`
+(`POWER_PAYOUTS`, `FLEX_PAYOUTS`, `BREAK_EVEN`), `web/static/ev-page.jsx`
+(`EV_POWER_PAYOUTS`, `EV_FLEX_PAYOUTS`), `web/static/page-backtest.jsx`
+(`BT_POWER_PAYOUTS`, `BT_FLEX_PAYOUTS`), and the two compiled bundles in
+`web/static/dist/` must stay identical. PrizePicks lowered 6-Power from 40x to
+37.5x; break-evens move with the table. There is no 2-leg Flex (it degenerates
+to 2-leg Power and has no `BREAK_EVEN` entry) — both frontends short-circuit
+`n === 2` to the Power-2 payout.
+
+`tests/engine_tests/test_payout_table_mirror.py` enforces all of it: it parses
+the tables out of the `.jsx` *and* the committed `dist/*.js` (so a `.jsx` edit
+without `./build.sh` fails), and re-derives `BREAK_EVEN` from the payouts
+(closed form for Power, bisection for Flex) so a payout change with a stale
+break-even fails too. Change a payout and this test tells you every place that
+still disagrees.
 
 **`raw_true_prob` vs `true_prob` — one ruler.** `raw_true_prob` is the untouched
 market consensus and is what CLV, the observatory training corpus, and every
@@ -186,9 +196,12 @@ visitor and FastAPI is *not* the only path to the data. Tiers:
 pass an explicit `.eq("user_id", ...)` *in addition to* relying on RLS — see
 `get_backtest_slips`, `delete_backtest_slip`, and the loaders in
 `engine/calibration.py` (which take a `user_id` argument alongside `user_jwt`).
-Do not drop those filters on the grounds that "RLS already handles it":
-`SUPABASE_ANON_KEY` falls back to the **service key** when unset
-(`engine/database.py:13`), and a service-role client bypasses RLS entirely.
+Do not drop those filters on the grounds that "RLS already handles it": RLS is a
+single remote config away from being off, and a service-role client bypasses it
+entirely. (`SUPABASE_ANON_KEY` used to *fall back* to the service key when
+unset, which made that a one-env-var accident; `engine/database.py` now raises at
+import instead, and `tests/api_tests/test_anon_key_exposure.py` pins it. The
+app-layer filters stay regardless — they're the second layer.)
 `delete_backtest_slip`'s ownership check is only an ownership check *because* of
 the `user_id` filter — without it, the SELECT merely proves the row is visible.
 `tests/api_tests/test_tenant_isolation.py` pins this by simulating an
@@ -202,13 +215,24 @@ Artefacts refit hourly by the scheduler land in `data/` (`correlation_map.json`,
 `calibration_map.json`) with a Supabase `app_state_cache` mirror. `data/` is
 gitignored apart from `.gitkeep`.
 
-## Known stale docs
+## Removed subsystems
 
-`SANDBOX_DESIGN.md` and `tests/frontend/test_sandbox_live.mjs` both reference
-`web/static/page-sandbox.jsx` and `engine/strategy_tester.py`, which no longer
-exist — the Sandbox tab and the strategy simulator were removed. The `.mjs` test
-is not wired into pytest and crashes on a missing file if run directly. Treat
-both as historical.
+The Sandbox tab (`web/static/page-sandbox.jsx`) and the strategy simulator
+(`engine/strategy_tester.py`) were removed in simplify-v1 (`71c1091`), along
+with `POST /api/sandbox/run`. `SANDBOX_DESIGN.md` and
+`tests/frontend/test_sandbox_live.mjs` documented and tested them and have been
+deleted too. Inline comments in `engine/dedup.py`, `engine/constants.py`,
+`migrations/migration_007.sql` and `migration_009.sql` still name
+`strategy_tester` / the sandbox to explain why a field alias, a constant, or a
+column exists — those are decision history, not live references. The columns
+`migration_009` added (`first_seen_at` / `last_seen_at`) are still part of
+`schema.sql` and are still maintained by the `market_observatory` BEFORE UPDATE
+trigger (migration_017), so don't drop them because the sandbox is gone — no
+Python reads them today, but the trigger and both indexes are live.
+
+Payout-table drift is the one thing that subsystem's test suite covered and
+nothing else did; `tests/engine_tests/test_payout_table_mirror.py` now owns
+that contract in pytest (see below).
 
 ## Commit style
 

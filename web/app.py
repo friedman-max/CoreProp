@@ -2808,9 +2808,11 @@ def get_backtest_slips(user: dict = Depends(get_current_user)):
         # RAM and over the wire for no reason.
         # `.eq("user_id", ...)` scopes this in the QUERY. RLS
         # (`user_id = auth.uid()`) is still the enforcement boundary, but it must
-        # not be the ONLY one: SUPABASE_ANON_KEY falls back to the service key
-        # when unset (engine/database.py), and a service-role client bypasses
-        # RLS — which would serve every user's slips from here.
+        # not be the ONLY one: a disabled policy or a service-role client
+        # (which bypasses RLS) would otherwise serve every user's slips from
+        # here. engine/database.py now refuses to start if SUPABASE_ANON_KEY is
+        # missing or equals the service key, but that's one hole closed, not a
+        # reason to drop this filter.
         _slip_cols = "id, timestamp, slip_type, n_legs, proj_slip_ev_pct"
         slips_res = (
             db.table("slips").select(_slip_cols)
@@ -3358,10 +3360,10 @@ def delete_backtest_slip(slip_id: str, user: dict = Depends(get_current_user)):
         # Verify the slip belongs to this user. The user_id filter is what makes
         # this an OWNERSHIP check rather than a mere existence check — without
         # it, the select only proves the row is *visible*, which is scoped by
-        # RLS alone. If RLS is off or the client is service-role (see the
-        # SUPABASE_ANON_KEY fallback in engine/database.py), any slip_id in the
-        # table would pass and the deletes below would destroy another user's
-        # slip. The deletes carry the same filter so the write itself is scoped.
+        # RLS alone. If RLS is off or the client is service-role, any slip_id in
+        # the table would pass and the deletes below would destroy another
+        # user's slip. The deletes carry the same filter so the write itself is
+        # scoped.
         check = (
             db.table("slips").select("id")
               .eq("id", slip_id).eq("user_id", user["id"]).execute()
