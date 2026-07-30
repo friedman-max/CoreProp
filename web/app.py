@@ -1636,6 +1636,22 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    """Serve the tab icon at the bare path too.
+
+    index.html declares /static/favicon.ico explicitly, but browsers still probe
+    /favicon.ico directly (and cache the 404, which is what showed the grey
+    globe). There is no catch-all route, so without this the probe 404s.
+    """
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        STATIC_DIR / "favicon.ico",
+        media_type="image/x-icon",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.get("/")
 def root():
     from engine.database import SUPABASE_URL, SUPABASE_ANON_KEY
