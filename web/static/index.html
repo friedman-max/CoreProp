@@ -267,12 +267,25 @@ body::before{
 .lp-tk-pct{color:var(--green);font-family:"JetBrains Mono",monospace;font-weight:600}
 
 /* STATS */
-.lp-stats{max-width:1200px;margin:0 auto;padding:72px 22px;display:grid;grid-template-columns:repeat(4,1fr);gap:24px}
-@media (max-width:880px){.lp-stats{grid-template-columns:repeat(2,1fr)}}
+/* minmax(0,1fr), not a bare 1fr: `1fr` is really minmax(auto,1fr), so each
+ * track refuses to shrink below its content's intrinsic width — the "All major
+ * leagues / NBA · NFL · MLB · NHL · WNBA" cell needs ~171px, which held all four
+ * tracks at their wide sizes and pushed the PAGE into horizontal scroll for
+ * every width from 881px up to ~1000px (66px of sideways scroll at 900px). The
+ * 880px breakpoint below hid it in testing: at exactly 880 it drops to 2-up and
+ * looks fine, so the broken band sits just above the breakpoint. */
+.lp-stats{max-width:1200px;margin:0 auto;padding:72px 22px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+@media (max-width:880px){.lp-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .lp-stat{padding:24px 28px;border-left:1px solid var(--hair)}
 .lp-stat:first-child{border-left:0}
 @media (max-width:880px){.lp-stat:nth-child(odd){border-left:0}}
-.lp-stat-v{font-size:46px;font-weight:700;letter-spacing:-.02em;line-height:1;color:transparent;-webkit-background-clip:text;background-clip:text;background-image:linear-gradient(135deg,#fff,#a8b2ff)}
+/* The value is set in a fluid size rather than a flat 46px. In the 881-1000px
+ * band the grid is still 4-up but each track is only ~180px, and 46px type made
+ * the longest value ("All major leagues", 171px) overflow its 126px content box.
+ * clamp() lets it shrink to fit that band and snap back to 46px once there's
+ * room; the tighter side padding in the same band buys back ~24px per cell. */
+.lp-stat-v{font-size:clamp(30px,3.4vw,46px);font-weight:700;letter-spacing:-.02em;line-height:1.05;color:transparent;-webkit-background-clip:text;background-clip:text;background-image:linear-gradient(135deg,#fff,#a8b2ff)}
+@media (min-width:881px) and (max-width:1000px){.lp-stat{padding:24px 16px}}
 .lp-stat-l{margin-top:10px;color:var(--text-3);font-size:13.5px}
 
 /* FEATURES */
@@ -464,7 +477,12 @@ body::before{
 .ev-filter-grow{flex:1;min-width:200px}
 .ev-filter label{font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase}
 .ev-chips{display:flex;gap:4px;flex-wrap:wrap}
-.ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);padding:7px 13px;border-radius:8px;font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
+/* height:34px matches .cp-input-sm and .ev-stepper. The filter bar is
+ * `align-items:flex-end`, so a chip row that computed to 31px sat 3px shorter
+ * than the text inputs beside it and dragged its own "LEAGUE" / "SIDE" label
+ * 3px down out of line with "PROP TYPE" / "MIN TRUE %". Vertical padding is
+ * dropped in favour of flex centring so the height is exact at any font-size. */
+.ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);height:34px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
 .ev-chip:hover{border-color:var(--hair-2);color:var(--text)}
 .ev-chip.is-on{background:var(--primary);border-color:var(--primary);color:white}
 .ev-stepper{display:flex;align-items:center;background:#0a0a12;border:1px solid var(--hair);border-radius:8px;overflow:hidden}
@@ -497,7 +515,13 @@ body::before{
 .ev-table{background:linear-gradient(180deg,#13131c,#101019);border:1px solid var(--hair);border-radius:14px;overflow:hidden}
 .ev-row{
   display:grid;
-  grid-template-columns:1.5fr .55fr 1.25fr .5fr .6fr .65fr .95fr .8fr .45fr;
+  /* Track 8 (GAME) is minmax(86px,.8fr), not a bare .8fr: the timestamp
+   * ("7/30 5:38 PM") is white-space:nowrap at 12px JetBrains Mono, which needs
+   * 86px. As a pure fraction the track shrank below that under ~1250px and the
+   * text ran straight into the "+" button in track 9 (measured -12px of overlap
+   * at 1120px). minmax() lets it still grow on wide screens but never collapse
+   * under its own content. */
+  grid-template-columns:1.5fr .55fr 1.25fr .5fr .6fr .65fr .95fr minmax(86px,.8fr) .45fr;
   gap:12px;
   align-items:center;
   padding:13px 18px;
@@ -516,7 +540,13 @@ body::before{
 .ev-row-hd>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ev-row-data{animation:fadeUp .35s ease both}
 .ev-row-data:hover{background:rgba(99,102,241,.05)}
-.ev-row-data.is-sel{background:linear-gradient(90deg,rgba(99,102,241,.10),rgba(99,102,241,.02));border-left:2px solid var(--primary);padding-left:16px}
+/* Selected row: the 2px accent border must be subtracted from the row's own
+ * horizontal padding, or the whole row's content shifts left relative to the
+ * header. The padding is `clamp(18px,2vw,24px)` (see the .ev-row override
+ * below) — this used to hardcode 16px, which was correct only back when the
+ * padding was a flat 18px and left every selected row 6px out of alignment at
+ * wide viewports. Mirrors what .is-logged does for its 3px border. */
+.ev-row-data.is-sel{background:linear-gradient(90deg,rgba(99,102,241,.10),rgba(99,102,241,.02));border-left:2px solid var(--primary);padding-left:calc(clamp(18px,2vw,24px) - 2px)}
 .ev-row:last-child{border-bottom:0}
 .ev-th-sort{display:inline-flex;align-items:center;gap:5px;color:var(--primary-2)}
 .ev-arrow{font-size:10px}
@@ -732,6 +762,20 @@ body::before{
 .bd-f>span{font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase}
 .bd-f input,.bd-f select{background:#0a0a12;border:1px solid var(--hair);color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:inherit;min-width:130px;transition:border-color .15s}
 .bd-f input:focus,.bd-f select:focus{border-color:var(--primary)}
+/* A native select (appearance:auto) computes 2px taller than an <input> at the
+ * same font-size/padding, because its intrinsic content box includes room for
+ * the OS dropdown glyph. The filter bar is `align-items:flex-end`, so those 2px
+ * pushed the "LEAGUE" label 2px above "PROP TYPE" / "PLAYER" and left the
+ * select's box taller than its neighbours. Drop the native appearance and draw
+ * the chevron ourselves — the same treatment .ev-slip-field select already uses
+ * — so all three controls are exactly 34px and their labels share a baseline. */
+.bd-f select{
+  appearance:none;-webkit-appearance:none;
+  line-height:normal;height:34px;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 5l3 3 3-3' stroke='%237a7a8b' stroke-width='1.5' fill='none'/></svg>");
+  background-repeat:no-repeat;background-position:right 10px center;
+  padding-right:28px;
+}
 .bd-f-grow{flex:1;min-width:160px}
 .bd-f-grow input{width:100%}
 /* Clear sits with the "# lines" badge and the pager on the right of the filter
@@ -861,6 +905,18 @@ body::before{
 .an-section-sub{font-size:12px;color:var(--text-3)}
 .an-section-h{margin:20px 0 10px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);display:flex;align-items:center;gap:10px}
 
+/* Analytics stacks TWO .bt-summary groups in one panel (7 window-stat cards,
+ * then 3 CLV cards). The shared rule uses auto-fit, whose empty tracks COLLAPSE
+ * — so the 3-card group stretched each card to 419px directly beneath 204px
+ * cards, and no column lined up between the groups. Pin an explicit 4-column
+ * grid here: 7 cards wrap 4+3 and 3 cards fill the first three tracks, so card
+ * N of either group sits on the same x as card N of the other. Backtest keeps
+ * auto-fit (one 6-card group, where auto-fill would leave a dead track). */
+.an-page .bt-summary{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:1100px){.an-page .bt-summary{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:820px){.an-page .bt-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:520px){.an-page .bt-summary{grid-template-columns:1fr}}
+
 .pnl-header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:12px;gap:12px;flex-wrap:wrap}
 .pnl-title{font-size:13px;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;font-weight:600}
 .pnl-title-sub{text-transform:none;opacity:.7;letter-spacing:0;margin-left:6px;font-size:11.5px}
@@ -989,8 +1045,13 @@ body::before{
 
 /* Big Save-preferences bar at the bottom of the +EV main column. */
 /* Backtest slip card: Place-on-PrizePicks button at the bottom */
+/* `margin-top:auto` pins the CTA to the bottom of the card's flex column.
+ * The cards in a row are stretched to equal height by the grid, but the legs
+ * list is content-sized — so without this the button floats up right after the
+ * last leg and a 2-leg card's CTA sat up to 262px above its 6-leg neighbour's,
+ * with dead space beneath it. Now every card's CTA shares one baseline. */
 .bt-slip-place{
-  margin-top:6px;width:100%;
+  margin-top:auto;width:100%;
   background:linear-gradient(180deg,#7176f4,#5057eb);
   color:white;border:0;border-radius:8px;
   padding:9px 12px;font-size:12.5px;font-weight:700;letter-spacing:.02em;
@@ -1125,15 +1186,28 @@ body::before{
   font-size:11px;
   background:rgba(255,255,255,.06);
   padding:2px 7px;border-radius:4px;
+  flex-shrink:0;   /* the league pill is short and fixed — only the prop name shrinks */
 }
-.bt-leg-prop-name{color:var(--text);font-weight:600}
-.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:13px;padding:3px 8px;border-radius:5px;margin-left:auto}
+/* The prop NAME is the only part of this row that may be shortened. Without
+ * `min-width:0` a flex item won't shrink below its text width, so the row
+ * overflowed to the right and `margin-left:auto` pushed the side/line pill
+ * clean outside the container's clip — the actual bet line ("▼51.5") vanished
+ * entirely on narrow cards while a long prop name ("Pts+Rebs+Asts") stayed
+ * fully rendered. Now the name ellipsises and the line is always visible. */
+.bt-leg-prop-name{color:var(--text);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:13px;padding:3px 8px;border-radius:5px;margin-left:auto;flex-shrink:0}
 .bt-leg-side-over{color:#86EFAC;background:rgba(34,197,94,.16)}
 .bt-leg-side-under{color:#93C5FD;background:rgba(96,165,250,.16)}
 
 /* Result pill — never empty; shows actual stat number, DNP, P, ✓/✕, or — */
 .bt-slip-compact .bt-leg-actual{
-  min-width:44px;
+  /* 71px fits the widest realistic stat ("106.5" — 3 digits + decimal at 15px
+   * JetBrains Mono + 24px padding). This is a min-width, not a width, because
+   * both this pill and .bt-leg-pct sit in `auto` grid tracks: if the pill can
+   * shrink, a leg showing "5.5" gets narrower tracks than one showing "106.5"
+   * and BOTH badge columns in that leg shift right relative to its siblings —
+   * within the same card. Measured ragged by 9-18px before this. */
+  min-width:71px;
   padding:6px 12px;
   border-radius:7px;
   font-size:15px;
