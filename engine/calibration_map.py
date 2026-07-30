@@ -80,6 +80,14 @@ _MIN_BIN_OBS = 25
 MIN_CELL_OBS = 500
 MIN_BINS_SPANNED = 5
 
+# Artefact schema version. Bump whenever the FIT POPULATION changes in a way
+# that makes older persisted maps invalid rather than merely stale.
+#   v1 -> fit on the pooled observatory corpus (goblins + standard).
+#   v2 -> fit on odds_type='standard' rows only (migration_019).
+# load_calibration_map() discards anything below this, so a v1 artefact sitting
+# in data/calibration_map.json or the Supabase mirror can never be applied.
+MAP_SCHEMA_VERSION = 2
+
 # How far back to pull settled observatory rows for the fit. Calibration
 # drift is slower than a single slate but faster than a season; 90 days
 # balances responsiveness against sample size and matches the RAM budget the
@@ -179,8 +187,34 @@ def _fit_cell(pairs: list[tuple[float, int]]) -> Optional[dict]:
 
 def _load_settled_rows() -> list[dict]:
     """Pull settled `market_observatory` rows (raw_true_prob + outcome) for
-    the fit window. Uses the service-role handle like the correlation fit;
-    the observatory is public-read anyway."""
+    the fit window, restricted to STANDARD PrizePicks lines.
+
+    Why the odds_type filter matters (alpha audit, 2026-07-28):
+      The observatory logs every priced side we scan, which is dominated by
+      GOBLIN (green devil) lines — shaded, higher-hit-rate projections whose
+      payout is variable and unpublished, so they are never bettable against
+      the standard payout table and are excluded from the auto-logger.
+
+      Fitting on the pooled corpus therefore learns the goblin curve and then
+      applies it to standard legs. Measured on 2,036 settled standard legs,
+      the pooled-fit map made calibration WORSE, not better:
+
+          before map:  mean pred 54.91%  actual 53.88%  gap -1.03pp
+          after  map:  mean pred 55.95%  actual 53.88%  gap -2.07pp
+
+      and it inflated the pool clearing a 0.55 threshold from 882 to 1,569
+      legs (+78%) — nearly doubling stake on legs that were already
+      over-predicted. The goblin tail is ~10x heavier in the observatory
+      (24.8% of rows >= 0.60) than in the bettable standard universe (2.5%).
+
+    `odds_type` arrives with migration_019, so rows written before it are
+    NULL = UNKNOWN. We deliberately do NOT treat NULL as 'standard': that is
+    exactly the pooling that produced the result above. The corpus therefore
+    rebuilds from scratch once the migration lands, and the fit stays empty
+    (=> no trusted cells => nothing applied even if CALIBRATION_MAP_ENABLED is
+    flipped) until enough tagged standard rows accumulate. That is the safe
+    failure mode.
+    """
     from engine.database import get_db  # lazy: avoid import cycle at load
     db = get_db()
     if not db:
@@ -188,28 +222,43 @@ def _load_settled_rows() -> list[dict]:
 
     cutoff_iso = (datetime.now(timezone.utc)
                   - timedelta(days=_FIT_WINDOW_DAYS)).isoformat()
-    try:
+
+    def _page(apply_odds_filter: bool) -> list:
         rows: list = []
         page_size = 1000
         offset = 0
         while True:
-            page = (
+            q = (
                 db.table("market_observatory")
                   .select("league, side, raw_true_prob, true_prob, result, game_start")
                   .in_("result", ["hit", "miss"])
                   .gte("game_start", cutoff_iso)
-                  .order("game_start", desc=False)
-                  .range(offset, offset + page_size - 1)
-                  .execute()
-                  .data
+            )
+            if apply_odds_filter:
+                q = q.eq("odds_type", "standard")
+            page = (
+                q.order("game_start", desc=False)
+                 .range(offset, offset + page_size - 1)
+                 .execute()
+                 .data
             ) or []
             rows.extend(page)
             if len(page) < page_size:
                 break
             offset += page_size
         return rows
+
+    try:
+        return _page(apply_odds_filter=True)
     except Exception as exc:
-        logger.warning("Calibration map: observatory query failed: %s", exc)
+        # migration_019 not applied yet: the column does not exist. Refuse to
+        # silently fall back to the pooled (goblin-contaminated) corpus — an
+        # empty fit is correct here, and the map is inert without trusted cells.
+        logger.warning(
+            "Calibration map: standard-only query failed (%s). "
+            "If migration_019 is not applied, apply it — refusing to fit on the "
+            "goblin-contaminated pooled corpus.", exc,
+        )
         return []
 
 
@@ -228,7 +277,12 @@ def fit_calibration_map() -> Optional[dict]:
 
     rows = _load_settled_rows()
     if not rows:
-        logger.info("Calibration map fit: no settled observatory rows yet.")
+        logger.info(
+            "Calibration map fit: no settled STANDARD observatory rows yet "
+            "(odds_type='standard'). Expected until migration_019 is applied "
+            "and tagged rows accumulate; the map stays empty (no trusted "
+            "cells) rather than fitting on the goblin-contaminated pool."
+        )
         return None
 
     by_cell: dict[tuple[str, str], list[tuple[float, int]]] = {}
@@ -261,7 +315,7 @@ def fit_calibration_map() -> Optional[dict]:
     global_fit = _fit_cell(pooled)
 
     payload = {
-        "version": 1,
+        "version": MAP_SCHEMA_VERSION,
         "fitted_at": datetime.now(timezone.utc).isoformat(),
         "window_days": _FIT_WINDOW_DAYS,
         "cells": cells,
@@ -298,7 +352,17 @@ def fit_calibration_map() -> Optional[dict]:
 
 def load_calibration_map() -> dict:
     """Read the persisted map from disk (or the newer Supabase mirror) into
-    the module dict used by apply_calibration()."""
+    the module dict used by apply_calibration().
+
+    Rejects any artefact older than MAP_SCHEMA_VERSION. Version 1 maps were fit
+    on the POOLED observatory corpus (goblins + standard). Those artefacts are
+    already persisted to data/calibration_map.json and the Supabase
+    app_state_cache, so simply changing the fitter is not enough — a stale v1
+    map would still load and be applied the moment CALIBRATION_MAP_ENABLED is
+    flipped. Measured on settled standard legs, a v1 map moves the calibration
+    gap from -1.03pp to -2.07pp and inflates the 0.55-threshold pool by 78%.
+    Refusing it here is what makes the fix complete.
+    """
     try:
         from engine.persistence import load_artefact
         payload = load_artefact(
@@ -308,7 +372,25 @@ def load_calibration_map() -> dict:
     except Exception as exc:
         logger.warning("Calibration map load: %s", exc)
         payload = None
-    return payload or {}
+
+    if not payload:
+        return {}
+
+    version = payload.get("version", 1)
+    try:
+        version = int(version)
+    except (TypeError, ValueError):
+        version = 1
+    if version < MAP_SCHEMA_VERSION:
+        logger.warning(
+            "Calibration map: DISCARDING stale v%s artefact (fitted on the "
+            "pooled goblin+standard corpus). Need v%d, fit on odds_type="
+            "'standard' only. The map stays empty until migration_019 is "
+            "applied and a fresh standard-only fit accumulates.",
+            version, MAP_SCHEMA_VERSION,
+        )
+        return {}
+    return payload
 
 
 def reload_calibration_map() -> int:

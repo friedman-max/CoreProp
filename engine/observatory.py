@@ -47,6 +47,7 @@ def build_observation_entry(
     team: str = "",
     start_time: str = "",
     books_probs: Optional[dict] = None,
+    odds_type: str = "standard",
 ) -> Optional[dict]:
     """Build the canonical observatory entry dict — or None if the raw
     probability fails the >= OBS_MIN_PROB gate.
@@ -54,6 +55,13 @@ def build_observation_entry(
     The fields mirror what `_log_observatory_bg` (web/app.py) upserts into
     `market_observatory`. simplify-v1 has no calibrator, so `true_prob` equals
     the raw consensus; both are stored so the schema contract is unchanged.
+
+    `odds_type` (migration_019) records whether PrizePicks offered this as a
+    `standard` 6x-table line or a `goblin` (green devil). Goblin payouts are
+    VARIABLE and unpublished, so goblin rows can never be scored against the
+    standard payout table — analyses must filter on this column. Without it
+    the two are pooled, which makes the high-probability slice of the
+    observatory look like an edge when it is mostly unbettable goblins.
     """
     if not should_log_observation(raw_prob):
         return None
@@ -70,4 +78,5 @@ def build_observation_entry(
         "team":          team or "",
         "start_time":    start_time or "",
         "books_probs":   books_probs or {},
+        "odds_type":     (odds_type or "standard"),
     }

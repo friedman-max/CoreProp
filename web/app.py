@@ -754,6 +754,7 @@ def _run_pipeline_body():
                             raw_prob=prob, market_width=mw,
                             team=getattr(m.pp, "team", "") or "",
                             start_time=m.pp.start_time, books_probs=_per_book_probs("over"),
+                            odds_type=getattr(m.pp, "odds_type", "standard"),
                         )
                         if _obs is not None:
                             obs_entries.append(_obs)
@@ -831,6 +832,7 @@ def _run_pipeline_body():
                             raw_prob=prob, market_width=mw,
                             team=getattr(m.pp, "team", "") or "",
                             start_time=m.pp.start_time, books_probs=_per_book_probs("under"),
+                            odds_type=getattr(m.pp, "odds_type", "standard"),
                         )
                         if _obs is not None:
                             obs_entries.append(_obs)
@@ -1253,6 +1255,13 @@ def _run_pipeline_body():
                     team_val = (e.get("team") or "").strip()
                     if team_val:
                         row["team"] = team_val
+                    # migration_019: goblin payouts are VARIABLE and unpublished,
+                    # so goblin rows can never be scored against the standard
+                    # payout table. Record the variant so analyses can filter to
+                    # the bettable standard universe instead of pooling the two.
+                    ot_val = (e.get("odds_type") or "").strip()
+                    if ot_val:
+                        row["odds_type"] = ot_val
                     bp = e.get("books_probs")
                     if bp:
                         row["books"] = bp
@@ -1268,7 +1277,12 @@ def _run_pipeline_body():
                 # (`closing_books`) — the entry→close pair the CLV dataset needs.
                 # If a column is missing on the deployed schema, strip and retry
                 # so logging survives a pending migration.
-                _OPTIONAL_COLS = ("books", "raw_true_prob", "market_width", "team")
+                # odds_type FIRST: it is the newest column (migration_019) and
+                # the most likely to be missing on a not-yet-migrated deploy.
+                # Stripping it costs the least — sacrificing raw_true_prob or
+                # books to a pending migration would throw away the training
+                # corpus instead.
+                _OPTIONAL_COLS = ("odds_type", "books", "raw_true_prob", "market_width", "team")
                 def _strip(rows, col):
                     for r in rows:
                         r.pop(col, None)

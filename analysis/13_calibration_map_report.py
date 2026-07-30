@@ -53,6 +53,17 @@ def _env() -> dict:
 
 
 def _pull(url: str, key: str, since_iso: str) -> list[dict]:
+    """Pull settled observatory rows, restricted to STANDARD lines.
+
+    MUST mirror engine.calibration_map._load_settled_rows. The observatory is
+    dominated by GOBLIN (green devil) lines, which are never bettable against
+    the standard payout table. Reporting on the pooled corpus makes the map
+    look excellent (|gap|cal ~0.003 on every cell) because that is in-sample
+    fit quality on goblins — while the same map, applied to the 2,036 settled
+    STANDARD legs, doubles the calibration gap (-1.03pp -> -2.07pp) and
+    inflates the 0.55-threshold pool by 78%. A report that does not filter
+    here will green-light a calibrator that damages the bettable universe.
+    """
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
     rows, off = [], 0
     with httpx.Client(timeout=90) as c:
@@ -64,10 +75,21 @@ def _pull(url: str, key: str, since_iso: str) -> list[dict]:
                     "select": "league,side,raw_true_prob,true_prob,result,game_start",
                     "result": "in.(hit,miss)",
                     "game_start": f"gte.{since_iso}",
+                    # NULL (pre-migration_019) is UNKNOWN, not standard — it is
+                    # excluded on purpose. Expect an empty corpus until the
+                    # migration lands and tagged rows accumulate.
+                    "odds_type": "eq.standard",
                     "limit": 1000,
                     "offset": off,
                 },
             )
+            if r.status_code >= 400 and "odds_type" in r.text:
+                raise SystemExit(
+                    "market_observatory.odds_type does not exist — apply "
+                    "migrations/migration_019.sql first.\n"
+                    "Refusing to report on the pooled corpus: it is "
+                    "goblin-dominated and will overstate the map's quality."
+                )
             r.raise_for_status()
             batch = r.json()
             rows += batch
