@@ -15,35 +15,48 @@
 // If you want a performance stat on this page, wire it to settled
 // market_observatory rows first. Do not type a number in.
 
-// Placeholder line used by the worked example in the "How the number is built"
-// panel. Explicitly labelled as an example in the UI — it is not a live quote.
+// The sample line in the hero panel. Illustrative prices, not a live quote —
+// the panel says so in four words rather than a sentence of hedging.
 const LP_EXAMPLE = {
   player: "Cale Makar",
   league: "NHL",
   prop: "Assists",
   line: 0.5,
   side: "OVER",
-  // Two book prices for one side of one market, and the no-vig probability the
-  // engine derives from them. Chosen to be arithmetically checkable by a reader:
-  // see LP_EXAMPLE_MATH below, which recomputes every figure from these odds.
-  books: [["FD", -138], ["DK", -145]],
+  // Both sides of one market at two books. Two-sided is the point: the vig only
+  // becomes visible when you add the two prices' implied probabilities and get
+  // more than 100%. The old panel showed one side at two books, which meant the
+  // "strips the vig" claim had nothing on screen backing it up.
+  books: [
+    { book: "FanDuel",    over: -138, under: +114 },
+    { book: "DraftKings", over: -145, under: +120 },
+  ],
 };
 
-// The example's arithmetic, computed rather than asserted, so the panel can
-// never drift from the numbers it prints. Mirrors engine/devig.py:
-// american_to_implied + a two-book average of the implied probabilities.
+// Every figure the panel prints, computed from LP_EXAMPLE.books so the panel can
+// never drift from its own arithmetic. Mirrors engine/devig.py: American ->
+// implied, then the multiplicative devig (each side divided by the book's
+// overround), then the cross-book mean.
 const LP_EXAMPLE_MATH = (() => {
   const implied = (american) =>
     american < 0 ? -american / (-american + 100) : 100 / (american + 100);
-  const probs = LP_EXAMPLE.books.map(([, odds]) => implied(odds));
-  const avg = probs.reduce((a, b) => a + b, 0) / probs.length;
+  const rows = LP_EXAMPLE.books.map(({ book, over, under }) => {
+    const io = implied(over), iu = implied(under);
+    const total = io + iu;                 // > 1; the excess IS the vig
+    return {
+      book, over, under,
+      overPct:  io * 100,                  // what the posted OVER price implies
+      underPct: iu * 100,                  // ...and the UNDER
+      totalPct: total * 100,               // > 100 by the book's margin
+      vigPct:   (total - 1) * 100,
+      fairPct:  (io / total) * 100,         // margin removed, sides normalized
+    };
+  });
+  const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
   return {
-    perBook: LP_EXAMPLE.books.map(([bk, odds], i) => ({
-      book: bk,
-      odds,
-      pct: probs[i] * 100,
-    })),
-    avgPct: avg * 100,
+    rows,
+    fairPct: mean(rows.map((r) => r.fairPct)),
+    vigPct:  mean(rows.map((r) => r.vigPct)),
   };
 })();
 
@@ -68,7 +81,7 @@ function Landing({ onLogin, onStart }) {
       <HowItWorks cov={cov} />
       <Method />
       <Limits />
-      <FinalCTA onStart={onStart} onLogin={onLogin} />
+      <FinalCTA onStart={onStart} onLogin={onLogin} cov={cov} />
       <Footer cov={cov} />
     </main>
   );
@@ -76,19 +89,18 @@ function Landing({ onLogin, onStart }) {
 
 // ───────── Hero ─────────
 function Hero({ onLogin, onStart, cov }) {
-  const books = cov ? cov.books.join(", ") : null;
+  const sources = cov ? `${cov.books.length} ${cov.books_noun}` : null;
   return (
     <section className="lp-hero">
       <div className="lp-hero-inner">
         <div className="lp-hero-l">
           <h1 className="lp-h1">
-            Every PrizePicks line, priced against the sportsbooks.
+            PrizePicks lines, priced against the sportsbooks.
           </h1>
           <p className="lp-sub">
-            CoreProp pulls the same player props from{" "}
-            {books ? <b>{books}</b> : "the major sportsbooks"}, strips the
-            vig out of each price, and shows you the no-vig probability behind
-            every PrizePicks line, next to the payout you'd need to break even.
+            The books set a price on the same player props PrizePicks offers, and
+            that price carries their margin. CoreProp takes it out and shows you
+            what {sources || "the market"} actually think each line is worth.
           </p>
           <div className="lp-cta-row">
             <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>
@@ -98,10 +110,6 @@ function Hero({ onLogin, onStart, cov }) {
               Log in
             </button>
           </div>
-          <p className="lp-hero-note">
-            No performance claims on this page. The math is shown in full below
-            so you can check it before you pay for anything.
-          </p>
         </div>
         <div className="lp-hero-r">
           <ExampleCard />
@@ -111,58 +119,78 @@ function Hero({ onLogin, onStart, cov }) {
   );
 }
 
-// The worked example: one line, two book prices, and the arithmetic that turns
-// them into a probability. Every figure is computed from LP_EXAMPLE.books.
+// The hero panel: one line, and where the book's margin hides.
+//
+// Replaces a 3-column table of book / price / implied %, which asked the reader
+// to do the comparison in their head. The rebuild shows the actual textbook
+// demonstration of vig: stack both sides of each market as one bar, and it runs
+// PAST the 100% marker. The overhang is the margin — visible without reading a
+// figure, and the reason the posted price isn't the real probability.
 function ExampleCard() {
   const p = LP_EXAMPLE;
   const m = LP_EXAMPLE_MATH;
+  // The 100% gridline sits at a fixed fraction of the track so the overhang has
+  // room to show. Scaled off the widest total, not hardcoded, so a wider market
+  // can't overflow its bar.
+  const scale = Math.max(...m.rows.map((r) => r.totalPct)) * 1.02;
+  const hundredAt = (100 / scale) * 100;
   return (
-    <figure className="lp-example">
-      <figcaption className="lp-example-cap">
-        Worked example: illustrative prices, not a live quote
-      </figcaption>
-      <div className="lp-example-hd">
-        <LeaguePill league={p.league} />
-        <span className="lp-example-player">{p.player}</span>
-      </div>
-      <div className="lp-example-bet">
-        <span className="lp-example-side">{p.side}</span>
-        <span className="lp-example-line mono">{p.line}</span>
-        <span className="lp-example-prop">{p.prop}</span>
+    <figure className="lp-ex">
+      <header className="lp-ex-hd">
+        <div className="lp-ex-line">
+          <LeaguePill league={p.league} />
+          <span className="lp-ex-player">{p.player}</span>
+        </div>
+        <div className="lp-ex-bet">
+          <span className="lp-ex-side">{p.side}</span>
+          <span className="lp-ex-num mono">{p.line}</span>
+          <span className="lp-ex-prop">{p.prop}</span>
+        </div>
+      </header>
+
+      <div className="lp-ex-bars">
+        <div className="lp-ex-scale">
+          <span className="lp-ex-100" style={{ left: `${hundredAt}%` }}>100%</span>
+        </div>
+        {m.rows.map((r) => (
+          <div key={r.book} className="lp-ex-bar">
+            <div className="lp-ex-bar-top">
+              <span className="lp-ex-book">{r.book}</span>
+              <span className="lp-ex-price mono">
+                {r.over > 0 ? `+${r.over}` : r.over} / {r.under > 0 ? `+${r.under}` : r.under}
+              </span>
+            </div>
+            <div className="lp-ex-track">
+              <span className="lp-ex-over"  style={{ width: `${(r.overPct / scale) * 100}%` }} />
+              <span className="lp-ex-under" style={{ width: `${(r.underPct / scale) * 100}%` }} />
+              <span className="lp-ex-rule" style={{ left: `${hundredAt}%` }} />
+            </div>
+            <div className="lp-ex-bar-foot">
+              <span className="mono">{r.totalPct.toFixed(1)}%</span> priced
+              <span className="lp-ex-excess mono">+{r.vigPct.toFixed(1)}%</span>
+            </div>
+          </div>
+        ))}
       </div>
 
-      <table className="lp-example-tbl">
-        <thead>
-          <tr>
-            <th scope="col">Book</th>
-            <th scope="col">Price</th>
-            <th scope="col">Implied</th>
-          </tr>
-        </thead>
-        <tbody>
-          {m.perBook.map((b) => (
-            <tr key={b.book}>
-              <th scope="row"><span className="cp-book lp-book">{b.book}</span></th>
-              <td className="mono">{b.odds > 0 ? `+${b.odds}` : b.odds}</td>
-              <td className="mono">{b.pct.toFixed(1)}%</td>
-            </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr>
-            <th scope="row">No-vig consensus</th>
-            <td />
-            <td className="mono lp-example-out">{m.avgPct.toFixed(1)}%</td>
-          </tr>
-        </tfoot>
-      </table>
+      <div className="lp-ex-key">
+        <span className="lp-ex-key-item"><i className="lp-ex-sw lp-ex-sw-over" /> Over</span>
+        <span className="lp-ex-key-item"><i className="lp-ex-sw lp-ex-sw-under" /> Under</span>
+        <span className="lp-ex-key-note">Both sides sum past 100%. The excess is the house margin.</span>
+      </div>
 
-      <p className="lp-example-foot">
-        A 6-leg Power slip needs every leg above{" "}
-        <b className="mono">{LP_POWER_6_BE_PCT.toFixed(2)}%</b> to break even at{" "}
-        {LP_POWER_6_PAYOUT}×. That threshold, not a hit-rate claim, is what
-        the board ranks against.
-      </p>
+      <div className="lp-ex-out">
+        <div className="lp-ex-out-l">
+          <span className="lp-ex-out-k">Margin removed</span>
+          <span className="lp-ex-out-v mono">{m.fairPct.toFixed(1)}%</span>
+        </div>
+        <div className="lp-ex-out-r">
+          <span className="lp-ex-out-k">Break-even, 6-leg Power</span>
+          <span className="lp-ex-out-be mono">{LP_POWER_6_BE_PCT.toFixed(2)}%</span>
+        </div>
+      </div>
+
+      <figcaption className="lp-ex-cap">Sample prices</figcaption>
     </figure>
   );
 }
@@ -176,12 +204,12 @@ function Coverage({ cov }) {
   const refresh = cov ? fmtRefresh(cov.refresh_minutes) : null;
   const cells = [
     { k: "Lines from", v: cov ? cov.prop_source : "—" },
-    { k: "Priced against", v: cov ? `${cov.books.length} books` : "—",
+    { k: "Priced against", v: cov ? `${cov.books.length} ${cov.books_noun}` : "—",
       sub: cov ? cov.books.join(" · ") : "" },
     { k: "Leagues", v: cov ? String(cov.leagues.length) : "—",
       sub: cov ? cov.leagues.join(" · ") : "" },
-    { k: "Board refresh", v: refresh || "—",
-      sub: cov ? "every scrape cycle" : "" },
+    { k: "Updated every", v: refresh || "—",
+      sub: cov ? "every source in one pass" : "" },
   ];
   return (
     <section className="lp-cov" aria-label="Coverage">
@@ -204,22 +232,22 @@ function HowItWorks({ cov }) {
   const steps = [
     {
       n: 1,
-      t: "We scrape both sides",
-      b: `Every PrizePicks line, and the same market at each sportsbook we cover. Re-scraped ${
+      t: "Match the market",
+      b: `Every PrizePicks line is paired with the same market at each book we cover, including half-step equivalents. Refreshed ${
         refresh ? `every ${refresh}` : "on a fixed cycle"
       }.`,
     },
     {
       n: 2,
-      t: "We strip the vig",
-      b: "Each book's two-sided price is devigged (Shin, 1993) into a fair probability, then averaged across books into one no-vig consensus.",
+      t: "Remove the margin",
+      b: "Both sides of each book's price are devigged using Shin's method, then averaged across books into one fair probability per line.",
     },
     {
       n: 3,
-      t: "You compare against break-even",
-      b: `Each leg's consensus probability sits next to the per-leg break-even for the slip you're building: ${LP_POWER_6_BE_PCT.toFixed(
+      t: "Rank against break-even",
+      b: `Legs are sorted by how far that probability clears the break-even for the slip you're building: ${LP_POWER_6_BE_PCT.toFixed(
         2,
-      )}% for a 6-leg Power.`,
+      )}% per leg on a 6-leg Power.`,
     },
   ];
   return (
@@ -250,26 +278,26 @@ function HowItWorks({ cov }) {
 function Method() {
   const items = [
     {
-      t: "No-vig consensus, not book odds",
-      b: "The number you sort on is the market's fair probability with the house margin removed, averaged across every book that posts the market.",
+      t: "The board",
+      b: "Every matched line, ranked by fair probability, with each book's price on the row so you can see where they disagree.",
     },
     {
-      t: "Multi-book comparison",
-      b: "One row per line, each book's price beside it, so you can see where the books disagree and how wide the market is.",
+      t: "Slip builder",
+      b: "Power and Flex priced off the published PrizePicks payout tables, with per-leg edge and a flag when two legs come from the same game.",
     },
     {
-      t: "Slip builder with real break-even",
-      b: "Power and Flex slips priced off the published PrizePicks payout tables, including the correlation between legs from the same game.",
+      t: "Backtest",
+      b: "Slips you log settle against final box scores. Hit rate and ROI by league and prop type, on your bets rather than ours.",
     },
     {
-      t: "Backtest and closing-line value",
-      b: "Slips you log are settled against final box scores, and each leg's entry probability is compared to the closing market, so you see hit rate and CLV on your own bets, not ours.",
+      t: "Closing-line value",
+      b: "Each logged leg's entry price is compared to where the market closed, so you can tell a good bet from a lucky one.",
     },
   ];
   return (
     <section className="lp-method" id="product">
       <div className="lp-section-hd">
-        <h2 className="lp-h2">What you get</h2>
+        <h2 className="lp-h2">In the app</h2>
       </div>
       <div className="lp-method-grid">
         {items.map((it) => (
@@ -284,30 +312,26 @@ function Method() {
 }
 
 // ───────── Limits ─────────
-// New section. A tool that sells probability estimates and shows no track
-// record has to say so plainly; burying it makes the rest of the page read as
-// sales copy. This is also the honest replacement for the testimonials block.
+// A tool that sells probability estimates and publishes no track record should
+// say so where a buyer will read it. Two bullets, not three: the original also
+// explained at length that we'd rather show nothing than a number we can't
+// stand behind, which is the kind of line that undercuts itself. State the
+// limit and move on.
 function Limits() {
   return (
     <section className="lp-limits" aria-labelledby="limits-h">
       <div className="lp-limits-inner">
-        <h2 className="lp-h2" id="limits-h">What this isn't</h2>
+        <h2 className="lp-h2" id="limits-h">Worth knowing</h2>
         <ul className="lp-limits-list">
           <li>
-            <b>Not a prediction model.</b> CoreProp reads prices the market has
-            already set. It has no player projections of its own, so it can only
-            be as sharp as the books it reads.
+            <b>This reads the market, it doesn't predict games.</b> There are no
+            player projections behind these numbers, so CoreProp is only ever as
+            sharp as the books it prices against.
           </li>
           <li>
-            <b>No published track record.</b> We don't advertise a hit rate or
-            an ROI, because we haven't settled enough of our own logged bets to
-            quote one honestly. The Backtest and Analytics tabs measure{" "}
-            <em>your</em> results, and will tell you if the edge isn't there.
-          </li>
-          <li>
-            <b>An edge is not a guarantee.</b> A leg above break-even is a
-            positive expectation over many bets, and says nothing about any
-            single slip.
+            <b>We don't publish a hit rate.</b> Not enough logged bets have
+            settled to quote one. The Backtest and Analytics tabs measure your
+            results instead, including when there's no edge to find.
           </li>
         </ul>
       </div>
@@ -316,14 +340,16 @@ function Limits() {
 }
 
 // ───────── Final CTA ─────────
-function FinalCTA({ onStart, onLogin }) {
+function FinalCTA({ onStart, onLogin, cov }) {
+  const days = cov?.trial_days;
   return (
     <section className="lp-cta">
       <div className="lp-cta-card">
-        <h2 className="lp-h2">See the board</h2>
+        <h2 className="lp-h2">Start with the board</h2>
         <p className="lp-h2-sub">
-          One plan, cancel any time. Pricing and trial terms are on the next
-          page before you enter a card.
+          {days
+            ? `One plan, ${days} days free, cancel any time.`
+            : "One plan, cancel any time."}
         </p>
         <div className="lp-cta-row lp-center">
           <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>
@@ -350,12 +376,12 @@ function Footer({ cov }) {
       <div className="lp-foot-top">
         <div className="lp-foot-brand">
           <Logo size={22} animated={false} />
-          <span className="lp-foot-tag">Sharper props, less guesswork.</span>
+          <span className="lp-foot-tag">Prop pricing, without the vig.</span>
         </div>
         <nav className="lp-foot-nav" aria-label="Page sections">
           <a href="#how">How it works</a>
-          <a href="#product">What you get</a>
-          <a href="#limits-h">What this isn't</a>
+          <a href="#product">In the app</a>
+          <a href="#limits-h">Worth knowing</a>
         </nav>
       </div>
       <div className="lp-foot-base">
@@ -366,10 +392,13 @@ function Footer({ cov }) {
           </span>
         )}
       </div>
+      {/* One legal line, not three. The old version also opened with "CoreProp
+        * is an analytics tool and does not accept wagers", which the pricing
+        * page's FAQ and its own footer each repeated. */}
       <p className="lp-foot-disc">
         CoreProp is an analytics tool and does not accept wagers. 21+ where
-        applicable; eligibility depends on your jurisdiction. If you or someone
-        you know has a gambling problem, call 1-800-GAMBLER.
+        applicable. If you or someone you know has a gambling problem, call
+        1-800-GAMBLER.
       </p>
     </footer>
   );

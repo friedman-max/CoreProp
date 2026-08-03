@@ -152,6 +152,36 @@ def test_no_invented_testimonials():
     assert not offenders, "invented testimonial(s):\n  " + "\n  ".join(offenders)
 
 
+def test_pricing_page_does_not_hardcode_the_trial_length():
+    """`BILLING_TRIAL_DAYS` is env-configurable, and the pricing page stated "7"
+    in six places: the headline, the sub, the card badge, the CTA, and two FAQ
+    answers. Setting BILLING_TRIAL_DAYS=14 would have left every one of them
+    advertising a shorter trial than Stripe actually grants — a promise the
+    checkout session then contradicts. The page reads `trial_days` from
+    /api/public/coverage instead."""
+    src = _strip_js_comments((_STATIC / "pricing.jsx").read_text(encoding="utf-8"))
+    assert "trial_days" in src, (
+        "pricing.jsx must read the trial length from /api/public/coverage"
+    )
+    # "7 day", "7 days", "day 7" — the shapes the hardcoded copy used.
+    stray = re.findall(r"\b7[\s-]?days?\b|\bday\s+7\b", src, re.IGNORECASE)
+    assert not stray, (
+        f"pricing.jsx hardcodes the trial length ({stray}); interpolate "
+        "`trialDays` so BILLING_TRIAL_DAYS stays the single source"
+    )
+
+
+def test_coverage_endpoint_serves_the_trial_length():
+    """The other half of that contract: if the endpoint stops returning
+    trial_days, the page silently falls back to its default and the test above
+    still passes."""
+    from web.routers.public import get_coverage
+
+    payload = get_coverage()
+    assert "trial_days" in payload, payload
+    assert isinstance(payload["trial_days"], int) and payload["trial_days"] > 0
+
+
 def test_landing_derives_the_six_power_break_even_from_the_payout_table():
     """The one number the landing page is allowed to state on its own is the
     per-leg break-even, and only because it's COMPUTED from the payout constant

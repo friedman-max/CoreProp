@@ -3,23 +3,23 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>CoreProp · Sharper props, less guesswork.</title>
+<title>CoreProp — PrizePicks lines priced against the sportsbooks</title>
 <!-- The page had no description and no social card, so search results and any
      shared link rendered as a bare URL with whatever text the crawler scraped
      first. Kept factual: no hit-rate or ROI claim belongs in a meta tag we
      can't qualify. og:image reuses the 512px PWA icon (the only square brand
      asset in the repo) rather than referencing a summary card that isn't
      designed yet. -->
-<meta name="description" content="CoreProp prices every PrizePicks player prop against the sportsbooks: no-vig consensus probability per line, multi-book comparison, slip break-even math, and backtesting on your own logged slips.">
+<meta name="description" content="CoreProp strips the sportsbooks' margin out of their player-prop prices and shows you the fair probability behind every PrizePicks line, next to the break-even your slip needs.">
 <meta name="robots" content="index,follow">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="CoreProp">
-<meta property="og:title" content="CoreProp · Sharper props, less guesswork.">
-<meta property="og:description" content="Every PrizePicks line, priced against the sportsbooks. No-vig consensus probability, multi-book comparison, and slip break-even math.">
+<meta property="og:title" content="CoreProp — PrizePicks lines priced against the sportsbooks">
+<meta property="og:description" content="The fair probability behind every PrizePicks line, with every book's price beside it and real break-even math on your slips.">
 <meta property="og:image" content="/static/icon-512.png">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="CoreProp · Sharper props, less guesswork.">
-<meta name="twitter:description" content="Every PrizePicks line, priced against the sportsbooks. No-vig consensus probability, multi-book comparison, and slip break-even math.">
+<meta name="twitter:title" content="CoreProp — PrizePicks lines priced against the sportsbooks">
+<meta name="twitter:description" content="The fair probability behind every PrizePicks line, with every book's price beside it and real break-even math on your slips.">
 <meta name="twitter:image" content="/static/icon-512.png">
 <!-- Tab icon. The mark is the blue swoosh lifted out of logo_full.png and set
      on a --card tile: the wordmark's thin transparent strokes disappear into
@@ -256,32 +256,55 @@ a{color:inherit;text-decoration:none}
 .lp-sub{font-size:17px;line-height:1.6;color:var(--text-2);max-width:56ch;margin:0 0 26px}
 .lp-cta-row{display:flex;gap:12px;flex-wrap:wrap}
 .lp-cta-row.lp-center{justify-content:center}
-.lp-hero-note{margin:20px 0 0;font-size:13.5px;line-height:1.5;color:var(--text-3);max-width:52ch}
+/* Sample-line panel (.lp-ex). Was a 3-column table of book / price / implied %,
+ * which made the reader do the comparison in their head. Now it's a bar per
+ * book: the fair probability as a solid fill, the book's margin as a hatched
+ * segment past it, and the two output numbers called out below. Same figures,
+ * all still computed in landing.jsx (LP_EXAMPLE_MATH) rather than typed. */
+.lp-ex{margin:0;background:var(--card);border:1px solid var(--hair-2);border-radius:var(--radius);padding:20px}
+.lp-ex-hd{padding-bottom:16px;border-bottom:1px solid var(--hair)}
+.lp-ex-line{display:flex;align-items:center;gap:10px}
+.lp-ex-player{font-size:16px;font-weight:600}
+.lp-ex-bet{display:flex;align-items:baseline;gap:8px;margin-top:8px}
+.lp-ex-side{font-size:11px;font-weight:700;letter-spacing:.05em;padding:3px 7px;border-radius:5px;background:var(--green-hi);color:#86EFAC}
+.lp-ex-num{font-size:15px;font-weight:600}
+.lp-ex-prop{color:var(--text-2);font-size:14px}
 
-/* Worked example. A <figure> with a real <table>: the point of the panel is
- * that the arithmetic is checkable, so it's marked up as data rather than as
- * decorated divs, and the numbers are computed in landing.jsx from the two
- * quoted prices (LP_EXAMPLE_MATH) instead of typed in. */
-.lp-example{margin:0;background:var(--card);border:1px solid var(--hair-2);border-radius:var(--radius);padding:20px 20px 18px}
-.lp-example-cap{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);font-weight:600;margin-bottom:14px}
-.lp-example-hd{display:flex;align-items:center;gap:10px}
-.lp-example-player{font-size:16px;font-weight:600}
-.lp-example-bet{display:flex;align-items:baseline;gap:8px;margin:8px 0 16px}
-.lp-example-side{font-size:11px;font-weight:700;letter-spacing:.05em;padding:3px 7px;border-radius:5px;background:var(--green-hi);color:#86EFAC}
-.lp-example-line{font-size:15px;font-weight:600}
-.lp-example-prop{color:var(--text-2);font-size:14px}
-.lp-example-tbl{width:100%;border-collapse:collapse;font-size:13.5px}
-.lp-example-tbl th,.lp-example-tbl td{text-align:right;padding:7px 0;font-weight:500}
-.lp-example-tbl thead th{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);font-weight:600;border-bottom:1px solid var(--hair)}
-.lp-example-tbl th:first-child,.lp-example-tbl td:first-child{text-align:left}
-.lp-example-tbl tbody th{font-weight:500}
-.lp-example-tbl tbody td{color:var(--text-2);font-variant-numeric:tabular-nums}
-.lp-example-tbl tfoot th{padding-top:10px;border-top:1px solid var(--hair-2);text-align:left;font-size:12.5px;color:var(--text-2)}
-.lp-example-tbl tfoot td{padding-top:10px;border-top:1px solid var(--hair-2)}
-.lp-example-out{color:var(--green);font-weight:700;font-size:15px}
-.lp-book{background:rgba(255,255,255,.06);color:var(--text-2)}
-.lp-example-foot{margin:16px 0 0;padding-top:14px;border-top:1px solid var(--hair);font-size:13px;line-height:1.55;color:var(--text-3)}
-.lp-example-foot b{color:var(--text-2)}
+.lp-ex-bars{display:flex;flex-direction:column;gap:16px;padding:18px 0 16px}
+/* The 100% gridline gets its own row above the bars so the label sits clear of
+ * them; the rule itself repeats inside each track. */
+.lp-ex-scale{position:relative;height:13px}
+.lp-ex-100{position:absolute;top:0;transform:translateX(-50%);font-size:10px;letter-spacing:.04em;color:var(--text-3);font-weight:600;white-space:nowrap}
+.lp-ex-bar-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:7px}
+.lp-ex-book{font-size:12.5px;color:var(--text-2);font-weight:500}
+.lp-ex-price{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.lp-ex-track{position:relative;display:flex;height:12px;border-radius:3px;overflow:hidden;background:#0a0a12;border:1px solid var(--hair)}
+/* Over and Under are two hues of the SAME accent rather than a colour pair with
+ * a semantic (red/green) reading — neither side is "good" here, they're just the
+ * two halves of one market. The 100% rule is drawn on top of both. */
+.lp-ex-over{background:var(--primary-2)}
+.lp-ex-under{background:rgba(111,188,236,.38)}
+.lp-ex-rule{position:absolute;top:-1px;bottom:-1px;width:2px;background:var(--text);opacity:.85;transform:translateX(-1px)}
+.lp-ex-bar-foot{display:flex;align-items:baseline;gap:6px;margin-top:6px;font-size:11.5px;color:var(--text-3)}
+.lp-ex-bar-foot .mono{color:var(--text-2);font-variant-numeric:tabular-nums}
+.lp-ex-excess{margin-left:auto;color:#FCA5A5;font-weight:600;font-variant-numeric:tabular-nums}
+
+.lp-ex-key{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:var(--text-3);padding-bottom:16px;border-bottom:1px solid var(--hair)}
+.lp-ex-key-item{display:inline-flex;align-items:center;gap:6px}
+.lp-ex-sw{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+.lp-ex-sw-over{background:var(--primary-2)}
+.lp-ex-sw-under{background:rgba(111,188,236,.38)}
+.lp-ex-key-note{flex:1 1 100%;line-height:1.45}
+
+.lp-ex-out{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding-top:16px}
+.lp-ex-out-l,.lp-ex-out-r{display:flex;flex-direction:column;gap:5px;min-width:0}
+.lp-ex-out-r{padding-left:14px;border-left:1px solid var(--hair)}
+.lp-ex-out-k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);font-weight:600}
+.lp-ex-out-v{font-size:24px;font-weight:700;color:var(--green);line-height:1}
+.lp-ex-out-be{font-size:24px;font-weight:700;color:var(--text-2);line-height:1}
+/* Caption last in the DOM and visually last: it's a footnote, not a heading.
+ * As a <figcaption> it stays associated with the figure for assistive tech. */
+.lp-ex-cap{margin-top:16px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);font-weight:600}
 
 /* COVERAGE — a definition list, because that's what it is. */
 .lp-cov{max-width:var(--lp-max);margin:0 auto;padding:0 22px var(--lp-gap)}
@@ -553,17 +576,18 @@ a{color:inherit;text-decoration:none}
 .pp-card-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
 .pp-card-tag{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--primary-2)}
 .pp-card-dot{width:7px;height:7px;border-radius:50%;background:var(--primary);box-shadow:0 0 10px var(--primary)}
-.pp-card-7day{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);padding:5px 11px;border-radius:999px}
+.pp-card-trial{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);padding:5px 11px;border-radius:999px}
 
 .pp-price{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
-.pp-price-row{display:flex;align-items:flex-start;gap:2px;line-height:1;font-family:"Inter",sans-serif}
-.pp-price-cur{font-size:28px;font-weight:700;margin-top:8px;color:var(--text-2)}
-.pp-price-d{font-size:72px;font-weight:800;letter-spacing:-.04em;color:var(--text)}
-.pp-price-c{font-size:32px;font-weight:700;margin-top:6px;color:var(--text-2);letter-spacing:-.02em}
-.pp-price-strike{font-size:22px;font-weight:600;color:var(--text-4);text-decoration:line-through;margin:14px 0 0 14px;align-self:flex-start}
-.pp-price-sub{color:var(--text-3);font-size:14px}
+.pp-price-row{display:flex;align-items:baseline;gap:2px;line-height:1;font-family:"Inter",sans-serif}
+.pp-price-cur{font-size:30px;font-weight:700;color:var(--text-2);align-self:flex-start;margin-top:8px}
+.pp-price-d{font-size:64px;font-weight:800;letter-spacing:-.035em;color:var(--text)}
+/* The billing period, at label size next to the amount. Replaces .pp-price-c
+ * (the cents of a per-day figure) and .pp-price-strike (a struck-through daily
+ * rate) — see the note in pricing.jsx about why the per-day framing is gone. */
+.pp-price-per{font-size:22px;font-weight:600;color:var(--text-3);margin-left:4px}
+.pp-price-sub{color:var(--text-3);font-size:14px;margin-top:10px;line-height:1.5}
 .pp-price-sub b{color:var(--text);font-weight:600}
-.pp-price-eff{display:inline-block;margin-left:8px;color:var(--green);font-weight:600;font-size:12.5px}
 
 /* The book names now come from /api/public/coverage as full words, so they get
  * one neutral chip style instead of three per-book brand tints keyed off

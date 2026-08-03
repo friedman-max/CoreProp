@@ -115,19 +115,34 @@ each tab fetches its own dataset on first visit.
 
 **The marketing pages state no number they can't source.** `landing.jsx` and
 `pricing.jsx` are the signed-out surface, and every figure on them is either
-read from `GET /api/public/coverage` (books, leagues, refresh interval — via the
-shared `useCoverage()` hook in `components.jsx`), derived from
+read from `GET /api/public/coverage` (books, leagues, refresh interval, trial
+length — via the shared `useCoverage()` hook in `components.jsx`), derived from
 `engine/constants.py` by the same formula the app uses (the per-leg break-even),
 or absent. This is enforced: `tests/api_tests/test_landing_claims.py` bans the
 specific invented statistics that used to ship there ("58.4% backtested hit
 rate", "4,200+ sharps", "+11.7% ROI", "refreshed every 30 seconds", fabricated
 "Yesterday's Winners", named testimonials nobody said), bans naming any league
-absent from `config.ACTIVE_LEAGUES`, and requires the break-even to be *computed*
-from `POWER_PAYOUTS[6]` rather than typed — the landing page had gone stale at
-the pre-37.5x `54.07%` exactly the way `test_payout_table_mirror.py` describes.
-If a section looks empty, add a coverage fact or leave it empty; don't invent a
-metric. A real performance stat needs settled `market_observatory` rows behind
-it first.
+absent from `config.ACTIVE_LEAGUES`, bans hardcoding the trial length (it was
+`7` in six places while `BILLING_TRIAL_DAYS` is env-configurable), and requires
+the break-even to be *computed* from `POWER_PAYOUTS[6]` rather than typed — the
+landing page had gone stale at the pre-37.5x `54.07%` exactly the way
+`test_payout_table_mirror.py` describes. If a section looks empty, add a
+coverage fact or leave it empty; don't invent a metric. A real performance stat
+needs settled `market_observatory` rows behind it first.
+
+Two copy rules that came out of the same pass, both easy to undo by accident:
+
+- **Count sources with `coverage.books_noun`, not the word "books".** Novig is a
+  peer-to-peer exchange, so "4 books" is wrong whenever `NOVIG_ENABLED` is on.
+  The endpoint returns the correct noun for the current set; interpolate it.
+- **Quote the price that gets charged.** The pricing page used to render `$50/mo`
+  as a 72px "$1.67" (the monthly divided by 30) with the real figure in 12px
+  grey underneath. Per-day framing of a subscription is a minimization tactic;
+  the per-month equivalent on the *annual* plan is a real comparison and stays.
+
+Disclaimers are load-bearing but not free: one legal line in the footer, one
+"Worth knowing" section, one FAQ answer about the missing track record. Saying
+it four times reads as defensiveness and buries the one place it matters.
 
 ## Conventions specific to this codebase
 

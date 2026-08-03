@@ -105,7 +105,7 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
                 </div>
                 <div className="cp-menu-sep" />
                 <button className="cp-menu-item" role="menuitem" onClick={handleLogout} disabled={busy}>
-                  {busy ? "Logging out…" : "Log Out"}
+                  {busy ? "Logging out…" : "Log out"}
                 </button>
               </div>
             )}
@@ -178,8 +178,8 @@ function AuthModal({ open, onClose, onSubmit }) {
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
-    if (!email || !pw) { setErr("Email and password are required."); return; }
-    if (mode === "signup" && pw !== pw2) { setErr("Passwords do not match."); return; }
+    if (!email || !pw) { setErr("Enter your email and password."); return; }
+    if (mode === "signup" && pw !== pw2) { setErr("Those passwords don't match."); return; }
     setBusy(true);
     try {
       if (mode === "login") {
@@ -187,14 +187,14 @@ function AuthModal({ open, onClose, onSubmit }) {
       } else {
         const res = await window.cpApi.signUp(email, pw);
         if (!res.session) {
-          setErr("Check your email to confirm your account, then log in.");
+          setErr("Check your email for a confirmation link, then log in.");
           setBusy(false);
           return;
         }
       }
       onSubmit && onSubmit({ mode, email });
     } catch (ex) {
-      setErr(ex.message || "Authentication failed.");
+      setErr(ex.message || "Couldn't sign you in. Try again.");
     } finally {
       setBusy(false);
     }
@@ -216,8 +216,8 @@ function AuthModal({ open, onClose, onSubmit }) {
           <Logo size={56} animated={false} />
         </div>
         <div className="cp-seg">
-          <button type="button" className={"cp-seg-btn " + (mode === "login" ? "is-active" : "")} onClick={() => { setMode("login"); setErr(""); }}>Log In</button>
-          <button type="button" className={"cp-seg-btn " + (mode === "signup" ? "is-active" : "")} onClick={() => { setMode("signup"); setErr(""); }}>Sign Up</button>
+          <button type="button" className={"cp-seg-btn " + (mode === "login" ? "is-active" : "")} onClick={() => { setMode("login"); setErr(""); }}>Log in</button>
+          <button type="button" className={"cp-seg-btn " + (mode === "signup" ? "is-active" : "")} onClick={() => { setMode("signup"); setErr(""); }}>Sign up</button>
         </div>
         <form className="cp-form" onSubmit={submit}>
           <input ref={firstFieldRef} className="cp-input" placeholder="Email" type="email" aria-label="Email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} disabled={busy} />
@@ -227,7 +227,7 @@ function AuthModal({ open, onClose, onSubmit }) {
               silent colored div before. */}
           {err && <div role="alert" style={{color:"#FCA5A5", fontSize:13, padding:"2px 4px"}}>{err}</div>}
           <button className="cp-btn cp-btn-primary cp-btn-lg" type="submit" disabled={busy}>
-            {busy ? "…" : (mode === "login" ? "Log In" : "Create Account")}
+            {busy ? "Working…" : (mode === "login" ? "Log in" : "Create account")}
           </button>
         </form>
       </div>

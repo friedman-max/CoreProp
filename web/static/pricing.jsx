@@ -10,8 +10,10 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
   const monthly = 50;
   const yearly = Math.round(monthly * 12 * 0.85); // 15% off
   const yearlyPerMonth = (yearly / 12).toFixed(2);
-  const dailyMonthly = (monthly / 30).toFixed(2);
-  const dailyYearly = (yearly / 365).toFixed(2);
+  // BILLING_TRIAL_DAYS, served by /api/public/coverage. Falls back to 7 (the
+  // env default) for the pre-fetch render so the copy never reads "First
+  // undefined days free".
+  const trialDays = cov?.trial_days ?? 7;
 
   // Only tabs and behaviours that exist in the shipped app. Removed:
   //   - "Line movement + alerts / get pinged the moment a line moves" — there
@@ -24,14 +26,14 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
   //     _state["interval_min"], 5 minutes by default. The real cadence is read
   //     from /api/public/coverage below rather than asserted here.
   const benefits = [
-    { t: "No-vig consensus on every line",  d: "Each book's two-sided price is devigged and averaged into one fair probability, so you sort on the market's real number rather than the posted odds." },
-    { t: "Multi-book comparison",           d: "PrizePicks lines beside each sportsbook's price for the same market, so you can see where the books disagree and how wide the market is." },
-    { t: "Slip Builder, Power and Flex",    d: "Break-even computed from the published PrizePicks payout tables, per-leg edge, and correlation flags for legs from the same game." },
-    { t: "Backtester on your own slips",    d: "Slips you log are settled against final box scores. Hit rate and ROI broken out by league and prop type." },
-    { t: "Closing-line value tracking",     d: "Every logged leg's entry probability is compared against the closing market, so you can see whether you beat the line, not just whether you won." },
+    { t: "Fair probability on every line",  d: "Both sides of each book's price devigged and averaged, so you sort on what the market really thinks instead of the posted odds." },
+    { t: "Every book on the row",           d: "PrizePicks lines beside each sportsbook's price for the same market. Where they disagree is where to look." },
+    { t: "Power and Flex slip builder",     d: "Break-even from the published payout tables, per-leg edge, and a flag when two legs share a game." },
+    { t: "Backtest",                        d: "Slips you log settle against final box scores, with hit rate and ROI by league and prop type." },
+    { t: "Closing-line value",              d: "Each leg's entry price against where the market closed, so you can tell a good bet from a lucky one." },
     { t: "Sportsbook screen",               d: "Every league, market, and book in one table. Filter by league, prop type, and minimum probability." },
-    { t: "Calibration analytics",           d: "Brier score, log loss, and calibration error on your resolved legs: the numbers that tell you if the probabilities are honest." },
-    { t: "Auto-logging",                    d: "Opt in and qualifying slips are logged for you each refresh cycle, so the backtest fills without manual entry." },
+    { t: "Calibration analytics",           d: "Brier score, log loss, and calibration error on your resolved legs, so you can check whether the probabilities hold up." },
+    { t: "Auto-logging",                    d: "Qualifying slips log themselves each cycle, so the backtest fills without manual entry." },
   ];
 
   // CTA click: if signed in, start Stripe Checkout for the selected plan.
@@ -67,12 +69,14 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
 
       <header className="pp-hd">
         {/* "Fast track your profits" promised a financial outcome the product
-          * cannot deliver and we publish no evidence for. */}
+          * cannot deliver and we publish no evidence for. Trial length comes
+          * from the server (BILLING_TRIAL_DAYS) — it used to be hardcoded as
+          * "7" in six places on this page. */}
         <h1 className="pp-h1">
           One plan, full access. <br />
-          <span className="pp-h1-g">First 7 days free.</span>
+          <span className="pp-h1-g">First {trialDays} days free.</span>
         </h1>
-        <p className="pp-h1-sub">Card required to start the trial. Cancel any time before day 7 and you're not charged.</p>
+        <p className="pp-h1-sub">Cancel before day {trialDays} and you're not charged.</p>
         <div className="pp-toggle">
           <button
             className={"pp-tg-btn " + (billing === "monthly" ? "is-on" : "")}
@@ -95,30 +99,38 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
               <span className="pp-card-dot" />
               CoreProp All Access
             </div>
-            <div className="pp-card-7day">7 day free trial</div>
+            <div className="pp-card-trial">{trialDays} day free trial</div>
           </header>
 
+          {/* Lead with the amount that gets charged.
+            *
+            * This block used to render the price divided by 30 — a $50/mo plan
+            * shown as a giant "$1.67", with the real figure in 12px grey
+            * underneath, and the annual plan as "$1.42" with a struck-through
+            * "$1.67" beside it. Nobody is billed $1.67 and no comparison shopper
+            * is helped by it; framing a subscription as a daily fraction is a
+            * minimization tactic, and it's the sort of thing that makes a real
+            * tool look like a funnel. The per-month equivalent on the annual
+            * plan is a genuine comparison and stays. */}
           <div className="pp-price">
             {billing === "monthly" ? (
               <>
                 <div className="pp-price-row">
                   <span className="pp-price-cur">$</span>
-                  <span className="pp-price-d">{dailyMonthly.split(".")[0]}</span>
-                  <span className="pp-price-c">.{dailyMonthly.split(".")[1]}</span>
+                  <span className="pp-price-d">{monthly}</span>
+                  <span className="pp-price-per">/mo</span>
                 </div>
-                <div className="pp-price-sub">per day, billed monthly at <b>${monthly}</b></div>
+                <div className="pp-price-sub">Billed monthly.</div>
               </>
             ) : (
               <>
                 <div className="pp-price-row">
                   <span className="pp-price-cur">$</span>
-                  <span className="pp-price-d">{dailyYearly.split(".")[0]}</span>
-                  <span className="pp-price-c">.{dailyYearly.split(".")[1]}</span>
-                  <span className="pp-price-strike">${(monthly / 30).toFixed(2)}</span>
+                  <span className="pp-price-d">{yearly}</span>
+                  <span className="pp-price-per">/yr</span>
                 </div>
                 <div className="pp-price-sub">
-                  per day, billed yearly at <b>${yearly}</b>
-                  <span className="pp-price-eff">{`(${yearlyPerMonth}/mo equivalent)`}</span>
+                  Billed annually. Works out to <b>${yearlyPerMonth}/mo</b>, versus ${monthly} month to month.
                 </div>
               </>
             )}
@@ -131,15 +143,19 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
             {(cov ? cov.books : ["FanDuel", "DraftKings", "Pinnacle"]).map(b => (
               <span key={b} className="pp-book-logo">{b}</span>
             ))}
-            {cov && <span className="pp-books-plus">{cov.leagues.join(" · ")}</span>}
+            {/* Labelled. Without the "across", the league list rendered as a
+              * bare fragment hanging off the book chips. */}
+            {cov && <span className="pp-books-plus">across {cov.leagues.join(", ")}</span>}
           </div>
 
           <button className="cp-btn pp-cta" onClick={onCta} disabled={cta === "loading"}>
-            {cta === "loading" ? "Redirecting to checkout…" : "Try 7 days free"}
+            {cta === "loading" ? "Redirecting to checkout…" : `Start ${trialDays} days free`}
           </button>
-          {ctaErr && <div className="pp-cta-sub" style={{color:"#FCA5A5"}}>{ctaErr}</div>}
+          {ctaErr && <div className="pp-cta-sub" role="alert" style={{color:"#FCA5A5"}}>{ctaErr}</div>}
+          {/* The word "cancel" appeared six times on this page. It's in the
+            * header and the FAQ; this line just needs to state the price. */}
           <div className="pp-cta-sub">
-            Then ${billing === "monthly" ? monthly + "/mo" : yearly + "/yr"}. Cancel anytime in one click.
+            Then ${billing === "monthly" ? monthly + "/mo" : yearly + "/yr"}.
           </div>
           {loggedIn && (
             <button
@@ -153,7 +169,7 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
                 try { await window.cpApi.openBillingPortal(); }
                 catch (e) { setCtaErr(e.message || "Couldn't open billing portal."); setPortalBusy(false); }
               }}
-            >{portalBusy ? "Opening…" : "Manage / cancel subscription"}</button>
+            >{portalBusy ? "Opening…" : "Manage subscription"}</button>
           )}
 
           <ul className="pp-benefits">
@@ -200,7 +216,7 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
             <em>line source</em>
           </div>
           <div className="pp-ft-item">
-            <b>{cov.books.length} books</b>
+            <b>{cov.books.length} {cov.books_noun}</b>
             <em>{cov.books.join(" · ")}</em>
           </div>
           <div className="pp-ft-item">
@@ -209,7 +225,7 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
           </div>
           <div className="pp-ft-item">
             <b>{cov.refresh_minutes} min</b>
-            <em>board refresh</em>
+            <em>between updates</em>
           </div>
         </section>
       )}
@@ -218,8 +234,8 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
         <h3 className="pp-faq-h">Common questions</h3>
         <div className="pp-faq-grid">
           <details>
-            <summary>What happens after 7 days?</summary>
-            <p>You'll be billed ${monthly}/mo. Cancel any time before day 7 and you pay nothing.</p>
+            <summary>What happens when the trial ends?</summary>
+            <p>You're billed ${monthly}/mo, or ${yearly}/yr on the annual plan. Cancel before day {trialDays} and you pay nothing.</p>
           </details>
           <details>
             <summary>Which sportsbooks do you cover?</summary>
@@ -230,24 +246,24 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
             </p>
           </details>
           <details>
-            <summary>Can I cancel anytime?</summary>
-            <p>Yes, through the Stripe billing portal linked from this page. Cancelling stops future charges; the current period isn't prorated.</p>
+            <summary>How do I cancel?</summary>
+            <p>Through the Stripe billing portal, linked from this page once you're signed in. Cancelling stops future charges; the current period isn't prorated.</p>
           </details>
           <details>
             <summary>How often do lines refresh?</summary>
             <p>
               {cov
-                ? `Every ${cov.refresh_minutes} minutes. One scrape cycle pulls every book, so all prices on the board share a timestamp.`
-                : "On a fixed cycle. One scrape pulls every book, so all prices on the board share a timestamp."}
+                ? `Every ${cov.refresh_minutes} minutes. One cycle pulls every book, so all prices on the board share a timestamp.`
+                : "On a fixed cycle. One pass pulls every book, so all prices on the board share a timestamp."}
             </p>
           </details>
           <details>
-            <summary>Do you publish a hit rate or ROI?</summary>
-            <p>No. We haven't settled enough logged bets to quote one honestly, and we'd rather show you nothing than a number we can't stand behind. The Backtest and Analytics tabs measure your own results, including when the edge isn't there.</p>
+            <summary>Do you publish a hit rate?</summary>
+            <p>No. Not enough logged bets have settled to quote one. The Backtest and Analytics tabs measure your own results, including when there's no edge to find.</p>
           </details>
           <details>
-            <summary>Do you support PrizePicks style slips?</summary>
-            <p>Yes. The Slip Builder includes Power and Flex math with auto break even and correlation flags.</p>
+            <summary>Does the slip builder handle Power and Flex?</summary>
+            <p>Both, priced off the published PrizePicks payout tables, with break-even per leg and a flag when two legs share a game.</p>
           </details>
           <details>
             <summary>Is this legal where I live?</summary>
@@ -255,12 +271,12 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
               * use" — there is no geolocation or state-eligibility filtering
               * anywhere in the codebase, so the board shows every scraped book
               * regardless of where the visitor is. */}
-            <p>CoreProp is an analytics tool and doesn't accept wagers. We don't filter the board by your location, so whether you can act on a line depends on which books and contests are available in your jurisdiction.</p>
+            <p>CoreProp is an analytics tool and doesn't accept wagers. The board isn't filtered by location, so whether you can act on a line depends on what's available where you are.</p>
           </details>
         </div>
       </section>
 
-      <div className="pp-respo">CoreProp is an analytics tool and does not accept wagers. 21+ where applicable; eligibility depends on your jurisdiction. If you or someone you know has a gambling problem, call 1-800-GAMBLER.</div>
+      <div className="pp-respo">21+ where applicable. If you or someone you know has a gambling problem, call 1-800-GAMBLER.</div>
     </main>
   );
 }
