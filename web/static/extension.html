@@ -3,12 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CoreProp — Browser extension</title>
+<title>CoreProp · Browser extension</title>
 <style>
+  /* This page is deliberately standalone (no React, no shared stylesheet) so it
+     renders for a user whose session has expired — see web/app.py
+     extension_page(). That means it restates the palette rather than reading
+     index.html's :root. Keep these values in step with those tokens: --bg,
+     --fg, --muted and --accent are the same four roles by different names. */
   :root {
-    --bg: #0b1220; --panel: #0f172a; --line: #1e293b; --line2: #1e3a5f;
-    --fg: #e2e8f0; --muted: #94a3b8; --dim: #64748b;
-    --accent: #3da9f0; --warn: #f59e0b; --good: #22c55e;
+    --bg: #0a0a0d; --panel: #14141e; --line: #1e293b; --line2: rgba(255,255,255,.10);
+    --fg: #f4f4f8; --muted: #8a8a9b; --dim: #64748b;
+    --accent: #6FBCEC; --warn: #f59e0b; --good: #22c55e;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
@@ -24,7 +29,11 @@
   .dot.on { background: var(--good); box-shadow: 0 0 0 4px rgba(34,197,94,.15); }
   .dot.off { background: var(--warn); box-shadow: 0 0 0 4px rgba(245,158,11,.15); }
   .dl { display: inline-block; background: var(--accent); color: #04121f; font-weight: 700;
-        text-decoration: none; padding: 11px 20px; border-radius: 9px; margin-bottom: 32px; }
+        text-decoration: none; padding: 11px 20px; border-radius: 9px; }
+  /* This page is reachable directly and is linked from the Backtest tab, so
+     without a way back it's a dead end. */
+  .back { margin: 14px 0 32px; font-size: 13.5px; }
+  :where(a, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   ol { padding-left: 22px; }
   li { margin-bottom: 14px; }
   code { background: #0a1626; border: 1px solid var(--line); border-radius: 5px;
@@ -47,10 +56,11 @@
   </div>
 
   <a class="dl" href="/static/coreprop-extension.zip" download>Download the extension (.zip)</a>
+  <p class="back"><a href="/">Back to CoreProp</a></p>
 
   <h2>Install it</h2>
   <ol>
-    <li>Unzip the download. You'll get a folder called <code>coreprop-extension</code>. Keep it somewhere permanent — Chrome loads it from this location every time it starts, so don't leave it in Downloads and delete it later.</li>
+    <li>Unzip the download. You'll get a folder called <code>coreprop-extension</code>. Keep it somewhere permanent, because Chrome loads it from this location every time it starts, so don't leave it in Downloads and delete it later.</li>
     <li>Open <code>chrome://extensions</code> in a new tab.</li>
     <li>Turn on <b>Developer mode</b> (toggle, top right).</li>
     <li>Click <b>Load unpacked</b> and select the <code>coreprop-extension</code> folder.</li>
@@ -59,8 +69,7 @@
 
   <div class="note">
     Developer mode is required because this extension isn't distributed through the Chrome Web Store.
-    Chrome will show a "Disable developer mode extensions" prompt each time it launches — dismissing it
-    is fine, the extension keeps working.
+    Chrome will show a "Disable developer mode extensions" prompt each time it launches. Dismissing it is fine; the extension keeps working.
   </div>
 
   <h2>How to use it</h2>
@@ -72,17 +81,16 @@
   </ol>
 
   <div class="note">
-    The extension never enters a stake and never submits a wager. It only selects picks —
-    everything involving money stays with you.
+    The extension never enters a stake and never submits a wager. It only selects picks; everything involving money stays with you.
   </div>
 
   <h2>If it doesn't work</h2>
   <div class="faq">
-    <p><b>The panel says "Sign in to PrizePicks."</b> — You're signed out or PrizePicks is asking for a location check. Finish that, and staging continues automatically.</p>
-    <p><b>The panel says a security check is showing.</b> — PrizePicks runs bot protection that occasionally challenges a freshly opened tab. Complete it and press Retry; your slip is still saved.</p>
-    <p><b>A leg says "line moved".</b> — PrizePicks no longer offers the number your slip was logged at. The panel shows what's on the board now. Add it by hand if you still want it.</p>
-    <p><b>A leg says "N matching cards".</b> — Two cards on the board fit the same player, prop and line. CoreProp won't guess between them; add that one manually.</p>
-    <p><b>Nothing happens at all.</b> — Check the banner at the top of this page. If it's not green, Chrome didn't load the extension. Re-do <b>Load unpacked</b>, then reload.</p>
+    <p><b>The panel says "Sign in to PrizePicks."</b> You're signed out or PrizePicks is asking for a location check. Finish that, and staging continues automatically.</p>
+    <p><b>The panel says a security check is showing.</b> PrizePicks runs bot protection that occasionally challenges a freshly opened tab. Complete it and press Retry; your slip is still saved.</p>
+    <p><b>A leg says "line moved".</b> PrizePicks no longer offers the number your slip was logged at. The panel shows what's on the board now. Add it by hand if you still want it.</p>
+    <p><b>A leg says "N matching cards".</b> Two cards on the board fit the same player, prop and line. CoreProp won't guess between them; add that one manually.</p>
+    <p><b>Nothing happens at all.</b> Check the banner at the top of this page. If it's not green, Chrome didn't load the extension. Re-do <b>Load unpacked</b>, then reload.</p>
   </div>
 </div>
 
@@ -103,7 +111,7 @@
     dot.className = 'dot ' + (found ? 'on' : 'off');
     txt.innerHTML = found
       ? 'Extension installed and active' + (version ? ' <span style="color:var(--dim)">(v' + version + ')</span>' : '')
-      : 'Extension not detected — follow the steps below';
+      : 'Extension not detected. Follow the steps below.';
   }
 
   window.addEventListener('message', function (ev) {
