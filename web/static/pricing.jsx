@@ -2,6 +2,7 @@
 const { useState: useStateP } = React;
 
 function PricingPage({ onStart, onBack, loggedIn, locked }) {
+  const cov = useCoverage();                         // shared with landing.jsx
   const [billing, setBilling] = useState("monthly"); // monthly | yearly
   const [cta, setCta] = useState("idle");            // idle | loading | error
   const [ctaErr, setCtaErr] = useState("");
@@ -12,15 +13,25 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
   const dailyMonthly = (monthly / 30).toFixed(2);
   const dailyYearly = (yearly / 365).toFixed(2);
 
+  // Only tabs and behaviours that exist in the shipped app. Removed:
+  //   - "Line movement + alerts / get pinged the moment a line moves" — there
+  //     is no alerting subsystem in the codebase at all.
+  //   - "click straight through to bet" — the app deep-links to PrizePicks,
+  //     not to sportsbooks.
+  //   - "NFL, NCAA, and more. New markets added weekly." — config.ACTIVE_LEAGUES
+  //     is NBA/WNBA/MLB/NHL/NCAAB, and nothing adds markets on a weekly cadence.
+  //   - "Lines update every 30 seconds" — the scheduler runs on
+  //     _state["interval_min"], 5 minutes by default. The real cadence is read
+  //     from /api/public/coverage below rather than asserted here.
   const benefits = [
-    { icon: "edge",   t: "Positive EV engine",            d: "Live True % on every prop, every book. Sorted by edge so the best plays float to the top." },
-    { icon: "books",  t: "FanDuel, DraftKings, Pinnacle", d: "Real time multi-book comparison. Auto flag the soft line and click straight through to bet." },
-    { icon: "slip",   t: "Slip Builder + Power Plays",    d: "PrizePicks style slips with break even math, leg-by-leg edge, and auto correlation flags." },
-    { icon: "back",   t: "Full backtester",               d: "Replay the model on any window. ROI, hit rate, and CLV broken out by sport and prop type." },
-    { icon: "alert",  t: "Line movement + alerts",        d: "Track every steam move. Get pinged the moment a line moves into +EV territory." },
-    { icon: "scan",   t: "Sportsbook screen",             d: "Scan every league, market, and book in one view. Filter by league, prop type, and min True %." },
-    { icon: "league", t: "All major leagues",             d: "NBA, NFL, MLB, NHL, WNBA, NCAA, and more. New markets added weekly." },
-    { icon: "refresh",t: "Auto refresh + LOGGED tags",    d: "Lines update every 30 seconds. Tag bets you have placed and we track CLV automatically." },
+    { t: "No-vig consensus on every line",  d: "Each book's two-sided price is devigged and averaged into one fair probability, so you sort on the market's real number rather than the posted odds." },
+    { t: "Multi-book comparison",           d: "PrizePicks lines beside each sportsbook's price for the same market, so you can see where the books disagree and how wide the market is." },
+    { t: "Slip Builder, Power and Flex",    d: "Break-even computed from the published PrizePicks payout tables, per-leg edge, and correlation flags for legs from the same game." },
+    { t: "Backtester on your own slips",    d: "Slips you log are settled against final box scores. Hit rate and ROI broken out by league and prop type." },
+    { t: "Closing-line value tracking",     d: "Every logged leg's entry probability is compared against the closing market, so you can see whether you beat the line, not just whether you won." },
+    { t: "Sportsbook screen",               d: "Every league, market, and book in one table. Filter by league, prop type, and minimum probability." },
+    { t: "Calibration analytics",           d: "Brier score, log loss, and calibration error on your resolved legs: the numbers that tell you if the probabilities are honest." },
+    { t: "Auto-logging",                    d: "Opt in and qualifying slips are logged for you each refresh cycle, so the backtest fills without manual entry." },
   ];
 
   // CTA click: if signed in, start Stripe Checkout for the selected plan.
@@ -50,19 +61,18 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
 
   return (
     <main className="pp">
-      <div className="pp-bg-orb pp-bg-orb-1" />
-      <div className="pp-bg-orb pp-bg-orb-2" />
-
       <div className="pp-back">
         <button className="cp-link" onClick={onBack}>← Back to home</button>
       </div>
 
       <header className="pp-hd">
+        {/* "Fast track your profits" promised a financial outcome the product
+          * cannot deliver and we publish no evidence for. */}
         <h1 className="pp-h1">
-          Fast track your profits. <br />
-          <span className="pp-h1-g">Get 7 days on us.</span>
+          One plan, full access. <br />
+          <span className="pp-h1-g">First 7 days free.</span>
         </h1>
-        <p className="pp-h1-sub">One plan. Full access. Cancel anytime.</p>
+        <p className="pp-h1-sub">Card required to start the trial. Cancel any time before day 7 and you're not charged.</p>
         <div className="pp-toggle">
           <button
             className={"pp-tg-btn " + (billing === "monthly" ? "is-on" : "")}
@@ -114,11 +124,14 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
             )}
           </div>
 
+          {/* Books and leagues from the server, not a hardcoded trio plus
+            * "+ all major leagues" (which was never true — see the league list
+            * in config.ACTIVE_LEAGUES). */}
           <div className="pp-books-strip">
-            {["FD","DK","PIN"].map(b => (
-              <span key={b} className={"pp-book-logo pp-book-" + b}>{b}</span>
+            {(cov ? cov.books : ["FanDuel", "DraftKings", "Pinnacle"]).map(b => (
+              <span key={b} className="pp-book-logo">{b}</span>
             ))}
-            <span className="pp-books-plus">+ all major leagues</span>
+            {cov && <span className="pp-books-plus">{cov.leagues.join(" · ")}</span>}
           </div>
 
           <button className="cp-btn pp-cta" onClick={onCta} disabled={cta === "loading"}>
@@ -174,24 +187,32 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
         </article>
       </section>
 
-      <section className="pp-foot-trust">
-        <div className="pp-ft-item">
-          <b>4,200+ sharps</b>
-          <em>building edge daily</em>
-        </div>
-        <div className="pp-ft-item">
-          <b>14,823</b>
-          <em>+EV bets surfaced this month</em>
-        </div>
-        <div className="pp-ft-item">
-          <b>58.4%</b>
-          <em>backtested hit rate</em>
-        </div>
-        <div className="pp-ft-item">
-          <b>30 sec</b>
-          <em>line refresh</em>
-        </div>
-      </section>
+      {/* Coverage facts read from the running server (/api/public/coverage).
+        * This strip previously carried four invented figures — "4,200+ sharps",
+        * "14,823 +EV bets surfaced this month", "58.4% backtested hit rate" and
+        * "30 sec line refresh" — none of which came from anywhere, and the last
+        * of which contradicted the actual scheduler interval. Renders nothing
+        * until the fetch resolves rather than showing placeholders. */}
+      {cov && (
+        <section className="pp-foot-trust">
+          <div className="pp-ft-item">
+            <b>{cov.prop_source}</b>
+            <em>line source</em>
+          </div>
+          <div className="pp-ft-item">
+            <b>{cov.books.length} books</b>
+            <em>{cov.books.join(" · ")}</em>
+          </div>
+          <div className="pp-ft-item">
+            <b>{cov.leagues.length} leagues</b>
+            <em>{cov.leagues.join(" · ")}</em>
+          </div>
+          <div className="pp-ft-item">
+            <b>{cov.refresh_minutes} min</b>
+            <em>board refresh</em>
+          </div>
+        </section>
+      )}
 
       <section className="pp-faq">
         <h3 className="pp-faq-h">Common questions</h3>
@@ -202,15 +223,27 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
           </details>
           <details>
             <summary>Which sportsbooks do you cover?</summary>
-            <p>FanDuel, DraftKings, and Pinnacle, plus PrizePicks style slip math across all major leagues.</p>
+            <p>
+              {cov
+                ? `${cov.books.join(", ")}. Lines come from ${cov.prop_source}, across ${cov.leagues.join(", ")}.`
+                : "FanDuel, DraftKings, and Pinnacle. Lines come from PrizePicks."}
+            </p>
           </details>
           <details>
             <summary>Can I cancel anytime?</summary>
-            <p>Yes. One click in your account, no questions, no retention calls.</p>
+            <p>Yes, through the Stripe billing portal linked from this page. Cancelling stops future charges; the current period isn't prorated.</p>
           </details>
           <details>
             <summary>How often do lines refresh?</summary>
-            <p>Every 30 seconds across all books, so you're always seeing the live True %.</p>
+            <p>
+              {cov
+                ? `Every ${cov.refresh_minutes} minutes. One scrape cycle pulls every book, so all prices on the board share a timestamp.`
+                : "On a fixed cycle. One scrape pulls every book, so all prices on the board share a timestamp."}
+            </p>
+          </details>
+          <details>
+            <summary>Do you publish a hit rate or ROI?</summary>
+            <p>No. We haven't settled enough logged bets to quote one honestly, and we'd rather show you nothing than a number we can't stand behind. The Backtest and Analytics tabs measure your own results, including when the edge isn't there.</p>
           </details>
           <details>
             <summary>Do you support PrizePicks style slips?</summary>
@@ -218,12 +251,16 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
           </details>
           <details>
             <summary>Is this legal where I live?</summary>
-            <p>CoreProp is an analytics tool. Sportsbook availability depends on your state. We'll only show books you can actually use.</p>
+            {/* The old answer promised "we'll only show books you can actually
+              * use" — there is no geolocation or state-eligibility filtering
+              * anywhere in the codebase, so the board shows every scraped book
+              * regardless of where the visitor is. */}
+            <p>CoreProp is an analytics tool and doesn't accept wagers. We don't filter the board by your location, so whether you can act on a line depends on which books and contests are available in your jurisdiction.</p>
           </details>
         </div>
       </section>
 
-      <div className="pp-respo">18+. If you or someone you know has a gambling problem, call 1-800-GAMBLER.</div>
+      <div className="pp-respo">CoreProp is an analytics tool and does not accept wagers. 21+ where applicable; eligibility depends on your jurisdiction. If you or someone you know has a gambling problem, call 1-800-GAMBLER.</div>
     </main>
   );
 }

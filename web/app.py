@@ -3752,5 +3752,7 @@ async def billing_webhook(request: Request):
 # OpenAPI schema stays unified and the lifespan / scheduler stays one place.
 # ---------------------------------------------------------------------------
 from web.routers import admin as _r_admin
+from web.routers import public as _r_public
 
 app.include_router(_r_admin.router)
+app.include_router(_r_public.router)

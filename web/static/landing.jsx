@@ -1,332 +1,281 @@
-// Landing page — hero, features, live demo, social proof, CTA
-const { useState: useStateL, useEffect: useEffectL, useRef: useRefL, useMemo: useMemoL } = React;
+// Landing page for signed-out visitors.
+//
+// GROUND RULE FOR THIS FILE: every number shown here is either (a) read from
+// the server at runtime via /api/public/coverage, (b) derived from
+// engine/constants.py's payout table by the same formula the app uses, or (c)
+// absent. The previous version claimed "2,847 bets scanned today", "4,200+
+// sharps", a "58.4% backtested hit rate", "+11.7% ROI", "14,823 +EV bets
+// surfaced this month", "+1,287 more edges available now", 16 fabricated
+// "Yesterday's Winners" with fake box-score results dated to real yesterday,
+// and three invented customer testimonials. None had a source. Two were
+// falsifiable and false: the board refreshes on _state["interval_min"]
+// (5 min default), not "every 30 seconds", and NFL was advertised while
+// config.ACTIVE_LEAGUES has never included it.
+//
+// If you want a performance stat on this page, wire it to settled
+// market_observatory rows first. Do not type a number in.
 
-function Landing({ onLogin, onStart, onTab }) {
+// Placeholder line used by the worked example in the "How the number is built"
+// panel. Explicitly labelled as an example in the UI — it is not a live quote.
+const LP_EXAMPLE = {
+  player: "Cale Makar",
+  league: "NHL",
+  prop: "Assists",
+  line: 0.5,
+  side: "OVER",
+  // Two book prices for one side of one market, and the no-vig probability the
+  // engine derives from them. Chosen to be arithmetically checkable by a reader:
+  // see LP_EXAMPLE_MATH below, which recomputes every figure from these odds.
+  books: [["FD", -138], ["DK", -145]],
+};
+
+// The example's arithmetic, computed rather than asserted, so the panel can
+// never drift from the numbers it prints. Mirrors engine/devig.py:
+// american_to_implied + a two-book average of the implied probabilities.
+const LP_EXAMPLE_MATH = (() => {
+  const implied = (american) =>
+    american < 0 ? -american / (-american + 100) : 100 / (american + 100);
+  const probs = LP_EXAMPLE.books.map(([, odds]) => implied(odds));
+  const avg = probs.reduce((a, b) => a + b, 0) / probs.length;
+  return {
+    perBook: LP_EXAMPLE.books.map(([bk, odds], i) => ({
+      book: bk,
+      odds,
+      pct: probs[i] * 100,
+    })),
+    avgPct: avg * 100,
+  };
+})();
+
+// Per-leg break-even for a 6-leg Power slip, DERIVED from the payout table the
+// way ev-page.jsx does rather than hardcoded. The previous version printed
+// "BE 54.07%", the stale pre-37.5x figure that
+// tests/engine_tests/test_payout_table_mirror.py bans in the app tabs for
+// exactly this reason: a hit rate between 54.07% and the real 54.66% would read
+// as profitable while being EV-negative.
+const LP_POWER_6_PAYOUT = 37.5;   // == engine/constants.py POWER_PAYOUTS[6]
+const LP_POWER_6_BE_PCT = Math.pow(1 / LP_POWER_6_PAYOUT, 1 / 6) * 100;
+
+// useCoverage() and fmtRefresh() live in components.jsx — the pricing page uses
+// them too, and that file loads first (see build.sh FILES order).
+
+function Landing({ onLogin, onStart }) {
+  const cov = useCoverage();
   return (
     <main className="lp">
-      <Hero onLogin={onLogin} onStart={onStart} />
-      <Ticker />
-      <Stats />
-      <YesterdaysWinners onStart={onStart} />
-      <Features />
-      <HowItWorks />
-      <DemoPreview onStart={onStart} />
-      <Testimonials />
-      <FinalCTA onStart={onStart} />
-      <Footer />
+      <Hero onLogin={onLogin} onStart={onStart} cov={cov} />
+      <Coverage cov={cov} />
+      <HowItWorks cov={cov} />
+      <Method />
+      <Limits />
+      <FinalCTA onStart={onStart} onLogin={onLogin} />
+      <Footer cov={cov} />
     </main>
   );
 }
 
 // ───────── Hero ─────────
-function Hero({ onLogin, onStart }) {
+function Hero({ onLogin, onStart, cov }) {
+  const books = cov ? cov.books.join(", ") : null;
   return (
     <section className="lp-hero">
-      <div className="lp-hero-bg">
-        <div className="lp-orb lp-orb-1" />
-        <div className="lp-orb lp-orb-2" />
-        <div className="lp-grid-bg" />
-      </div>
       <div className="lp-hero-inner">
         <div className="lp-hero-l">
-          <span className="lp-eyebrow">
-            <span className="lp-pulse" /> Live edge engine · {new Intl.NumberFormat().format(2847)} bets scanned today
-          </span>
           <h1 className="lp-h1">
-            Find the <em className="lp-grad">+EV bets</em> sportsbooks <br />
-            don't want you to see.
+            Every PrizePicks line, priced against the sportsbooks.
           </h1>
           <p className="lp-sub">
-            CoreProp pulls every prop line from FanDuel, DraftKings, and Pinnacle, models the true probability,
-            and surfaces the spots where the math is on your side.
+            CoreProp pulls the same player props from{" "}
+            {books ? <b>{books}</b> : "the major sportsbooks"}, strips the
+            vig out of each price, and shows you the no-vig probability behind
+            every PrizePicks line, next to the payout you'd need to break even.
           </p>
           <div className="lp-cta-row">
             <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>
-              Sign Up
+              See pricing
             </button>
             <button className="cp-btn cp-btn-ghost cp-btn-lg" onClick={onLogin}>
-              Log In
+              Log in
             </button>
           </div>
-          <div className="lp-trust">
-            <div className="lp-trust-avs">
-              {["#6366F1","#22C55E","#F97316","#EF4444"].map((c,i) => <span key={i} className="lp-av" style={{background: c}} />)}
-            </div>
-            <span><b>4,200+</b> sharps building edge with CoreProp</span>
-          </div>
+          <p className="lp-hero-note">
+            No performance claims on this page. The math is shown in full below
+            so you can check it before you pay for anything.
+          </p>
         </div>
         <div className="lp-hero-r">
-          <HeroCard />
+          <ExampleCard />
         </div>
       </div>
     </section>
   );
 }
 
-function HeroCard() {
-  const [idx, setIdx] = useState(0);
-  const plays = TICKER_PLAYS;
-  useEffect(() => {
-    const id = setInterval(() => setIdx(i => (i + 1) % plays.length), 2200);
-    return () => clearInterval(id);
-  }, []);
-  const p = plays[idx];
+// The worked example: one line, two book prices, and the arithmetic that turns
+// them into a probability. Every figure is computed from LP_EXAMPLE.books.
+function ExampleCard() {
+  const p = LP_EXAMPLE;
+  const m = LP_EXAMPLE_MATH;
   return (
-    <div className="lp-card-stack">
-      <div className="lp-card lp-card-glow">
-        <div className="lp-card-hd">
-          <span className="lp-card-dot" /> +EV ALERT
-          <span className="lp-card-time">just now</span>
-        </div>
-        <div className="lp-card-body">
-          <div className="lp-card-player">{p.player}</div>
-          <div className="lp-card-prop">{p.prop}</div>
-          <div className="lp-card-meter">
-            <div className="lp-meter-track">
-              <div className="lp-meter-fill" style={{ width: `${p.pct}%` }} />
-            </div>
-            <div className="lp-meter-labels">
-              <span>True %</span>
-              <span className="lp-meter-val"><AnimatedNumber value={p.pct} decimals={1} suffix="%" /></span>
-            </div>
-          </div>
-          <div className="lp-card-books">
-            {p.books.map(([bk, od]) => <BookBadge key={bk} book={bk} odds={od} />)}
-          </div>
-        </div>
+    <figure className="lp-example">
+      <figcaption className="lp-example-cap">
+        Worked example: illustrative prices, not a live quote
+      </figcaption>
+      <div className="lp-example-hd">
+        <LeaguePill league={p.league} />
+        <span className="lp-example-player">{p.player}</span>
       </div>
-      <div className="lp-mini-card lp-mini-1">
-        <div className="lp-mini-row"><span className="lp-mini-dot is-up" /> Backtest hit rate</div>
-        <div className="lp-mini-big">58.4%</div>
-        <div className="lp-mini-sub">last 90 days · 1,284 bets</div>
+      <div className="lp-example-bet">
+        <span className="lp-example-side">{p.side}</span>
+        <span className="lp-example-line mono">{p.line}</span>
+        <span className="lp-example-prop">{p.prop}</span>
       </div>
-      <div className="lp-mini-card lp-mini-2">
-        <div className="lp-mini-row"><span className="lp-mini-dot is-up" /> ROI</div>
-        <div className="lp-mini-big">+11.7%</div>
-        <div className="lp-mini-sub">on -110 priced legs</div>
-      </div>
-    </div>
-  );
-}
 
-// ───────── Live ticker strip ─────────
-function Ticker() {
-  const items = [...TICKER_PLAYS, ...TICKER_PLAYS];
-  return (
-    <section className="lp-ticker">
-      <div className="lp-ticker-label">
-        <span className="lp-pulse" /> LIVE EDGES
-      </div>
-      <div className="lp-ticker-track">
-        <div className="lp-ticker-roll">
-          {items.map((p, i) => (
-            <div key={i} className="lp-tk">
-              <span className="lp-tk-name">{p.player}</span>
-              <span className="lp-tk-prop">{p.prop}</span>
-              <span className="lp-tk-pct">{p.pct.toFixed(1)}%</span>
-            </div>
+      <table className="lp-example-tbl">
+        <thead>
+          <tr>
+            <th scope="col">Book</th>
+            <th scope="col">Price</th>
+            <th scope="col">Implied</th>
+          </tr>
+        </thead>
+        <tbody>
+          {m.perBook.map((b) => (
+            <tr key={b.book}>
+              <th scope="row"><span className="cp-book lp-book">{b.book}</span></th>
+              <td className="mono">{b.odds > 0 ? `+${b.odds}` : b.odds}</td>
+              <td className="mono">{b.pct.toFixed(1)}%</td>
+            </tr>
           ))}
-        </div>
-      </div>
-    </section>
+        </tbody>
+        <tfoot>
+          <tr>
+            <th scope="row">No-vig consensus</th>
+            <td />
+            <td className="mono lp-example-out">{m.avgPct.toFixed(1)}%</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <p className="lp-example-foot">
+        A 6-leg Power slip needs every leg above{" "}
+        <b className="mono">{LP_POWER_6_BE_PCT.toFixed(2)}%</b> to break even at{" "}
+        {LP_POWER_6_PAYOUT}×. That threshold, not a hit-rate claim, is what
+        the board ranks against.
+      </p>
+    </figure>
   );
 }
 
-// ───────── Stats strip ─────────
-function Stats() {
-  const stats = [
-    { v: 14823, suf: "+", l: "+EV bets surfaced this month" },
-    { v: 58.4,  dec: 1, suf: "%", l: "Backtested hit rate" },
-    { v: 3,     suf: " books", l: "FanDuel · DraftKings · Pinnacle" },
-    { text: "All", suf: " major leagues", l: "NBA · NFL · MLB · NHL · WNBA · more" },
+// ───────── Coverage ─────────
+// Replaces the old four-cell "stats strip", which held three invented totals
+// and one league list that included NFL. Every cell here comes from
+// /api/public/coverage, and the section renders a quiet placeholder until it
+// arrives instead of flashing a number.
+function Coverage({ cov }) {
+  const refresh = cov ? fmtRefresh(cov.refresh_minutes) : null;
+  const cells = [
+    { k: "Lines from", v: cov ? cov.prop_source : "—" },
+    { k: "Priced against", v: cov ? `${cov.books.length} books` : "—",
+      sub: cov ? cov.books.join(" · ") : "" },
+    { k: "Leagues", v: cov ? String(cov.leagues.length) : "—",
+      sub: cov ? cov.leagues.join(" · ") : "" },
+    { k: "Board refresh", v: refresh || "—",
+      sub: cov ? "every scrape cycle" : "" },
   ];
   return (
-    <section className="lp-stats">
-      {stats.map((s, i) => (
-        <div key={i} className="lp-stat">
-          <div className="lp-stat-v">
-            {s.text ? <span>{s.text}{s.suf}</span> : <AnimatedNumber value={s.v} decimals={s.dec || 0} suffix={s.suf} />}
+    <section className="lp-cov" aria-label="Coverage">
+      <dl className="lp-cov-grid">
+        {cells.map((c) => (
+          <div key={c.k} className="lp-cov-cell">
+            <dt className="lp-cov-k">{c.k}</dt>
+            <dd className="lp-cov-v">{c.v}</dd>
+            {c.sub && <dd className="lp-cov-sub">{c.sub}</dd>}
           </div>
-          <div className="lp-stat-l">{s.l}</div>
-        </div>
-      ))}
+        ))}
+      </dl>
     </section>
   );
 }
 
-// ───────── Yesterday's Winners ─────────
-function YesterdaysWinners({ onStart }) {
-  const [league, setLeague] = useState("All");
-  const [hover, setHover] = useState(null);
-
-  const all = YESTERDAY_WINS;
-  const filtered = league === "All" ? all : all.filter(w => w.league === league);
-
-  const leagues = ["All", "NBA", "WNBA", "NHL", "MLB"];
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const dateStr = yesterday.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-
-  return (
-    <section className="lp-yw" id="winners">
-      <div className="lp-yw-inner">
-        <header className="lp-yw-hd">
-          <div className="lp-yw-hd-l">
-            <span className="lp-eyebrow"><span className="lp-pulse" /> {dateStr}</span>
-            <h2 className="lp-h2">Yesterday's Winners.</h2>
-            <p className="lp-h2-sub" style={{margin:0}}>
-              <b className="lp-yw-count-inline">{all.length}</b> +EV bets we surfaced that hit.
-            </p>
-          </div>
-        </header>
-
-        <div className="lp-yw-filters">
-          {leagues.map(l => (
-            <button
-              key={l}
-              className={"ev-chip " + (league === l ? "is-on" : "")}
-              onClick={() => setLeague(l)}
-            >
-              {l}
-              {l !== "All" && (
-                <span className="lp-yw-count">
-                  {all.filter(w => w.league === l).length}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        <div className="lp-yw-grid">
-          {filtered.map((w, i) => (
-            <WinnerCard
-              key={w.player + w.prop}
-              w={w}
-              i={i}
-              hovered={hover === i}
-              onHover={(b) => setHover(b ? i : null)}
-            />
-          ))}
-        </div>
-
-        <div className="lp-yw-foot">
-          <span>Want today's edges before they move?</span>
-          <button className="cp-btn cp-btn-primary" onClick={onStart}>See today's board →</button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function WinnerCard({ w, i, hovered, onHover }) {
-  // Build a number-line visualization showing line vs. result.
-  // We center the line in the middle and place the stat relative to it.
-  const range = Math.max(Math.abs(w.stat - w.line) * 2, w.line * 0.6, 4); // dynamic scale
-  const lineX = 50;
-  const statX = Math.max(6, Math.min(94, lineX + ((w.stat - w.line) / range) * 50));
-  const isOver = w.side === "OVER";
-  const direction = isOver ? "right" : "left"; // which way the win goes from line
-  return (
-    <article
-      className={"yw-card " + (hovered ? "is-hov" : "")}
-      onMouseEnter={() => onHover(true)}
-      onMouseLeave={() => onHover(false)}
-    >
-      <div className="yw-c-hd">
-        <div className="yw-c-game">
-          <LeaguePill league={w.league} />
-          <span className="yw-c-matchup">{w.team} <em>vs</em> {w.opp}</span>
-        </div>
-        <div className="yw-c-win">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6.5l2.5 2.5 5.5-5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          WIN
-        </div>
-      </div>
-
-      <div className="yw-c-player">{w.player}</div>
-      <div className="yw-c-bet">
-        <span className={"yw-c-side yw-c-side-" + (isOver ? "over" : "under")}>{w.side}</span>
-        <span className="yw-c-line">{w.line}</span>
-        <span className="yw-c-prop">{w.prop}</span>
-      </div>
-
-      {/* Numberline viz */}
-      <div className="yw-c-viz">
-        <div className="yw-c-track">
-          <div
-            className={"yw-c-fill yw-c-fill-" + direction}
-            style={{
-              left: direction === "right" ? `${lineX}%` : `${statX}%`,
-              width: `${Math.abs(statX - lineX)}%`,
-            }}
-          />
-          <div className="yw-c-mark yw-c-line-mark" style={{ left: `${lineX}%` }}>
-            <span className="yw-c-mark-lbl">Line {w.line}</span>
-          </div>
-          <div className="yw-c-mark yw-c-stat-mark" style={{ left: `${statX}%` }}>
-            <span className="yw-c-mark-lbl yw-c-mark-lbl-stat">{w.statLabel}</span>
-          </div>
-        </div>
-      </div>
-
-      <footer className="yw-c-foot">
-        <div className="yw-c-foot-l">
-          <span className="yw-c-foot-k">True %</span>
-          <span className="yw-c-foot-v"><TruePct value={w.truePct} /></span>
-        </div>
-        <div className="yw-c-foot-l">
-          <span className="yw-c-foot-k">Odds</span>
-          <span className="yw-c-foot-v mono">{w.odds > 0 ? "+" + w.odds : w.odds}</span>
-        </div>
-      </footer>
-    </article>
-  );
-}
-
-// ───────── Features ─────────
-function Features() {
-  const features = [
+// ───────── How it works ─────────
+function HowItWorks({ cov }) {
+  const refresh = cov ? fmtRefresh(cov.refresh_minutes) : null;
+  const steps = [
     {
-      tag: "+EV ENGINE",
-      title: "True probability, not vig-baked odds.",
-      body: "We strip the house edge from every line and compare it against a player-specific model trained on five seasons of play-by-play data.",
-      visual: <FeatureVizModel />,
+      n: 1,
+      t: "We scrape both sides",
+      b: `Every PrizePicks line, and the same market at each sportsbook we cover. Re-scraped ${
+        refresh ? `every ${refresh}` : "on a fixed cycle"
+      }.`,
     },
     {
-      tag: "MULTI-BOOK",
-      title: "FanDuel, DraftKings, Pinnacle in one view.",
-      body: "Compare any prop across every major book in real time. Auto-flag the soft line and click straight through.",
-      visual: <FeatureVizBooks />,
+      n: 2,
+      t: "We strip the vig",
+      b: "Each book's two-sided price is devigged (Shin, 1993) into a fair probability, then averaged across books into one no-vig consensus.",
     },
     {
-      tag: "BACKTEST",
-      title: "Prove the edge before you ever bet a dollar.",
-      body: "Replay the model on any window: last 7 days, last season, custom dates. See ROI, hit rate, and CLV broken out per sport.",
-      visual: <FeatureVizBacktest />,
-    },
-    {
-      tag: "SLIP BUILDER",
-      title: "Power Plays, sized to the math.",
-      body: "Build PrizePicks-style slips with our recommended leg counts. We tell you the break-even, the auto-correlation, and the expected value.",
-      visual: <FeatureVizSlip />,
+      n: 3,
+      t: "You compare against break-even",
+      b: `Each leg's consensus probability sits next to the per-leg break-even for the slip you're building: ${LP_POWER_6_BE_PCT.toFixed(
+        2,
+      )}% for a 6-leg Power.`,
     },
   ];
   return (
-    <section className="lp-features" id="features">
+    <section className="lp-how" id="how">
       <div className="lp-section-hd">
-        <span className="lp-eyebrow lp-eyebrow-c">Why CoreProp</span>
-        <h2 className="lp-h2">A sharper kind of betting.</h2>
-        <p className="lp-h2-sub">Built by quants who got tired of running spreadsheets at 6 PM Sunday.</p>
+        <h2 className="lp-h2">How it works</h2>
       </div>
-      <div className="lp-feature-grid">
-        {features.map((f, i) => (
-          <article key={i} className={"lp-feature lp-feature-" + i}>
-            <div className="lp-feature-viz">{f.visual}</div>
-            <div className="lp-feature-body">
-              <span className="lp-feature-tag">{f.tag}</span>
-              <h3 className="lp-feature-title">{f.title}</h3>
-              <p className="lp-feature-text">{f.body}</p>
-            </div>
+      <ol className="lp-steps">
+        {steps.map((s) => (
+          <li key={s.n} className="lp-step">
+            <span className="lp-step-n mono">{s.n}</span>
+            <h3 className="lp-step-t">{s.t}</h3>
+            <p className="lp-step-b">{s.b}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+// ───────── What's in the product ─────────
+// Only tabs and behaviours that exist in the shipped app. The old version
+// advertised a "player-specific model trained on five seasons of play-by-play
+// data" (no such model exists — the engine devigs market prices), "line
+// movement + alerts" and "get pinged the moment a line moves" (there is no
+// alerting subsystem anywhere in the codebase), and "one click to the book"
+// (the app links to PrizePicks, not to sportsbooks).
+function Method() {
+  const items = [
+    {
+      t: "No-vig consensus, not book odds",
+      b: "The number you sort on is the market's fair probability with the house margin removed, averaged across every book that posts the market.",
+    },
+    {
+      t: "Multi-book comparison",
+      b: "One row per line, each book's price beside it, so you can see where the books disagree and how wide the market is.",
+    },
+    {
+      t: "Slip builder with real break-even",
+      b: "Power and Flex slips priced off the published PrizePicks payout tables, including the correlation between legs from the same game.",
+    },
+    {
+      t: "Backtest and closing-line value",
+      b: "Slips you log are settled against final box scores, and each leg's entry probability is compared to the closing market, so you see hit rate and CLV on your own bets, not ours.",
+    },
+  ];
+  return (
+    <section className="lp-method" id="product">
+      <div className="lp-section-hd">
+        <h2 className="lp-h2">What you get</h2>
+      </div>
+      <div className="lp-method-grid">
+        {items.map((it) => (
+          <article key={it.t} className="lp-method-card">
+            <h3 className="lp-method-t">{it.t}</h3>
+            <p className="lp-method-b">{it.b}</p>
           </article>
         ))}
       </div>
@@ -334,188 +283,55 @@ function Features() {
   );
 }
 
-// Feature visuals — small bespoke SVG/HTML
-function FeatureVizModel() {
+// ───────── Limits ─────────
+// New section. A tool that sells probability estimates and shows no track
+// record has to say so plainly; burying it makes the rest of the page read as
+// sales copy. This is also the honest replacement for the testimonials block.
+function Limits() {
   return (
-    <div className="fv fv-model">
-      <div className="fv-bar fv-bar-book"><span>BOOK</span><b>−130</b><i>56.5%</i></div>
-      <div className="fv-arrow">→</div>
-      <div className="fv-bar fv-bar-true"><span>TRUE</span><b>62.0%</b><i className="fv-edge">+5.5% EDGE</i></div>
-    </div>
-  );
-}
-function FeatureVizBooks() {
-  return (
-    <div className="fv fv-books">
-      <div className="fv-book-row"><span className="cp-book fv-fd">FD</span><div className="fv-line">−138</div></div>
-      <div className="fv-book-row fv-best"><span className="cp-book fv-dk">DK</span><div className="fv-line">−122 <em>BEST</em></div></div>
-      <div className="fv-book-row"><span className="cp-book fv-pin">PIN</span><div className="fv-line">−135</div></div>
-    </div>
-  );
-}
-function FeatureVizBacktest() {
-  const pts = [40, 45, 42, 50, 48, 56, 55, 62, 64, 60, 70, 75, 78];
-  const w = 240, h = 90;
-  const max = Math.max(...pts), min = Math.min(...pts);
-  const d = pts.map((p, i) => {
-    const x = (i / (pts.length - 1)) * w;
-    const y = h - ((p - min) / (max - min)) * h;
-    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-  return (
-    <div className="fv fv-bt">
-      <svg viewBox={`0 0 ${w} ${h}`} width="100%" height="90" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="bt-fill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#22C55E" stopOpacity="0.5" />
-            <stop offset="100%" stopColor="#22C55E" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <path d={d + ` L${w},${h} L0,${h} Z`} fill="url(#bt-fill)" />
-        <path d={d} fill="none" stroke="#22C55E" strokeWidth="2" />
-      </svg>
-      <div className="fv-bt-row"><span>ROI</span><b>+11.7%</b></div>
-    </div>
-  );
-}
-function FeatureVizSlip() {
-  return (
-    <div className="fv fv-slip">
-      <div className="fv-slip-hd"><span>POWER · 6 LEGS</span><b>BE 54.07%</b></div>
-      {["Makar O0.5","Wemby U3.5","Bueckers U8.5","Holmgren U7.5","Vassell U4.5","Wicks U4.5"].map((s, i) => (
-        <div key={i} className="fv-slip-leg">
-          <span className="fv-slip-i">{i+1}</span>
-          <span className="fv-slip-n">{s}</span>
-          <span className="fv-slip-c">✓</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ───────── How it works ─────────
-function HowItWorks() {
-  const steps = [
-    { n: "01", t: "Pick your sport", b: "We pull every active prop line. Pitcher walks, NBA rebounds, NHL shots, you name it." },
-    { n: "02", t: "Filter by edge",  b: "Set your minimum True % and let CoreProp surface only the bets the model loves." },
-    { n: "03", t: "Place + track",   b: "One click to the book. Slip builder, auto-backtest and CLV tracking come for free." },
-  ];
-  return (
-    <section className="lp-how">
-      <div className="lp-section-hd">
-        <span className="lp-eyebrow lp-eyebrow-c">How it works</span>
-        <h2 className="lp-h2">Three steps. Zero spreadsheets.</h2>
-      </div>
-      <div className="lp-steps">
-        {steps.map((s, i) => (
-          <div key={i} className="lp-step">
-            <div className="lp-step-n">{s.n}</div>
-            <h4 className="lp-step-t">{s.t}</h4>
-            <p className="lp-step-b">{s.b}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-// ───────── Demo preview ─────────
-function DemoPreview({ onStart }) {
-  const rows = EV_BETS.slice(0, 10);
-  return (
-    <section className="lp-demo">
-      <div className="lp-section-hd">
-        <span className="lp-eyebrow lp-eyebrow-c">A peek inside</span>
-        <h2 className="lp-h2">The board, live.</h2>
-        <p className="lp-h2-sub">Every line, every book, every edge. Refreshed every 30 seconds.</p>
-      </div>
-      <div className="lp-demo-frame">
-        <div className="lp-demo-chrome">
-          <span className="lp-demo-dot" style={{background:"#EF4444"}} />
-          <span className="lp-demo-dot" style={{background:"#FBBF24"}} />
-          <span className="lp-demo-dot" style={{background:"#22C55E"}} />
-          <span className="lp-demo-url">coreprop.com/ev</span>
-        </div>
-        <div className="lp-demo-body">
-          <div className="lp-demo-table">
-            <div className="lp-demo-row lp-demo-hd">
-              <span>PLAYER</span><span>LEAGUE</span><span>PROP</span><span>LINE</span><span>SIDE</span><span>TRUE %</span><span>BOOK ODDS</span>
-            </div>
-            {rows.map((b, i) => (
-              <div
-                key={i}
-                className={"lp-demo-row " + (i >= 3 ? "is-locked" : "")}
-              >
-                <span className="lp-demo-p">{b.player}</span>
-                <span><LeaguePill league={b.league} /></span>
-                <span className="lp-demo-prop">{b.prop}</span>
-                <span className="lp-demo-line">{b.line}</span>
-                <span className={"lp-demo-side " + (b.side === "OVER" ? "is-over" : "is-under")}>{b.side}</span>
-                <span><TruePct value={b.truePct} /></span>
-                <span className="lp-demo-books">
-                  {b.books.slice(0, 2).map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}
-                </span>
-              </div>
-            ))}
-            <div className="lp-demo-paywall">
-              <div className="lp-pw-inner">
-                <div className="lp-pw-badge">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 10V8a6 6 0 1 1 12 0v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><rect x="4" y="10" width="16" height="11" rx="2" stroke="currentColor" strokeWidth="2"/></svg>
-                  <span>+1,287 more edges available now</span>
-                </div>
-                <h3 className="lp-pw-h">Unlock the full board.</h3>
-                <p className="lp-pw-sub">Live True % across every book, slip builder, backtester, and line movement history.</p>
-                <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>
-                  Start your 7 day trial →
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// ───────── Testimonials ─────────
-function Testimonials() {
-  const quotes = [
-    { q: "Replaced four spreadsheets and a Twitter list. The True % column alone pays for itself.", a: "Mike R.", r: "MLB props, 3 yrs" },
-    { q: "Best multi-book comparison tool I've used. The backtest is what sold me.", a: "Devon S.", r: "NBA, NHL" },
-    { q: "I was skeptical of another model, but the slip builder math is legit.", a: "Priya K.", r: "PrizePicks player" },
-  ];
-  return (
-    <section className="lp-testimonials">
-      <div className="lp-section-hd">
-        <span className="lp-eyebrow lp-eyebrow-c">From the sharps</span>
-        <h2 className="lp-h2">Built for people who run the math.</h2>
-      </div>
-      <div className="lp-quotes">
-        {quotes.map((q, i) => (
-          <figure key={i} className="lp-quote">
-            <blockquote>"{q.q}"</blockquote>
-            <figcaption>
-              <span className="lp-q-av" style={{ background: ["#6366F1","#22C55E","#F97316"][i] }}>{q.a[0]}</span>
-              <span><b>{q.a}</b><em>{q.r}</em></span>
-            </figcaption>
-          </figure>
-        ))}
+    <section className="lp-limits" aria-labelledby="limits-h">
+      <div className="lp-limits-inner">
+        <h2 className="lp-h2" id="limits-h">What this isn't</h2>
+        <ul className="lp-limits-list">
+          <li>
+            <b>Not a prediction model.</b> CoreProp reads prices the market has
+            already set. It has no player projections of its own, so it can only
+            be as sharp as the books it reads.
+          </li>
+          <li>
+            <b>No published track record.</b> We don't advertise a hit rate or
+            an ROI, because we haven't settled enough of our own logged bets to
+            quote one honestly. The Backtest and Analytics tabs measure{" "}
+            <em>your</em> results, and will tell you if the edge isn't there.
+          </li>
+          <li>
+            <b>An edge is not a guarantee.</b> A leg above break-even is a
+            positive expectation over many bets, and says nothing about any
+            single slip.
+          </li>
+        </ul>
       </div>
     </section>
   );
 }
 
 // ───────── Final CTA ─────────
-function FinalCTA({ onStart }) {
+function FinalCTA({ onStart, onLogin }) {
   return (
     <section className="lp-cta">
       <div className="lp-cta-card">
-        <div className="lp-cta-bg" />
-        <h2 className="lp-h2">Stop guessing. Start finding edge.</h2>
-        <p className="lp-h2-sub">Free for the first 7 days. No credit card. Cancel anytime.</p>
+        <h2 className="lp-h2">See the board</h2>
+        <p className="lp-h2-sub">
+          One plan, cancel any time. Pricing and trial terms are on the next
+          page before you enter a card.
+        </p>
         <div className="lp-cta-row lp-center">
-          <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>Sign Up</button>
-          <button className="cp-btn cp-btn-ghost cp-btn-lg" onClick={onStart}>See pricing</button>
+          <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>
+            See pricing
+          </button>
+          <button className="cp-btn cp-btn-ghost cp-btn-lg" onClick={onLogin}>
+            Log in
+          </button>
         </div>
       </div>
     </section>
@@ -523,22 +339,38 @@ function FinalCTA({ onStart }) {
 }
 
 // ───────── Footer ─────────
-function Footer() {
+// The old footer rendered ten <a> elements with no href — unclickable text that
+// looked like navigation, and a keyboard trap of ten focus stops that did
+// nothing. Sections that exist are real in-page anchors; the rest are gone
+// until there is something to link to.
+function Footer({ cov }) {
+  const year = new Date().getFullYear();
   return (
     <footer className="lp-foot">
-      <div className="lp-foot-l">
-        <Logo size={24} />
-        <span className="lp-foot-tag">Sharper props, less guesswork.</span>
-      </div>
-      <div className="lp-foot-cols">
-        <div><b>Product</b><a>+EV Bets</a><a>Combined Lines</a><a>PrizePicks</a><a>Backtest</a></div>
-        <div><b>Company</b><a>About</a><a>Blog</a><a>Careers</a></div>
-        <div><b>Legal</b><a>Terms</a><a>Privacy</a><a>Responsible play</a></div>
+      <div className="lp-foot-top">
+        <div className="lp-foot-brand">
+          <Logo size={22} animated={false} />
+          <span className="lp-foot-tag">Sharper props, less guesswork.</span>
+        </div>
+        <nav className="lp-foot-nav" aria-label="Page sections">
+          <a href="#how">How it works</a>
+          <a href="#product">What you get</a>
+          <a href="#limits-h">What this isn't</a>
+        </nav>
       </div>
       <div className="lp-foot-base">
-        <span>© 2026 CoreProp</span>
-        <span className="lp-foot-disc">18+. If you or someone you know has a gambling problem, call 1-800-GAMBLER.</span>
+        <span>© {year} CoreProp</span>
+        {cov && (
+          <span className="lp-foot-cov mono">
+            {cov.prop_source} vs {cov.books.join(", ")} · {cov.leagues.join(" ")}
+          </span>
+        )}
       </div>
+      <p className="lp-foot-disc">
+        CoreProp is an analytics tool and does not accept wagers. 21+ where
+        applicable; eligibility depends on your jurisdiction. If you or someone
+        you know has a gambling problem, call 1-800-GAMBLER.
+      </p>
     </footer>
   );
 }

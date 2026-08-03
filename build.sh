@@ -22,7 +22,6 @@ OUT_DIR="web/static/dist"
 FILES=(
   api            # already plain JS, but copied through so all runtime lives in dist/
   tweaks-panel
-  data
   components
   landing
   ev-page

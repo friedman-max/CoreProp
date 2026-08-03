@@ -7,6 +7,7 @@ include-order in `web/app.py` flexible and prevents import cycles.
 
 Extracted:
   - admin.py       (GET /api/admin/memory; POST /api/admin/refit-calibration)
+  - public.py      (GET /api/public/coverage — unauthenticated landing-page facts)
 
 Still in web/app.py — same pattern applies, lift when touched:
   - bets, matched, bootstrap, status

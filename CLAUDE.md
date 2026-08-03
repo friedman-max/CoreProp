@@ -33,6 +33,26 @@ un-ignores it). Editing a `.jsx` without re-running `./build.sh` and committing
 `dist/` ships a no-op to production. `build.sh`'s `FILES` array order must match
 the `<script>` order in `web/static/index.html` — the bundles are plain global
 scripts (no module wrapper), so cross-file globals depend on load order.
+Adding or removing a `.jsx` means editing **both** lists plus `dist/`.
+
+### Design tokens
+
+`:root` in `index.html` is the whole palette; there is no second source. Two
+rules that are load-bearing and easy to break silently:
+
+- **`--primary` is fill/border only, `--primary-2` is text only.** `--primary`
+  (`#1E6FB0`) is dark enough that white button labels clear WCAG AA;
+  `--primary-2` (`#6FBCEC`) is bright enough to read on the page but must never
+  have white on it. Hover *darkens*. `--text-4` is 2.3:1 and is for
+  disabled/decorative glyphs — never for text a user reads.
+- **`TWEAK_DEFAULTS.accent` in `app-main.jsx` must equal `--primary`.** An
+  effect writes it back onto `document.documentElement` as an *inline* style,
+  which beats the stylesheet, so a stale value there overrides the token
+  everywhere and the only symptom is that the CSS "doesn't work".
+
+There are no gradients on accent surfaces, no blurred decorative orbs, and no
+gradient-clipped text anywhere by deliberate choice — those were removed, and
+re-adding one is a visual regression, not a flourish.
 
 ## Architecture
 
@@ -79,10 +99,11 @@ own lock. Rules that matter:
 
 ### Router split (in progress)
 
-`web/app.py` is ~3,700 lines. Only `web/routers/admin.py` has been extracted.
-The convention (documented in `web/routers/__init__.py`) is: one router module
-per endpoint group, `router` attribute, no router-to-router imports, mounted at
-the bottom of `web/app.py`. Lift a group when you touch it.
+`web/app.py` is ~3,700 lines. `web/routers/admin.py` and `web/routers/public.py`
+have been extracted. The convention (documented in `web/routers/__init__.py`)
+is: one router module per endpoint group, `router` attribute, no
+router-to-router imports, mounted at the bottom of `web/app.py`. Lift a group
+when you touch it.
 
 ### Frontend
 
@@ -91,6 +112,22 @@ module system — every `.jsx` file defines globals consumed by later files.
 `window.cpApi` (`api.jsx`) owns Supabase auth and the authenticated fetch/SWR
 layer. Tabs load lazily: `/api/bootstrap/core` first-paints bets + meta, then
 each tab fetches its own dataset on first visit.
+
+**The marketing pages state no number they can't source.** `landing.jsx` and
+`pricing.jsx` are the signed-out surface, and every figure on them is either
+read from `GET /api/public/coverage` (books, leagues, refresh interval — via the
+shared `useCoverage()` hook in `components.jsx`), derived from
+`engine/constants.py` by the same formula the app uses (the per-leg break-even),
+or absent. This is enforced: `tests/api_tests/test_landing_claims.py` bans the
+specific invented statistics that used to ship there ("58.4% backtested hit
+rate", "4,200+ sharps", "+11.7% ROI", "refreshed every 30 seconds", fabricated
+"Yesterday's Winners", named testimonials nobody said), bans naming any league
+absent from `config.ACTIVE_LEAGUES`, and requires the break-even to be *computed*
+from `POWER_PAYOUTS[6]` rather than typed — the landing page had gone stale at
+the pre-37.5x `54.07%` exactly the way `test_payout_table_mirror.py` describes.
+If a section looks empty, add a coverage fact or leave it empty; don't invent a
+metric. A real performance stat needs settled `market_observatory` rows behind
+it first.
 
 ## Conventions specific to this codebase
 
@@ -233,6 +270,13 @@ Python reads them today, but the trigger and both indexes are live.
 Payout-table drift is the one thing that subsystem's test suite covered and
 nothing else did; `tests/engine_tests/test_payout_table_mirror.py` now owns
 that contract in pytest (see below).
+
+`web/static/data.jsx` (`EV_BETS`, `TICKER_PLAYS`, `YESTERDAY_WINS`) held the
+fabricated demo rows the old landing page rendered as if they were real results.
+It was deleted along with those sections — nothing else ever imported it. Its
+entries are gone from `build.sh`'s `FILES` array and from `index.html`'s script
+list. The landing page has no sample data now; it shows one clearly-labelled
+worked example whose arithmetic it computes.
 
 ## Commit style
 

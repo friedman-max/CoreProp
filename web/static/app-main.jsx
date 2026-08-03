@@ -3,8 +3,15 @@
 // "Identifier 'useState' has already been declared" now that the former inline
 // App block is a plain global script rather than a Babel-wrapped closure.
 
+// `accent` MUST match --primary in index.html's :root block. The effect below
+// writes it back onto document.documentElement as an INLINE style, which beats
+// the stylesheet — so a stale value here silently overrides the design token
+// everywhere, and the only symptom is that the CSS "doesn't work".
+//
+// It also has to stay dark enough for white button text to clear WCAG AA: this
+// value ends up behind every `.cp-btn-primary` label. #2E90D9 measured 3.44:1.
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-  "accent": "#6366F1",
+  "accent": "#1E6FB0",
   "density": "regular",
   "showHalo": true,
   "tableTint": "off"
@@ -131,7 +138,18 @@ function App() {
 
   const onLogin = () => setAuthOpen(true);
   const onStart = () => { setView("pricing"); window.scrollTo({ top: 0 }); };
+  // Only ever called by AuthModal, AFTER Supabase has returned a session. It is
+  // the one place allowed to assert loggedIn.
   const onAuthSubmit = () => { setAuthOpen(false); setLoggedIn(true); setView("ev"); };
+  // What the PRICING page's CTA calls when the visitor isn't signed in yet.
+  //
+  // This used to be onAuthSubmit, which set loggedIn=true and dropped the
+  // visitor into the app WITHOUT any authentication: clicking "Try 7 days
+  // free" while signed out rendered every app tab with cpApi.isLoggedIn()
+  // still false, so each tab fired an unauthenticated fetch and showed
+  // permanent empty/error state. Open the auth modal instead — after a real
+  // sign-in, onAuthSubmit runs and the user lands in the app for real.
+  const onNeedsAuth = () => setAuthOpen(true);
 
   const onTab = (tab) => {
     if (tab === "landing") { setView("landing"); return; }
@@ -156,8 +174,8 @@ function App() {
         onLogout={async () => { try { await window.cpApi.signOut(); } catch (e) {} setLoggedIn(false); setView("landing"); }}
         variant={view === "landing" ? "landing" : "app"}
       />
-      {view === "landing" && <Landing onLogin={onLogin} onStart={onStart} onTab={onTab} />}
-      {view === "pricing" && <PricingPage onStart={onAuthSubmit} onBack={() => setView(loggedIn && !locked ? "ev" : "landing")} loggedIn={loggedIn} locked={locked} />}
+      {view === "landing" && <Landing onLogin={onLogin} onStart={onStart} />}
+      {view === "pricing" && <PricingPage onStart={onNeedsAuth} onBack={() => setView(loggedIn && !locked ? "ev" : "landing")} loggedIn={loggedIn} locked={locked} />}
       {view === "ev" && !locked && (() => {
         // Keep-alive tab host: once a tab has been visited it stays mounted
         // and is hidden via display:none when inactive. This preserves each
@@ -185,7 +203,8 @@ function App() {
         <TweakColor
           label="Accent"
           value={t.accent}
-          options={["#6366F1", "#3DA9F0", "#A855F7", "#22C55E"]}
+          // All four are dark enough for white label text (>=4.5:1).
+          options={["#1E6FB0", "#2563A8", "#0F766E", "#15803D"]}
           onChange={(v) => setTweak("accent", v)}
         />
         <TweakRadio
