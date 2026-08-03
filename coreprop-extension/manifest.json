@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "CoreProp — PrizePicks Slip Builder",
-  "version": "1.2.0",
-  "description": "Automatically builds your CoreProp slip on PrizePicks.",
+  "version": "2.3.0",
+  "description": "Stages your CoreProp slip on the PrizePicks board. Never submits a wager.",
+  "permissions": ["storage"],
   "host_permissions": [
     "https://app.prizepicks.com/*",
     "http://localhost:8000/*",
@@ -15,11 +16,21 @@
   "content_scripts": [
     {
       "matches": ["https://app.prizepicks.com/*"],
-      "js": ["content.js"],
+      "js": ["pp-dom.js", "content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://coreprop.onrender.com/*",
+        "http://localhost:8000/*",
+        "http://127.0.0.1:8000/*"
+      ],
+      "js": ["cp-beacon.js"],
       "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_title": "CoreProp Slip Builder"
+    "default_title": "CoreProp Slip Builder",
+    "default_popup": "popup.html"
   }
 }

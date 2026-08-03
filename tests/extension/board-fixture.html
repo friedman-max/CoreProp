@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CoreProp extension — PrizePicks board fixture</title>
+<style>
+  body { margin:0; font:14px system-ui; background:#0b1220; color:#e2e8f0; }
+  #pp-search-bar { position:sticky; top:0; padding:10px; background:#0f172a; z-index:5; }
+  /* Tailwind's important-hidden utility, exactly as PP ships it. */
+  .\!hidden { display:none !important; }
+  .stat-navigation { padding:0 10px; }
+  .pp-search-filter-desktop { display:flex; gap:10px; }
+  .pp-search-filter-desktop button { background:#1e293b; border:1px solid #334155;
+      border-radius:999px; padding:5px 10px; cursor:pointer; line-height:0; }
+  .search-input { width:260px; padding:6px 10px; border-radius:6px; border:1px solid #334155;
+                  background:#0b1220; color:#e2e8f0; }
+  #board { height:320px; overflow-y:auto; border:1px solid #1e293b; margin:10px; position:relative; }
+  #spacer { position:relative; }
+  li[id="test-projection-li"] { list-style:none; position:absolute; left:0; right:0; height:96px;
+      border-bottom:1px solid #1e293b; padding:8px 12px; box-sizing:border-box; background:#0f172a; }
+  .row { display:flex; gap:10px; align-items:center; }
+  .btns { display:flex; gap:6px; margin-top:6px; }
+  button.side { background:#1e293b; border:1px solid #334155; color:#e2e8f0; border-radius:6px;
+                padding:4px 12px; cursor:pointer; }
+  button.side.bg-atlien-100 { background:#0ea5e9; color:#04121f; }
+  .swap { background:transparent; border:1px solid #334155; color:#94a3b8; border-radius:6px;
+          padding:2px 8px; cursor:pointer; font-size:11px; }
+  .strike { text-decoration:line-through; color:#64748b; }
+  #results { margin:10px; font-family:ui-monospace, monospace; font-size:12px; white-space:pre-wrap; }
+  .tabs { padding:0 10px 8px; display:flex; gap:8px; }
+  .tabs button { background:#1e293b; border:1px solid #334155; color:#e2e8f0; border-radius:6px;
+                 padding:4px 12px; cursor:pointer; }
+  .tabs button.active { background:#3da9f0; color:#04121f; }
+</style>
+</head>
+<body>
+
+<div class="tabs" id="tabs"></div>
+
+<!-- Mirrors PP's real structure: the magnifier lives in the stat-navigation
+     strip, NOT inside #pp-search-bar, and the bar itself is `!hidden` until
+     the toggle flips isSearching. The games-filter sibling deliberately shares
+     the toggle's exact className so the 22x22-vs-19x19 icon test is exercised. -->
+<nav class="stat-navigation">
+  <div class="pp-container">
+    <div class="pp-search-filter-desktop">
+      <button class="stat stat-rounded relative min-w-0 text-center" data-role="search-toggle">
+        <svg width="22" height="22" viewBox="0 0 22 22"><circle cx="9" cy="9" r="7" fill="none" stroke="#94a3b8" stroke-width="2"/></svg>
+      </button>
+      <button class="stat stat-rounded relative min-w-0 text-center" data-role="games-filter">
+        <svg width="19" height="19" viewBox="0 0 19 19"><rect x="3" y="3" width="13" height="13" fill="none" stroke="#94a3b8" stroke-width="2"/></svg>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<div id="pp-search-bar" class="!hidden"><input class="search-input" placeholder="Search" aria-label="search"></div>
+<div id="board"><div id="spacer"><ul id="cards" style="margin:0;padding:0"></ul></div></div>
+<div id="results">running…</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// A stand-in for the PrizePicks board.
+//
+// RUN THIS IN A FOREGROUND TAB. Chrome throttles timers in hidden tabs — a
+// 150ms sleep measured 720ms here, escalating to roughly one wake per minute
+// after ~5 minutes hidden. The staging code is built out of many short waits,
+// so a backgrounded run appears to hang when it is only being throttled.
+// Serve via the `coreprop-extension-test` launch config, open
+// /tests/extension/board-fixture.html, keep the tab visible, and call
+// window.runTests() from the console. Progress is logged as [TEST] lines so a
+// slow run can be told apart from a stalled one.
+//
+// The critical property being reproduced is VIRTUALIZATION: only the cards near
+// the scroll position exist in the DOM. A tall-but-fully-rendered board would
+// not reproduce the bug under test, because findCards() uses querySelectorAll
+// and would see every card on the first pass.
+// ---------------------------------------------------------------------------
+
+const CARD_H = 96, WINDOW = 4;
+
+// league, player, team, stat, lines[] (index 0 is the face; the rest are behind
+// the swap control), mult = payout multiplier => goblin/demon rather than standard
+const ALL = [
+  { league:'NBA',  player:'Anthony Edwards', team:'MIN - SG', stat:'Points',    lines:[21.5] },
+  { league:'NBA',  player:'Jalen Brunson',   team:'NYK - PG', stat:'Points',    lines:[24.5] },
+  { league:'NBA',  player:'Jalen Brunson',   team:'NYK - PG', stat:'Assists',   lines:[6.5] },
+  { league:'NBA',  player:'Nikola Jokic',    team:'DEN - C',  stat:'Rebounds',  lines:[12.5] },
+  { league:'NBA',  player:'Nikola Jokic',    team:'DEN - C',  stat:'Points',    lines:[25.5] },
+  { league:'NBA',  player:'Luka Doncic',     team:'DAL - PG', stat:'Points',    lines:[29.5] },
+  { league:'NBA',  player:'Luka Doncic',     team:'DAL - PG', stat:'Assists',   lines:[8.5] },
+  { league:'NBA',  player:'Devin Booker',    team:'PHX - SG', stat:'Points',    lines:[26.5] },
+  // TARGET A — deliberately deep in the list so it is NOT rendered initially.
+  { league:'NBA',  player:'Anthony Edwards', team:'MIN - SG', stat:'Rebounds',  lines:[5.5] },
+  // TARGET B — exact line only reachable via the swap control.
+  { league:'NBA',  player:'Tyrese Haliburton', team:'IND - PG', stat:'Points',  lines:[17.5, 19.5, 21.5] },
+  // TARGET C — exact line gone; a strictly better STANDARD line is available.
+  { league:'NBA',  player:'Paolo Banchero', team:'ORL - PF', stat:'Points',     lines:[20.5, 22.5] },
+  // TARGET D — better line exists but it is a GOBLIN (has a multiplier).
+  { league:'NBA',  player:'Franz Wagner',   team:'ORL - SF', stat:'Points',     lines:[15.5], mult:0.8 },
+  { league:'WNBA', player:"A'ja Wilson",    team:'LV - F',   stat:'Points',     lines:[23.5] },
+  { league:'WNBA', player:'Breanna Stewart',team:'NY - F',   stat:'Rebounds',   lines:[8.5] },
+  // ── Abbreviated card labels: `display` is what the board prints, `stat` is
+  //    the stat_type CoreProp stores on the leg. These are the real pairs.
+  { league:'MLB',  player:'Tarik Skubal',   team:'DET - SP', stat:'Pitcher Strikeouts', display:"Ks",   lines:[7.5] },
+  { league:'MLB',  player:'Aaron Judge',    team:'NYY - RF', stat:'Total Bases',        display:'TB',   lines:[1.5] },
+  { league:'MLB',  player:'Elly De La Cruz',team:'CIN - SS', stat:'Stolen Bases',       display:'SB',   lines:[0.5] },
+  // Only a DEMON exists at this number. 73% of the live board is demon/goblin,
+  // and they carry their own payout multipliers, so staging one in place of a
+  // standard leg silently changes the slip's economics. Must refuse.
+  { league:'MLB',  player:'Corbin Burnes',  team:'BAL - SP', stat:'Pitcher Strikeouts', display:'Ks', lines:[6.5], mult:3 },
+  { league:'NBA',  player:'Shai Gilgeous-Alexander', team:'OKC - PG', stat:'Pts+Rebs+Asts', display:'PRA', lines:[38.5] },
+  { league:'NBA',  player:'Stephen Curry',  team:'GSW - PG', stat:'3-PT Made',          display:'3PTM', lines:[4.5] },
+  // Flash sale: the struck-through number is what CoreProp scraped; the live
+  // bettable line is different, so this must NOT match a 30.5 leg.
+  { league:'NBA',  player:'Jayson Tatum',   team:'BOS - SF', stat:'Points', lines:[27.5], flashFrom:30.5 },
+];
+
+let activeLeague = 'NBA';
+let query = '';
+let swapState = new Map();   // card index -> which line in its array is showing
+// Selection lives in STATE, not in the DOM — same as React. A DOM-only flag
+// would be wiped by the next re-render, which is exactly the trap the extension
+// has to survive: it must confirm against whatever node is live now.
+let selected = new Set();    // `${cardIndex}|${side}`
+
+function visible() {
+  return ALL.map((c, i) => ({ ...c, _i: i }))
+    .filter(c => c.league === activeLeague)
+    .filter(c => !query || c.player.toLowerCase().includes(query.toLowerCase()));
+}
+
+function render() {
+  const vis = visible();
+  const board = document.getElementById('board');
+  const spacer = document.getElementById('spacer');
+  const ul = document.getElementById('cards');
+  spacer.style.height = (vis.length * CARD_H) + 'px';
+
+  const first = Math.max(0, Math.floor(board.scrollTop / CARD_H) - 1);
+  const last = Math.min(vis.length, first + WINDOW + 2);
+
+  ul.innerHTML = '';
+  for (let n = first; n < last; n++) {
+    const c = vis[n];
+    if (!c) continue;
+    const shown = swapState.get(c._i) || 0;
+    const line = c.lines[shown];
+    const hasAlt = c.lines.length > 1;
+    const mult = c.mult ? ` ${c.mult}x` : '';
+
+    // Mirrors PP's real card (bundle module 70031): a `.heading-md` line
+    // container followed by the stat-label span, a <time> with the start time
+    // (the string that used to be mistaken for the stat name), and combo labels
+    // split on "+" into separate fragments the way PP's d5() renders them.
+    const label = (c.display || c.stat);
+    const labelHtml = label.split('+').map((p, k) => (k ? '+' : '') + p)
+                           .map(p => '<span>' + p + '</span>').join('');
+    const li = document.createElement('li');
+    li.id = 'test-projection-li';
+    li.setAttribute('aria-label', c.player + ' - ' + c.team.split(' ')[0]);
+    li.style.top = (n * CARD_H) + 'px';
+    li.innerHTML =
+      '<div class="row">' +
+        '<span id="test-player-name">' + c.player + '</span>' +
+        '<span id="test-team-position">' + c.team + '</span>' +
+        (hasAlt ? '<button class="swap" id="test-projection-swap">alt</button>' : '') +
+      '</div>' +
+      '<time aria-label="Start Time">@ <span>LAL</span> <span>7:05 PM</span></time>' +
+      '<div class="row body-sm items-last-baseline flex gap-1">' +
+        (c.live ? '<div>Cur. <span>12</span></div>' : '') +
+        '<div class="heading-md">' +
+          (c.flashFrom ? '<span class="strike">' + c.flashFrom + '</span>' : '') +
+          '<span>' + line + '</span>' +
+        '</div>' +
+        '<span class="text-soClean-140">' + labelHtml + '</span>' +
+      '</div>' +
+      '<div class="btns">' +
+        '<button class="side' + (selected.has(c._i + '|over') ? ' bg-atlien-100' : '') + '" id="test-more">More' + mult + '</button>' +
+        '<button class="side' + (selected.has(c._i + '|under') ? ' bg-atlien-100' : '') + '" id="test-less">Less' + mult + '</button>' +
+      '</div>';
+
+    li.querySelectorAll('button.side').forEach(b => {
+      const side = b.id === 'test-more' ? 'over' : 'under';
+      b.addEventListener('click', () => {
+        const k = c._i + '|' + side;
+        if (selected.has(k)) selected.delete(k); else selected.add(k);
+        render();      // React-style: re-render replaces the node that was clicked
+      });
+    });
+    const sw = li.querySelector('#test-projection-swap');
+    if (sw) sw.addEventListener('click', () => {
+      swapState.set(c._i, ((swapState.get(c._i) || 0) + 1) % c.lines.length);
+      render();
+    });
+    ul.appendChild(li);
+  }
+}
+
+document.getElementById('board').addEventListener('scroll', render);
+
+// PP debounces the query by 500ms before dispatching it, so the board does not
+// refilter on keystroke. Reproduced so the extension's wait logic is exercised.
+let searchDebounce = 0;
+document.querySelector('.search-input').addEventListener('input', e => {
+  const v = e.target.value;
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => {
+    query = v; document.getElementById('board').scrollTop = 0; render();
+  }, 500);
+});
+
+// The magnifier is the ONLY thing that reveals the search bar.
+document.querySelector('[data-role="search-toggle"]').addEventListener('click', () => {
+  document.getElementById('pp-search-bar').classList.remove('!hidden');
+  document.querySelector('.search-input').focus();
+});
+document.querySelector('[data-role="games-filter"]').addEventListener('click', () => {
+  window.__gamesFilterClicked = (window.__gamesFilterClicked || 0) + 1;   // must stay 0
+});
+
+const tabs = document.getElementById('tabs');
+[...new Set(ALL.map(c => c.league))].forEach(l => {
+  const b = document.createElement('button');
+  b.textContent = l;
+  b.className = l === activeLeague ? 'active' : '';
+  b.addEventListener('click', () => {
+    activeLeague = l;
+    [...tabs.children].forEach(x => x.className = x.textContent === l ? 'active' : '');
+    query = ''; document.querySelector('.search-input').value = '';
+    document.getElementById('board').scrollTop = 0;
+    render();
+  });
+  tabs.appendChild(b);
+});
+
+render();
+
+// Minimal chrome stub so content.js loads. getToken() finds no token and run()
+// stands down immediately, leaving its functions available to call directly.
+window.chrome = {
+  runtime: {
+    getManifest: () => ({ version: 'test' }),
+    sendMessage: (m, cb) => cb && cb({ ok: false }),
+    lastError: null,
+  },
+  storage: { session: { get: async () => ({}), set: async () => {}, remove: async () => {} } },
+};
+</script>
+
+<script src="../../coreprop-extension/pp-dom.js"></script>
+<script src="../../coreprop-extension/content.js"></script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Test cases
+// ---------------------------------------------------------------------------
+window.runTests = async function () {
+  const out = [];
+  // Progress beacon: without this a stall is indistinguishable from a slow run,
+  // since results only render after the whole suite finishes.
+  const push = (row) => { console.log('[TEST]', row[1] ? 'PASS' : 'FAIL', row[0]); out.push(row); };
+  window.__at = 'start';
+  const step = (n) => { window.__at = n; console.log('[STEP]', n); };
+  const reset = () => {
+    swapState = new Map(); query = ''; activeLeague = 'NBA'; selected = new Set();
+    document.querySelector('.search-input').value = '';
+    // Start every case from the REAL initial state: search bar collapsed.
+    document.getElementById('pp-search-bar').classList.add('!hidden');
+    window.__gamesFilterClicked = 0;
+    document.getElementById('board').scrollTop = 0;
+    render();
+  };
+
+  async function hunt(leg, ms = 8000) {
+    reset();
+    await searchForPlayer(leg.player);
+    return await huntLeg(leg, Date.now() + ms);
+  }
+
+  // PP scopes search to the active league, so a test targeting an MLB player
+  // has to land on the MLB board first — same as the extension does per leg.
+  async function onLeague(l) {
+    reset();
+    activeLeague = l;
+    [...tabs.children].forEach(x => x.className = x.textContent === l ? 'active' : '');
+    render();
+  }
+
+  // A. Reading the card: the stat label must come from the label span, NOT the
+  //    start time — "7:05 PM" is longer than "Ks" and used to win.
+  {
+    await onLeague('MLB');
+    await searchForPlayer('Tarik Skubal');
+    const c = findCards().find(x => x.player === 'Tarik Skubal');
+    push(['stat label is the label, not the start time',
+              !!c && c.stat === 'Ks', 'read stat=' + JSON.stringify(c && c.stat)]);
+    push(['line read from .heading-md', !!c && c.lines.some(l => l.value === 7.5),
+              'lines=' + JSON.stringify(c && c.lines.map(l => l.value))]);
+  }
+
+  // B. Combo labels are split on "+" into fragments by PP; textContent must
+  //    reassemble them.
+  {
+    await onLeague('NBA');
+    await searchForPlayer('Shai Gilgeous-Alexander');
+    const c = findCards().find(x => x.player.startsWith('Shai'));
+    push(['combo label reassembled from fragments', !!c && c.stat === 'PRA',
+              'read stat=' + JSON.stringify(c && c.stat)]);
+  }
+
+  // C. Every abbreviation PP prints must resolve to the leg's stat_type.
+  {
+    const cases = [
+      ['Pitcher Strikeouts', 'Ks'], ['Total Bases', 'TB'], ['Stolen Bases', 'SB'],
+      ['Pts+Rebs+Asts', 'PRA'], ['3-PT Made', '3PTM'], ['Receiving Yards', 'Rec Yards'],
+      ['Receptions', 'Recs'], ['Pitching Outs', 'PO'], ['Shots On Target', 'SOT'],
+      ['Points (Combo)', 'Points'], ['Hitter Strikeouts', 'Hitter Ks'],
+    ];
+    const bad = cases.filter(([legProp, cardLabel]) => !statMatches(cardLabel, legProp));
+    push(['all PP abbreviations map to stat_type', bad.length === 0,
+              bad.length ? 'FAILED: ' + JSON.stringify(bad) : cases.length + ' pairs ok']);
+    // And must not over-match: different markets stay distinct.
+    const collide = statMatches('Rebounds', 'Points') || statMatches('Ks', 'Total Bases');
+    push(['aliases do not collide across markets', !collide, 'collide=' + collide]);
+  }
+
+  // D. End-to-end on an abbreviated prop — the case the user hit.
+  {
+    reset();
+    renderLegs([{ player: 'Aaron Judge', prop: 'Total Bases', line: 1.5, side: 'over' }]);
+    currentLeague = '';
+    const ok = await stageLeg({ player: 'Aaron Judge', league: 'MLB', prop: 'Total Bases', line: 1.5, side: 'over' }, 0);
+    const idx = ALL.findIndex(c => c.player === 'Aaron Judge');
+    push(['stages a prop shown under an abbreviation', ok && selected.has(idx + '|over'),
+              'ok=' + ok + ' selected=' + [...selected].join(',')]);
+  }
+
+  // D2. The exact line exists, but only on a DEMON. Payout differs from the
+  //     standard table CoreProp priced against, so it must refuse, not stage.
+  {
+    reset();
+    renderLegs([{ player: 'Corbin Burnes', prop: 'Pitcher Strikeouts', line: 6.5, side: 'over' }]);
+    currentLeague = '';
+    const ok = await stageLeg({ player: 'Corbin Burnes', league: 'MLB', prop: 'Pitcher Strikeouts', line: 6.5, side: 'over' }, 0);
+    const note = document.querySelector('#coreprop-leg-0 .coreprop-leg-note');
+    push(['refuses to stage a demon at the leg line',
+              !ok && selected.size === 0 && /demon|goblin/i.test(note ? note.textContent : ''),
+              'ok=' + ok + ' selected=' + selected.size + ' note=' + (note ? note.textContent : '')]);
+  }
+
+  // E. Flash sale: the struck-through number is the one CoreProp logged, but it
+  //    is not what would be placed. Must refuse, not silently stage.
+  {
+    await onLeague('NBA');
+    await searchForPlayer('Jayson Tatum');
+    const c = findCards().find(x => x.player === 'Jayson Tatum');
+    push(['struck-through flash-sale line ignored',
+              !!c && !c.lines.some(l => l.value === 30.5) && c.lines.some(l => l.value === 27.5),
+              'lines=' + JSON.stringify(c && c.lines.map(l => l.value))]);
+  }
+
+  // 0. THE CURRENT BLOCKER: the search bar starts hidden and can only be opened
+  //    by the magnifier in the stat-navigation strip. Must find and click it —
+  //    and must NOT click the games-filter sibling, which looks identical.
+  {
+    reset();
+    const hiddenBefore = document.getElementById('pp-search-bar').classList.contains('!hidden');
+    const input = await openSearch();
+    push(['opens the hidden search bar', hiddenBefore && !!input,
+              'hiddenBefore=' + hiddenBefore + ' gotInput=' + !!input]);
+    push(['does not click the games filter', (window.__gamesFilterClicked || 0) === 0,
+              'gamesFilterClicks=' + (window.__gamesFilterClicked || 0)]);
+  }
+
+  // 0b. Typing must survive PP's 500ms debounce before the board refilters.
+  {
+    reset();
+    const ok = await searchForPlayer('Luka Doncic');
+    const names = [...document.querySelectorAll('#test-player-name')].map(e => e.textContent);
+    push(['search filters the board past the debounce',
+              ok && names.length > 0 && names.every(n => n === 'Luka Doncic'),
+              'ok=' + ok + ' names=' + JSON.stringify([...new Set(names)])]);
+  }
+
+  // 1. THE REPORTED BUG: target card is far down the filtered list, so it is not
+  //    in the DOM on the first pass. Must scroll to it rather than reporting a miss.
+  {
+    const r = await hunt({ player: 'Anthony Edwards', league: 'NBA', prop: 'Rebounds', line: 5.5, side: 'over' });
+    push(['deep card found by scrolling', !!r.card, r.card ? r.card.stat + ' ' + r.card.lines.map(l=>l.value) : JSON.stringify(r)]);
+  }
+
+  // 2. Exact line hidden behind the swap control.
+  {
+    const r = await hunt({ player: 'Tyrese Haliburton', league: 'NBA', prop: 'Points', line: 21.5, side: 'over' });
+    push(['alt line found via swap', !!r.card, r.card ? 'line ' + r.card.lines.map(l=>l.value) : JSON.stringify(r)]);
+  }
+
+  // 3. Exact gone; a strictly better STANDARD line should be offered as fallback.
+  {
+    const r = await hunt({ player: 'Paolo Banchero', league: 'NBA', prop: 'Points', line: 23.5, side: 'over' });
+    push(['better standard line offered', !r.card && r.better && r.better.line === 22.5,
+              JSON.stringify(r.better) + ' exact=' + !!r.card]);
+  }
+
+  // 4. Better line exists but is a GOBLIN — must NOT be offered.
+  {
+    const r = await hunt({ player: 'Franz Wagner', league: 'NBA', prop: 'Points', line: 18.5, side: 'over' });
+    push(['goblin better-line rejected', !r.card && !r.better,
+              'better=' + JSON.stringify(r.better)]);
+  }
+
+  // 5. Genuine miss — report the lines actually on the board, and do NOT treat a
+  //    wildly different number as a "better" line just because it is lower.
+  {
+    const r = await hunt({ player: 'Devin Booker', league: 'NBA', prop: 'Points', line: 99.5, side: 'over' });
+    push(['genuine miss reports board lines', !r.card && r.sawPlayer && r.linesSeen.includes(26.5),
+              'linesSeen=' + JSON.stringify(r.linesSeen)]);
+    push(['far-off line not treated as better', !r.better, 'better=' + JSON.stringify(r.better)]);
+  }
+
+  // 5b. Under wants a HIGHER line, and the tolerance must still apply.
+  {
+    const r = await hunt({ player: 'Devin Booker', league: 'NBA', prop: 'Points', line: 25.5, side: 'under' });
+    push(['under takes higher nearby line', !r.card && r.better && r.better.line === 26.5,
+              'better=' + JSON.stringify(r.better)]);
+  }
+
+  // 6. Wrong sport: a WNBA player must not be found while NBA is active.
+  {
+    const r = await hunt({ player: "A'ja Wilson", league: 'WNBA', prop: 'Points', line: 23.5, side: 'over' });
+    push(['wrong-sport player not matched', !r.card && !r.sawPlayer, 'sawPlayer=' + r.sawPlayer]);
+  }
+
+  // 7. Full stage path incl. the league switch and click verification. Asserts
+  //    against fixture STATE, since the DOM node that was clicked is gone.
+  {
+    reset();
+    renderLegs([{ player: "A'ja Wilson", prop: 'Points', line: 23.5, side: 'over' }]);
+    currentLeague = 'NBA';
+    const leg = { player: "A'ja Wilson", league: 'WNBA', prop: 'Points', line: 23.5, side: 'over' };
+    const ok = await stageLeg(leg, 0);
+    const wilson = ALL.findIndex(c => c.player === "A'ja Wilson" && c.stat === 'Points');
+    push(['stageLeg switches sport and clicks', ok && selected.has(wilson + '|over'),
+              'ok=' + ok + ' selected=' + [...selected].join(',')]);
+
+    // 7b. Re-staging the SAME leg must not toggle it back off.
+    const ok2 = await stageLeg(leg, 0);
+    push(['re-staging is idempotent', ok2 && selected.has(wilson + '|over'),
+              'ok=' + ok2 + ' selected=' + [...selected].join(',')]);
+  }
+
+  const pass = out.filter(r => r[1]).length;
+  document.getElementById('results').textContent =
+    out.map(r => (r[1] ? 'PASS  ' : 'FAIL  ') + r[0] + '\n        ' + r[2]).join('\n') +
+    `\n\n${pass}/${out.length} passed`;
+  return { pass, total: out.length, detail: out };
+};
+</script>
+</body>
+</html>

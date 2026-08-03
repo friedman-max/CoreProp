@@ -1625,6 +1625,19 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/extension")
+def extension_page():
+    """Install page for the PrizePicks slip-builder extension.
+
+    Standalone static HTML (no React, no auth) so it still renders for a user
+    whose session has expired — the whole point of the page is to be reachable
+    when something else isn't working. The Backtest page links here whenever it
+    detects the extension is missing.
+    """
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=(STATIC_DIR / "extension.html").read_text(encoding="utf-8"))
+
+
 @app.get("/")
 def root():
     from engine.database import SUPABASE_URL, SUPABASE_ANON_KEY
@@ -2675,6 +2688,32 @@ def set_pending_slip(req: PendingSlipRequest, user: dict = Depends(get_current_u
     another user's slip.
     """
     import secrets
+
+    # Refuse legs whose game has already started. The extension matches on
+    # player+prop+line with no date awareness, so a stale leg doesn't merely
+    # fail to stage — if that player is on tonight's board at the same number,
+    # it silently stages a bet the model never priced. Gate here as well as in
+    # the UI so no client path can queue a dead leg.
+    now_utc = datetime.now(timezone.utc)
+    started = 0
+    for leg in req.legs:
+        gs = leg.get("game_start")
+        if not gs:
+            continue
+        try:
+            when = datetime.fromisoformat(str(gs).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when <= now_utc:
+            started += 1
+    if started:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{started} leg(s) have already started — this slip can no longer be placed.",
+        )
+
     token = secrets.token_urlsafe(16)
     expires_at = time.monotonic() + _PENDING_SLIP_TTL_SEC
     payload = {
@@ -2729,6 +2768,57 @@ def clear_pending_slip(token: str = Query("", alias="cp_slip")):
     with _pending_slips_lock:
         if token:
             _pending_slips.pop(token, None)
+    return {"ok": True}
+
+
+class SlipStatusRequest(BaseModel):
+    version: str = ""
+    legs_total: int = 0
+    legs_staged: int = 0
+    failures: list[dict] = []
+    # Legs staged at a different (strictly better) line than the slip asked for.
+    # Worth logging loudly: the placed slip no longer matches the backtested one.
+    line_changes: list[dict] = []
+
+
+@app.post("/api/pending-slip/status")
+def report_slip_status(req: SlipStatusRequest, token: str = Query("", alias="cp_slip")):
+    """
+    The extension reports what actually happened on the PrizePicks board.
+
+    Unauthenticated for the same reason as GET: the caller is a content script
+    running in the app.prizepicks.com origin with no CoreProp credentials, and
+    the unguessable token is what scopes the write. Nothing here is persisted —
+    it is logged so partial failures are diagnosable without asking a user to
+    open devtools, which was previously the only place any of this surfaced.
+    """
+    if not token:
+        return {"ok": False, "reason": "blank_token"}
+
+    if req.legs_staged < req.legs_total:
+        logger.warning(
+            "PP slip staging incomplete: %d/%d legs (ext v%s). Failures: %s",
+            req.legs_staged, req.legs_total, req.version or "?",
+            "; ".join(
+                f"{f.get('player')} {f.get('prop')} {f.get('line')}: {f.get('reason')}"
+                for f in req.failures[:10]
+            ) or "none reported",
+        )
+    else:
+        logger.info(
+            "PP slip staged in full: %d legs (ext v%s)", req.legs_total, req.version or "?"
+        )
+
+    if req.line_changes:
+        logger.warning(
+            "PP slip staged with %d changed line(s) — placed slip differs from the "
+            "backtested one: %s",
+            len(req.line_changes),
+            "; ".join(
+                f"{c.get('player')} {c.get('prop')} {c.get('want')}->{c.get('took')}"
+                for c in req.line_changes[:10]
+            ),
+        )
     return {"ok": True}
 
 

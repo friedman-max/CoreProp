@@ -100,7 +100,11 @@ _payload_cache: dict = {
 # the browser extension at app.prizepicks.com — no auth required.
 
 _pending_slips: dict = {}
-_PENDING_SLIP_TTL_SEC = 300.0
+# 15 minutes, not 5. The real flow between POST and the extension's GET can
+# include signing in to PrizePicks, a location check, and a DataDome challenge,
+# on top of a free-tier cold start on our side. A 5-minute window expired
+# mid-login and the user got "no pending slip" with no way to tell why.
+_PENDING_SLIP_TTL_SEC = 900.0
 
 
 # ── Per-user analytics cache ───────────────────────────────────────────
