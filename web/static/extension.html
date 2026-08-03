@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CoreProp — Browser extension</title>
+<style>
+  :root {
+    --bg: #0b1220; --panel: #0f172a; --line: #1e293b; --line2: #1e3a5f;
+    --fg: #e2e8f0; --muted: #94a3b8; --dim: #64748b;
+    --accent: #3da9f0; --warn: #f59e0b; --good: #22c55e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 680px; margin: 0 auto; padding: 48px 24px 80px; }
+  a { color: var(--accent); }
+  h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -.02em; }
+  .sub { color: var(--muted); margin: 0 0 32px; }
+  .status { display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+            border: 1px solid var(--line2); border-radius: 10px; background: var(--panel);
+            margin-bottom: 28px; font-size: 14px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); flex: none; }
+  .dot.on { background: var(--good); box-shadow: 0 0 0 4px rgba(34,197,94,.15); }
+  .dot.off { background: var(--warn); box-shadow: 0 0 0 4px rgba(245,158,11,.15); }
+  .dl { display: inline-block; background: var(--accent); color: #04121f; font-weight: 700;
+        text-decoration: none; padding: 11px 20px; border-radius: 9px; margin-bottom: 32px; }
+  ol { padding-left: 22px; }
+  li { margin-bottom: 14px; }
+  code { background: #0a1626; border: 1px solid var(--line); border-radius: 5px;
+         padding: 1px 6px; font-size: 13px; font-family: ui-monospace, SFMono-Regular, monospace; }
+  .note { border-left: 3px solid var(--line2); padding: 2px 0 2px 14px; color: var(--muted);
+          font-size: 14px; margin: 28px 0; }
+  h2 { font-size: 17px; margin: 36px 0 10px; }
+  .faq p { color: var(--muted); font-size: 14px; margin: 0 0 18px; }
+  .faq b { color: var(--fg); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CoreProp browser extension</h1>
+  <p class="sub">Stages a slip's legs on the PrizePicks board so you only have to enter your stake and submit.</p>
+
+  <div class="status">
+    <span class="dot" id="dot"></span>
+    <span id="statusText">Checking…</span>
+  </div>
+
+  <a class="dl" href="/static/coreprop-extension.zip" download>Download the extension (.zip)</a>
+
+  <h2>Install it</h2>
+  <ol>
+    <li>Unzip the download. You'll get a folder called <code>coreprop-extension</code>. Keep it somewhere permanent — Chrome loads it from this location every time it starts, so don't leave it in Downloads and delete it later.</li>
+    <li>Open <code>chrome://extensions</code> in a new tab.</li>
+    <li>Turn on <b>Developer mode</b> (toggle, top right).</li>
+    <li>Click <b>Load unpacked</b> and select the <code>coreprop-extension</code> folder.</li>
+    <li>Come back here and reload this page. The banner above should turn green.</li>
+  </ol>
+
+  <div class="note">
+    Developer mode is required because this extension isn't distributed through the Chrome Web Store.
+    Chrome will show a "Disable developer mode extensions" prompt each time it launches — dismissing it
+    is fine, the extension keeps working.
+  </div>
+
+  <h2>How to use it</h2>
+  <ol>
+    <li>Sign in to PrizePicks in the same browser, at least once.</li>
+    <li>On CoreProp's <b>Backtest</b> page, find a pending slip and click <b>Place on PrizePicks</b>.</li>
+    <li>A PrizePicks tab opens. A CoreProp panel appears bottom-left and works through the legs one at a time, ticking each one off as PrizePicks confirms it.</li>
+    <li>Check the entry type it tells you to set (Power or Flex), type your stake, and submit.</li>
+  </ol>
+
+  <div class="note">
+    The extension never enters a stake and never submits a wager. It only selects picks —
+    everything involving money stays with you.
+  </div>
+
+  <h2>If it doesn't work</h2>
+  <div class="faq">
+    <p><b>The panel says "Sign in to PrizePicks."</b> — You're signed out or PrizePicks is asking for a location check. Finish that, and staging continues automatically.</p>
+    <p><b>The panel says a security check is showing.</b> — PrizePicks runs bot protection that occasionally challenges a freshly opened tab. Complete it and press Retry; your slip is still saved.</p>
+    <p><b>A leg says "line moved".</b> — PrizePicks no longer offers the number your slip was logged at. The panel shows what's on the board now. Add it by hand if you still want it.</p>
+    <p><b>A leg says "N matching cards".</b> — Two cards on the board fit the same player, prop and line. CoreProp won't guess between them; add that one manually.</p>
+    <p><b>Nothing happens at all.</b> — Check the banner at the top of this page. If it's not green, Chrome didn't load the extension. Re-do <b>Load unpacked</b>, then reload.</p>
+  </div>
+</div>
+
+<script>
+// Mirrors the detection the Backtest page uses: the beacon content script sets
+// data-coreprop-ext on <html> and answers a postMessage ping.
+(function () {
+  var dot = document.getElementById('dot');
+  var txt = document.getElementById('statusText');
+  var found_ = false;
+
+  // A negative is never final — the beacon is a content script and can land
+  // after our timeout on a slow load. Only a positive latches, so a late
+  // "ready" still upgrades the banner instead of being ignored.
+  function show(found, version) {
+    if (found_) return;
+    found_ = !!found;
+    dot.className = 'dot ' + (found ? 'on' : 'off');
+    txt.innerHTML = found
+      ? 'Extension installed and active' + (version ? ' <span style="color:var(--dim)">(v' + version + ')</span>' : '')
+      : 'Extension not detected — follow the steps below';
+  }
+
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== window) return;
+    var d = ev.data;
+    if (d && d.source === 'coreprop-extension' && (d.type === 'pong' || d.type === 'ready')) show(true, d.version);
+  });
+  window.postMessage({ source: 'coreprop-page', type: 'ping' }, window.location.origin);
+
+  var iv = setInterval(function () {
+    var v = document.documentElement.dataset.corepropExt;
+    if (v) { clearInterval(iv); show(true, v); }
+  }, 200);
+  // Render the negative early so the install steps aren't hidden behind a
+  // spinner, but keep polling — the interval and the message listener both
+  // stay live and will upgrade to green whenever the extension shows up.
+  setTimeout(function () {
+    show(!!document.documentElement.dataset.corepropExt, document.documentElement.dataset.corepropExt);
+  }, 1500);
+})();
+</script>
+</body>
+</html>

@@ -130,7 +130,10 @@ function btMapSlip(s) {
     // column is game_start (see legs table); older rows without it show nothing.
     const gs = l.game_start || l.start_time || null;
     const gsDate = gs ? new Date(gs) : null;
-    const gameTime = gsDate && !isNaN(gsDate.getTime())
+    // Keep the raw epoch too: placement must be blocked once a game has
+    // started, and the formatted string can't be compared.
+    const gameStartMs = gsDate && !isNaN(gsDate.getTime()) ? gsDate.getTime() : null;
+    const gameTime = gameStartMs
       ? gsDate.toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })
       : "";
     return {
@@ -147,6 +150,7 @@ function btMapSlip(s) {
       result: btNormLegResult(l.result),
       actual,
       gameTime,
+      gameStartMs,
     };
   });
   const computed = btComputeSlipOutcome(s);
@@ -455,6 +459,61 @@ function StatCard({ label, sub, value, tone, loading }) {
   );
 }
 
+/**
+ * Is the CoreProp browser extension installed?
+ *
+ * Returns null while unknown, then true/false. The extension's beacon content
+ * script sets `data-coreprop-ext` on <html> and answers a postMessage ping;
+ * both are checked because a content script runs at document_idle, which can
+ * land after React has already mounted and read the attribute.
+ *
+ * Without this the Backtest page had no way to know, so it reported
+ * "Queued for extension ✓" to every user — including the overwhelming majority
+ * who have no extension and for whom the flow is: click, blank tab, silence.
+ */
+function btUseExtensionPresent() {
+  const [present, setPresent] = React.useState(
+    () => (document.documentElement.dataset.corepropExt ? true : null)
+  );
+
+  // Empty dep list on purpose. Keying the effect on `present` would re-arm the
+  // whole probe every time it resolved to false, i.e. a 1.2s polling loop for
+  // the entire session on any machine without the extension.
+  React.useEffect(() => {
+    // Only a positive latches: the beacon is a content script and can land
+    // after our timeout on a slow load, so a negative must stay revisable or
+    // an installed extension would be reported missing for the whole session.
+    let found = false;
+    const settle = (v) => {
+      if (found) return;
+      found = !!v;
+      setPresent(v);
+    };
+
+    const onMsg = (ev) => {
+      if (ev.source !== window) return;
+      const d = ev.data;
+      if (d && d.source === "coreprop-extension" && (d.type === "pong" || d.type === "ready")) settle(true);
+    };
+    window.addEventListener("message", onMsg);
+    window.postMessage({ source: "coreprop-page", type: "ping" }, window.location.origin);
+
+    const iv = setInterval(() => {
+      if (document.documentElement.dataset.corepropExt) settle(true);
+    }, 400);
+    // Answer "no" early so the install CTA appears promptly, but keep polling.
+    const to = setTimeout(() => settle(!!document.documentElement.dataset.corepropExt), 1200);
+
+    return () => {
+      window.removeEventListener("message", onMsg);
+      clearInterval(iv);
+      clearTimeout(to);
+    };
+  }, []);
+
+  return present;
+}
+
 function SlipCard({ slip, onDelete }) {
   // Status drives the entire card border + badge color:
   //   pending → yellow, hit → green, miss/loss → red, push/dnp → muted yellow
@@ -467,6 +526,16 @@ function SlipCard({ slip, onDelete }) {
   }[slip.result];
   const [placeState, setPlaceState] = React.useState("idle");
   const [placeErr, setPlaceErr] = React.useState(null);
+  const extPresent = btUseExtensionPresent();
+
+  // Placement gating. A settled slip's games are over, and a leg whose game has
+  // tipped off can't be taken any more — but the extension matches on
+  // player+prop+line with no date awareness, so a stale leg would happily stage
+  // a bet on TONIGHT's game at the same number, priced by a model run days ago.
+  const placeLegs = slip.bets || [];
+  const isSettled = slip.result !== "pending";
+  const hasStarted = placeLegs.some(b => b.gameStartMs != null && b.gameStartMs <= Date.now());
+  const canPlace = !isSettled && placeLegs.length >= 2 && !hasStarted;
 
   // Slip-level +EV%: expected return per 1u stake, in %.
   const evPct = React.useMemo(
@@ -480,7 +549,7 @@ function SlipCard({ slip, onDelete }) {
   //      Chrome extension's content script picks up the queued slip,
   //      builds it on PrizePicks via DOM automation, and clears the queue.
   const placeOnPP = async () => {
-    if (placeState !== "idle") return;
+    if (placeState === "sending") return;
     setPlaceState("sending");
     setPlaceErr(null);
     // Open the tab synchronously, before any await: Chrome's transient user
@@ -501,9 +570,13 @@ function SlipCard({ slip, onDelete }) {
         return {
           player: b.player,
           league: b.league,
+          // propName is PrizePicks' own stat_type verbatim (web/app.py sets
+          // prop_type=m.pp.stat_type), which is what lets the extension match
+          // the card's stat label directly instead of guessing.
           prop:   b.propName || b.prop,
           line:   b.line,
           side:   b.side === "O" ? "over" : "under",
+          game_start: b.gameStartMs != null ? new Date(b.gameStartMs).toISOString() : null,
         };
       });
       if (!legs.length) throw badLeg("Slip has no legs.");
@@ -515,10 +588,13 @@ function SlipCard({ slip, onDelete }) {
           n_legs:    legs.length,
         },
       });
-      // Pass the single-use token in the URL so the extension fetches back
-      // exactly this slip (not whatever another user queued most recently).
+      // Pass the single-use token so the extension fetches back exactly this
+      // slip (not whatever another user queued most recently). It goes in the
+      // FRAGMENT, not the query: a query string is transmitted to PrizePicks'
+      // own servers and lands in their access logs, and this token is the sole
+      // credential for reading and deleting the slip. Fragments are never sent.
       const ppUrl = res && res.token
-        ? "https://app.prizepicks.com/?cp_slip=" + encodeURIComponent(res.token)
+        ? "https://app.prizepicks.com/#cp_slip=" + encodeURIComponent(res.token)
         : "https://app.prizepicks.com/";
       if (!ppTab) {
         // Blocked popup: don't claim success, hand the user the link instead.
@@ -529,18 +605,20 @@ function SlipCard({ slip, onDelete }) {
       }
       ppTab.location.href = ppUrl;
       setPlaceState("queued");
-      setTimeout(() => setPlaceState(s => s === "queued" ? "idle" : s), 4000);
+      setTimeout(() => setPlaceState(s => s === "queued" ? "idle" : s), 6000);
     } catch (ex) {
       console.error("place failed:", ex);
       if (ppTab) ppTab.close();
+      // "error" must stay CLICKABLE. It previously fell under
+      // disabled={placeState !== "idle"}, and the 401 branch returned without
+      // scheduling a reset — leaving a greyed-out button labelled "Retry" that
+      // could never be clicked, recoverable only by reloading the page.
       setPlaceState("error");
       if (ex && ex.status === 401) {
-        // Persistent: retrying is pointless until the user signs back in.
-        setPlaceErr({ msg: "Session expired. Sign in again." });
+        setPlaceErr({ msg: "Session expired — sign in again, then retry." });
         return;
       }
       setPlaceErr({ msg: ex && ex.badLeg ? ex.message : "Couldn't reach CoreProp. Try again." });
-      setTimeout(() => setPlaceState(s => s === "error" ? "idle" : s), 3000);
     }
   };
 
@@ -607,20 +685,40 @@ function SlipCard({ slip, onDelete }) {
         })}
       </ul>
 
-      <button
-        type="button"
-        className={"bt-slip-place bt-slip-place-" + placeState}
-        onClick={placeOnPP}
-        disabled={placeState !== "idle"}
-        title="Send this slip's legs to the PrizePicks Chrome extension"
-      >
-        {placeState === "sending" ? "Sending to extension…"
-          : placeState === "queued" ? "Queued for extension ✓"
-          : placeState === "error" ? "Retry"
-          : "Place on PrizePicks"}
-      </button>
+      {/* A settled slip's games are over — no button at all. This also clears
+          the call-to-action off the majority of cards, where it was noise. */}
+      {!isSettled && (
+        hasStarted ? (
+          <button type="button" className="bt-slip-place" disabled
+            title="One or more games have already started">Game already started</button>
+        ) : extPresent === false ? (
+          <a className="bt-slip-place bt-slip-place-install" href="/extension" target="_blank" rel="noopener"
+             title="One-click placement needs the CoreProp browser extension">
+            Get the extension to place this
+          </a>
+        ) : (
+          <button
+            type="button"
+            className={"bt-slip-place bt-slip-place-" + placeState}
+            onClick={placeOnPP}
+            disabled={placeState === "sending" || placeState === "queued" || !canPlace}
+            title="Open PrizePicks and stage this slip's legs"
+          >
+            {placeState === "sending" ? "Sending…"
+              : placeState === "queued" ? `Opened PrizePicks — staging ${placeLegs.length} legs…`
+              : placeState === "error" ? "Retry"
+              : "Place on PrizePicks"}
+          </button>
+        )
+      )}
+      {placeState === "queued" && (
+        <div className="bt-place-note">
+          Watch the CoreProp panel in the PrizePicks tab — it reports each leg.
+          {slip.type && <> Set the entry to <b>{slip.type}</b> before you submit.</>}
+        </div>
+      )}
       {placeErr && (
-        <div className="bt-del-error">
+        <div className="bt-place-error">
           {placeErr.msg}
           {placeErr.url && (
             <> <a href={placeErr.url} target="_blank" rel="noopener">Open PrizePicks</a></>

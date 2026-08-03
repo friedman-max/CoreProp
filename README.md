@@ -91,7 +91,12 @@ built in CoreProp and constructs it on PrizePicks for you.
 │     ├─ landing.jsx         Marketing landing
 │     └─ pricing.jsx         Stripe checkout page
 │
-├─ coreprop-extension/       Chrome MV3 extension (PrizePicks auto-build)
+├─ coreprop-extension/       Chrome MV3 extension (stages slips on PrizePicks)
+│  ├─ pp-dom.js              ALL PrizePicks DOM knowledge lives here
+│  ├─ content.js             Staging flow control (runs on app.prizepicks.com)
+│  ├─ cp-beacon.js           Presence beacon (runs on CoreProp's own pages)
+│  └─ background.js          Service worker / network proxy
+├─ package-extension.sh      Builds web/static/coreprop-extension.zip (commit it)
 ├─ migrations/               Supabase schema
 │  ├─ schema.sql             Consolidated schema for a fresh project
 │  └─ migration_001 … 017.sql    Numbered migrations (history + source of truth)
@@ -208,10 +213,87 @@ Six tabs across the top:
 - `GET    /api/analytics` — full analytics payload (adds P&L timeline)
 
 ### PrizePicks extension
-- `POST   /api/pending-slip` — queue a slip for the extension (returns a token)
+- `GET    /extension` — install page (serves `web/static/coreprop-extension.zip`)
+- `POST   /api/pending-slip` — queue a slip for the extension (returns a token).
+  Rejects legs whose game has already started.
 - `GET    /api/pending-slip` — extension picks up the queued slip by token
-- `DELETE /api/pending-slip` — extension clears it after building
+- `DELETE /api/pending-slip` — extension clears it, only on a **full** success,
+  so a partial run stays retryable
+- `POST   /api/pending-slip/status` — extension reports legs staged + per-leg failures
 - `POST   /api/check-pp-availability` — verify legs are live on PrizePicks
+  (not currently called by the frontend)
+
+The token travels to PrizePicks in the URL **fragment**, never the query string —
+a query is transmitted to PP's servers and lands in their logs, and that token
+alone authorises reading and deleting the slip.
+
+**Packaging.** Run `./package-extension.sh` after any change under
+`coreprop-extension/`. It rebuilds `web/static/coreprop-extension.zip`, which is
+committed (Render's build env is pip-only and can't produce it). The install page
+serves that zip for a Developer-Mode "Load unpacked" install. Because the
+extension isn't on the Chrome Web Store its ID differs per machine, so presence
+detection uses a content-script beacon — `cp-beacon.js` sets `data-coreprop-ext`
+on `<html>` and answers a `postMessage` ping — rather than `externally_connectable`,
+which would require a stable ID.
+
+**Extension layout.** `pp-dom.js` holds every assumption about PrizePicks'
+markup (its selectors were read out of PP's production bundle: `#test-projection-li`,
+`#test-player-name`, `#test-more`/`#test-less`, `#test-projection-swap`), so a PP
+redesign is a one-file fix. `content.js` is flow control only. It never submits a
+wager and never touches the stake field, and it counts a leg as staged only after
+reading PP's own selected-state back off the button.
+
+**Opening PP's search is a two-step dance.** `#pp-search-bar` ships with Tailwind's
+`!hidden` (`display:none !important`) whenever `isSearching` is false, and the
+input cannot open itself — focusing a hidden element does nothing. The only thing
+that flips `isSearching` is a magnifier `<button>` in the
+`.pp-search-filter` / `.pp-search-filter-desktop` strip, which lives in
+`nav.stat-navigation` **outside** `#pp-search-bar`. Miss that click and every
+player lookup silently finds nothing.
+
+Its sibling — the games filter — has a byte-identical className, so
+`ppFindSearchToggle()` discriminates on icon size (search `svg width="22"`, filter
+`19`) then DOM order, and only considers visible containers (the toggle is
+rendered twice, once per breakpoint). PP also debounces the field **500ms** before
+dispatching the query, and clicking any stat or league tab cancels `isSearching`
+and re-hides the bar — so visibility is re-checked on every leg.
+
+**Reading a card is structural, not textual.** PP renders the line and the stat
+label together (bundle module 70031): a `.heading-md` container holding the line
+score, followed by a sibling span holding the label. `pp-dom.js` anchors on
+`.heading-md` and walks to that sibling. It must not infer either from loose
+card text — the previous "longest text leaf" heuristic returned the card's
+**start time** ("7:05 PM", 7 chars) as the stat name whenever the real label was
+shorter (`Ks`, `TB`, `PRA`), so almost every card was skipped despite being
+visible. Combo labels must be read via `textContent`: PP splits them on `+` into
+separate fragments, so the leaves of `Pts+Rebs+Asts` are `Pts`, `+Rebs`, `+Asts`.
+
+**Prop names differ between the API and the board.** A projection carries both
+`stat_type` (what CoreProp stores on a leg) and `stat_display_name` (what the
+card prints), and the card renders `stat_display_name || stat_type`. 19 of 95
+live markets differ — `Pitcher Strikeouts`→`Ks`, `Total Bases`→`TB`,
+`Pts+Rebs+Asts`→`PRA`, `3-PT Made`→`3PTM`, `Receptions`→`Recs`. `STAT_ALIASES`
+in `content.js` is **generated, not hand-written**; regenerate after PP adds
+markets with:
+
+    python3 tests/extension/regen-stat-aliases.py
+
+**How a leg is staged.** Per leg: confirm the active sport tab (PP's search is
+league-scoped, so a WNBA player searched under NBA finds nothing) → open the
+search bar → type the player's name → then `huntLeg()` scrolls the filtered
+results until two
+consecutive passes reveal no new cards, deduping by identity because the board is
+virtualized and a card is a fresh DOM node each time it re-enters view. Only once
+the set is exhausted is a miss declared. Anything holding a card element across a
+scroll or a swap must re-resolve it — a detached node keeps answering with stale
+content, which is how alternate lines previously looked like they didn't exist.
+
+Alternate lines hidden behind `#test-projection-swap` are cycled before giving up.
+If the exact line is genuinely gone, a **strictly better standard** line is taken
+and flagged (`⚠ took 26.5 instead of 27.5`) — better meaning easier for that side,
+bounded by `max(1.0, 5% of line)` so a far-off number can't masquerade as an
+upgrade. Goblins and demons are never substituted: their payout multiplier differs
+from the standard table the slip's EV was computed against. Budget is ~8s/leg.
 
 ### User and config
 - `GET  /api/auth/me` · `GET /api/auth/check-username`

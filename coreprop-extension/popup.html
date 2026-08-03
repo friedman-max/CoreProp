@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 260px; margin: 0; padding: 14px 16px; background: #0f172a; color: #e2e8f0;
+         font: 13px/1.5 system-ui, -apple-system, sans-serif; }
+  h1 { font-size: 14px; color: #3da9f0; margin: 0 0 10px; }
+  .row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0;
+         border-bottom: 1px solid #1e293b; }
+  .k { color: #64748b; }
+  .v { font-variant-numeric: tabular-nums; }
+  .note { margin-top: 10px; font-size: 11px; color: #64748b; }
+  .fail { color: #f87171; font-size: 11px; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <h1>CoreProp Slip Builder</h1>
+  <div class="row"><span class="k">Version</span><span class="v" id="ver">—</span></div>
+  <div class="row"><span class="k">Last run</span><span class="v" id="last">never</span></div>
+  <div id="fails"></div>
+  <p class="note">Open a slip from CoreProp's Backtest page to stage it here.
+     This extension never submits a wager — you enter the stake and submit.</p>
+  <script src="popup.js"></script>
+</body>
+</html>
