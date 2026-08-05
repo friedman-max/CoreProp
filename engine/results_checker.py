@@ -16,22 +16,36 @@ from engine.database import get_db
 
 logger = logging.getLogger(__name__)
 
+# ESPN host.
+#
+# `site.api.espn.com` began returning 403 to every request regardless of
+# User-Agent (verified 2026-08-05: bare UA, full Chrome UA, Accept/Referer
+# headers and no-UA all 403). `site.web.api.espn.com` serves the identical
+# paths and payloads and still answers 200 — it is the host ESPN's own web
+# client uses, and the one this file's gamelog fallback already pointed at.
+#
+# This outage is what produced a wall of false DNPs: every stat lookup failed,
+# and the grader could not tell "player didn't play" from "I couldn't reach
+# ESPN". The host change fixes the symptom; the fail-closed guard in
+# check_and_update_results() fixes the class of bug.
+ESPN_HOST = "https://site.web.api.espn.com"
+
 # ESPN scoreboard (for game IDs by date)
 ESPN_SCOREBOARD = {
-    "NBA":   "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
-    "WNBA":  "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard",
-    "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard",
-    "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard",
-    "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
+    "NBA":   f"{ESPN_HOST}/apis/site/v2/sports/basketball/nba/scoreboard",
+    "WNBA":  f"{ESPN_HOST}/apis/site/v2/sports/basketball/wnba/scoreboard",
+    "NCAAB": f"{ESPN_HOST}/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard",
+    "MLB":   f"{ESPN_HOST}/apis/site/v2/sports/baseball/mlb/scoreboard",
+    "NHL":   f"{ESPN_HOST}/apis/site/v2/sports/hockey/nhl/scoreboard",
 }
 
 # ESPN event summary (for box scores)
 ESPN_SUMMARY = {
-    "NBA":   "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary",
-    "WNBA":  "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/summary",
-    "NCAAB": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/summary",
-    "MLB":   "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary",
-    "NHL":   "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary",
+    "NBA":   f"{ESPN_HOST}/apis/site/v2/sports/basketball/nba/summary",
+    "WNBA":  f"{ESPN_HOST}/apis/site/v2/sports/basketball/wnba/summary",
+    "NCAAB": f"{ESPN_HOST}/apis/site/v2/sports/basketball/mens-college-basketball/summary",
+    "MLB":   f"{ESPN_HOST}/apis/site/v2/sports/baseball/mlb/summary",
+    "NHL":   f"{ESPN_HOST}/apis/site/v2/sports/hockey/nhl/summary",
 }
 
 # Conservative estimate of how long after game_start a result can be fetched
@@ -122,12 +136,24 @@ class ESPNResultsChecker:
 
     def __init__(self):
         self._session = _requests.Session()
-        self._session.headers["User-Agent"] = "Mozilla/5.0"
+        self._session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.espn.com/",
+        })
         # (league, date_str) → {player_name_lower: stats_dict}
         self._cache: dict[tuple, dict] = {}
         # (league_lower, player_name_lower) → stats_dict (closest to target time)
         self._gamelog_cache: dict[tuple, dict] = {}
         self._event_cache: dict[tuple, list] = {}
+        # (league, date_str) whose scoreboard fetch FAILED this run. Legs whose
+        # window touches one of these are never graded DNP — we have no evidence
+        # either way, so they stay pending for the next cycle.
+        self._fetch_failed: set[tuple] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -231,6 +257,21 @@ class ESPNResultsChecker:
                 # Alternatively, if ESPN marks the matching games as completed.
                 hours_since_end = (now_utc - likely_end).total_seconds() / 3600
                 is_completed = self._is_game_over(league, gs)
+
+                # Never call DNP on a leg we simply could not look up. Absence
+                # of evidence is not evidence of absence: when ESPN is
+                # unreachable every stat lookup returns None, and the
+                # `hours_since_end >= 6` fallback below would then mark an
+                # entire slate as DNP — which is exactly what happened on
+                # 2026-08-04/05 (305 legs, every one of them wrong, all
+                # silently pushed to a 1.0x payout).
+                if self._window_fetch_failed(league, gs):
+                    logger.warning(
+                        "ResultsChecker: leaving %s (%s) PENDING — could not reach "
+                        "the stats source for its game window",
+                        player_name, prop_type,
+                    )
+                    continue
 
                 if is_completed or hours_since_end >= 6:
                     try:
@@ -439,6 +480,18 @@ class ESPNResultsChecker:
                 )
             raise
 
+    def _window_fetch_failed(self, league: str, game_start: datetime) -> bool:
+        """Did either date in this leg's lookup window fail to fetch?
+
+        Mirrors the two-day window `_get_player_stats` searches. If either date
+        errored we have no idea whether the player appeared, so the caller must
+        leave the leg pending rather than guessing DNP.
+        """
+        date_utc = game_start.strftime("%Y%m%d")
+        date_prev = (game_start - timedelta(days=1)).strftime("%Y%m%d")
+        return ((league, date_utc) in self._fetch_failed
+                or (league, date_prev) in self._fetch_failed)
+
     def _get_player_stats(
         self, league: str, game_start: datetime, player_name: str
     ) -> Optional[dict]:
@@ -507,10 +560,15 @@ class ESPNResultsChecker:
             events = r.json().get("events", [])
             self._event_cache[(league, date_str)] = events
         except Exception as exc:
+            # Record the failure. An empty return is indistinguishable from
+            # "this date had no games", and conflating the two is what let an
+            # ESPN outage grade every leg as DNP.
+            self._fetch_failed.add((league, date_str))
             logger.warning(
                 "ResultsChecker: scoreboard error %s/%s: %s", league, date_str, exc
             )
             return {}
+        self._fetch_failed.discard((league, date_str))
 
         all_stats: dict = {}
         for event in events:
@@ -762,7 +820,7 @@ class ESPNResultsChecker:
         if cache_key in self._gamelog_cache:
             return self._gamelog_cache[cache_key]
             
-        search_url = "https://site.api.espn.com/apis/search/v2"
+        search_url = f"{ESPN_HOST}/apis/search/v2"
         try:
             r = self._session.get(search_url, params={"query": player_name, "limit": 3}, timeout=15)
             r.raise_for_status()
@@ -807,7 +865,7 @@ class ESPNResultsChecker:
             self._gamelog_cache[cache_key] = None
             return None
             
-        gl_url = f"https://site.web.api.espn.com/apis/common/v3/sports/{league_path}/athletes/{athlete_id}/gamelog"
+        gl_url = f"{ESPN_HOST}/apis/common/v3/sports/{league_path}/athletes/{athlete_id}/gamelog"
         try:
             r2 = self._session.get(gl_url, timeout=15)
             r2.raise_for_status()
