@@ -387,6 +387,30 @@ begin
     raise warning 'converge: could not create public.strategy_performance_compare: %', sqlerrm;
   end;
 
+  -- landing_events — migration_021. Landing-minigame funnel telemetry,
+  -- service-role only (the events arrive at an unauthenticated endpoint, so
+  -- the browser must never write here directly with the published anon key).
+  begin
+    if to_regclass('public.landing_events') is null then
+      execute $ddl$
+        create table if not exists public.landing_events (
+          id        uuid        primary key default gen_random_uuid(),
+          ts        timestamptz default now(),
+          event     text        not null,
+          day_index int,
+          pick_id   text,
+          meta      jsonb       default '{}'::jsonb
+        )
+      $ddl$;
+      raise notice 'converge: created public.landing_events';
+      n_created := n_created + 1;
+    else
+      n_present := n_present + 1;
+    end if;
+  exception when others then
+    raise warning 'converge: could not create public.landing_events: %', sqlerrm;
+  end;
+
   raise notice 'converge tables: % created, % already present', n_created, n_present;
 end $converge$;
 
@@ -612,7 +636,9 @@ begin
         ('idx_legs_closing_captured',       'legs',               '(closing_captured_at) where closing_captured_at is not null', false),
         -- migration_013
         ('idx_strategy_perf_scoped_at',     'strategy_performance_compare', '(scoped_at desc)', false),
-        ('idx_strategy_perf_branch_scoped', 'strategy_performance_compare', '(branch, scoped_at desc)', false)
+        ('idx_strategy_perf_branch_scoped', 'strategy_performance_compare', '(branch, scoped_at desc)', false),
+        -- migration_021
+        ('idx_landing_events_day_event',    'landing_events',     '(day_index, event)', false)
       ) as v(idx, tbl, cols, uniq)
   loop
     if to_regclass('public.' || r.tbl) is null then
@@ -662,7 +688,8 @@ begin
     'market_observatory',
     'calibration_cells',
     'calibration_history',
-    'strategy_performance_compare'
+    'strategy_performance_compare',
+    'landing_events'
   ] loop
     -- Schema-qualified on purpose: an unqualified to_regclass() resolves via
     -- search_path, and a missing `public` would make every table look absent.
@@ -767,7 +794,8 @@ begin
     'app_state_cache',
     'calibration_cells',
     'calibration_history',
-    'strategy_performance_compare'
+    'strategy_performance_compare',
+    'landing_events'
   ] loop
     if to_regclass('public.' || t) is null then
       raise notice 'converge grants: skipping % — table absent', t;
@@ -872,7 +900,8 @@ declare
   r              record;
   expected       text[] := array[
     'slips', 'legs', 'app_state_cache', 'user_config', 'market_observatory',
-    'calibration_cells', 'calibration_history', 'strategy_performance_compare'
+    'calibration_cells', 'calibration_history', 'strategy_performance_compare',
+    'landing_events'
   ];
   missing_tables text[] := '{}';
   no_rls         text[] := '{}';
@@ -1025,7 +1054,8 @@ begin
     'legs_user_dedup_key_unique', 'idx_observatory_first_seen_at',
     'idx_observatory_last_seen_at', 'idx_user_config_stripe_customer',
     'idx_cal_cells_w_cell', 'idx_cal_history_recent', 'idx_legs_closing_captured',
-    'idx_strategy_perf_scoped_at', 'idx_strategy_perf_branch_scoped'
+    'idx_strategy_perf_scoped_at', 'idx_strategy_perf_branch_scoped',
+    'idx_landing_events_day_event'
   ] loop
     if not exists (
       select 1 from pg_indexes where schemaname = 'public' and indexname = t
@@ -1040,7 +1070,7 @@ begin
       array_to_string(missing_idx, ', ');
     problems := problems + array_length(missing_idx, 1);
   else
-    raise notice 'indexes: all 19 expected indexes present';
+    raise notice 'indexes: all 20 expected indexes present';
   end if;
 
   -- ── constraints ────────────────────────────────────────────────────────────

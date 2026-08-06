@@ -105,6 +105,12 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
             # PrizePicks' ≥2-distinct-teams-per-slip rule downstream.
             player_map:      dict[str, str] = {}
             player_team_map: dict[str, str] = {}
+            # player_id → (position, image_url). Card metadata for the landing
+            # minigame (web/minigame.py). image_url is kept verbatim: it is a
+            # real headshot only ~23% of the time (WNBA 76%, MLB 61%, NFL 0% —
+            # NFL points at team logos under /images/teams/), and telling the
+            # two apart is the consumer's job, not the scraper's.
+            player_meta_map: dict[str, tuple[str, str]] = {}
             for item in included:
                 itype = item.get("type")
                 if itype == "new_player":
@@ -116,6 +122,10 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
                         team = (attrs.get("team") or "").strip()
                         if team:
                             player_team_map[pid] = team
+                        player_meta_map[pid] = (
+                            (attrs.get("position") or "").strip(),
+                            (attrs.get("image_url") or "").strip(),
+                        )
 
             for proj in projections:
                 if proj.get("type") != "projection":
@@ -168,6 +178,14 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
                 # the "actual == line" case, so the only thing we need to do
                 # here is stop fabricating offset half-lines that don't exist
                 # on the actual board (and don't match book lines either).
+                position, image_url = player_meta_map.get(player_id, ("", ""))
+                # trending_count is PP's popularity counter for the projection.
+                # It can arrive as None/str; coerce defensively to int 0 so the
+                # minigame's ranking never has to branch on type.
+                try:
+                    trending_count = int(attrs.get("trending_count") or 0)
+                except (ValueError, TypeError):
+                    trending_count = 0
                 all_lines.append(
                     PrizePickLine(
                         league=league_name,
@@ -179,6 +197,14 @@ def scrape_prizepicks(active_leagues: dict | None = None) -> list[PrizePickLine]
                         side="both",
                         team=player_team_map.get(player_id, ""),
                         odds_type=odds_type,
+                        # `description` on a player projection is the opponent
+                        # team abbreviation ("LVA"), not prose — that's why it
+                        # doubles as the player-name fallback above only when
+                        # the player lookup misses entirely.
+                        opponent=(attrs.get("description") or "").strip(),
+                        position=position,
+                        image_url=image_url,
+                        trending_count=trending_count,
                     )
                 )
 

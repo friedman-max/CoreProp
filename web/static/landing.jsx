@@ -15,50 +15,12 @@
 // If you want a performance stat on this page, wire it to settled
 // market_observatory rows first. Do not type a number in.
 
-// The sample line in the hero panel. Illustrative prices, not a live quote —
-// the panel says so in four words rather than a sentence of hedging.
-const LP_EXAMPLE = {
-  player: "Cale Makar",
-  league: "NHL",
-  prop: "Assists",
-  line: 0.5,
-  side: "OVER",
-  // Both sides of one market at two books. Two-sided is the point: the vig only
-  // becomes visible when you add the two prices' implied probabilities and get
-  // more than 100%. The old panel showed one side at two books, which meant the
-  // "strips the vig" claim had nothing on screen backing it up.
-  books: [
-    { book: "FanDuel",    over: -138, under: +114 },
-    { book: "DraftKings", over: -145, under: +120 },
-  ],
-};
-
-// Every figure the panel prints, computed from LP_EXAMPLE.books so the panel can
-// never drift from its own arithmetic. Mirrors engine/devig.py: American ->
-// implied, then the multiplicative devig (each side divided by the book's
-// overround), then the cross-book mean.
-const LP_EXAMPLE_MATH = (() => {
-  const implied = (american) =>
-    american < 0 ? -american / (-american + 100) : 100 / (american + 100);
-  const rows = LP_EXAMPLE.books.map(({ book, over, under }) => {
-    const io = implied(over), iu = implied(under);
-    const total = io + iu;                 // > 1; the excess IS the vig
-    return {
-      book, over, under,
-      overPct:  io * 100,                  // what the posted OVER price implies
-      underPct: iu * 100,                  // ...and the UNDER
-      totalPct: total * 100,               // > 100 by the book's margin
-      vigPct:   (total - 1) * 100,
-      fairPct:  (io / total) * 100,         // margin removed, sides normalized
-    };
-  });
-  const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
-  return {
-    rows,
-    fairPct: mean(rows.map((r) => r.fairPct)),
-    vigPct:  mean(rows.map((r) => r.vigPct)),
-  };
-})();
+// The static worked example (LP_EXAMPLE / LP_EXAMPLE_MATH / ExampleCard) that
+// used to fill the hero is gone: the hero is now the daily line challenge, a
+// playable card fed by GET /api/public/daily-pick, whose reveal shows the same
+// devig receipt on a LIVE market instead of a canned one. The ground rule
+// didn't move — the game renders no probability, price, count or line that
+// didn't arrive from the API in the same session.
 
 // Per-leg break-even for a 6-leg Power slip, DERIVED from the payout table the
 // way ev-page.jsx does rather than hardcoded. The previous version printed
@@ -88,110 +50,682 @@ function Landing({ onLogin, onStart }) {
 }
 
 // ───────── Hero ─────────
+// The hero IS the minigame now: compressed one-line headline + subline (same
+// honest copy as before — no new claims), the daily line challenge centered
+// under it, and the pricing CTA kept visible beside the game. If
+// /api/public/daily-pick fails or comes back empty, the section renders the
+// plain headline + CTA hero and no game — anything the server can't answer,
+// the page omits rather than guesses.
 function Hero({ onLogin, onStart, cov }) {
   const sources = cov ? `${cov.books.length} ${cov.books_noun}` : null;
+  // undefined = still loading (plain hero; the game slots in when the payload
+  // lands), null = failed or zero picks (plain hero for the session).
+  const [daily, setDaily] = React.useState(undefined);
+  // Reused by LineChallenge when a reveal 404s: the board the visitor holds
+  // may no longer exist server-side (tab open across the 8am ET boundary, or
+  // the Render-wake unfrozen board replaced by the real freeze). Refetching
+  // swaps the live board in instead of leaving a dead retry loop. A refresh
+  // failure keeps whatever board is showing — never downgrade to null here.
+  const fetchDaily = React.useCallback((isRefresh) => {
+    fetch("/api/public/daily-pick")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const next = d && Array.isArray(d.picks) && d.picks.length > 0 ? d : null;
+        if (next || !isRefresh) setDaily(next);
+      })
+      .catch(() => { if (!isRefresh) setDaily(null); });
+  }, []);
+  React.useEffect(() => { fetchDaily(false); }, [fetchDaily]);
   return (
     <section className="lp-hero">
-      <div className="lp-hero-inner">
-        <div className="lp-hero-l">
-          <h1 className="lp-h1">
-            PrizePicks lines, priced against the sportsbooks.
-          </h1>
-          <p className="lp-sub">
-            The books set a price on the same player props PrizePicks offers, and
-            that price carries their margin. CoreProp takes it out and shows you
-            what {sources || "the market"} actually think each line is worth.
-          </p>
-          <div className="lp-cta-row">
-            <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>
-              See pricing
-            </button>
-            <button className="cp-btn cp-btn-ghost cp-btn-lg" onClick={onLogin}>
-              Log in
-            </button>
-          </div>
-        </div>
-        <div className="lp-hero-r">
-          <ExampleCard />
-        </div>
+      <div className="lp-hero-hd">
+        <h1 className="lp-h1">
+          PrizePicks lines, priced against the sportsbooks.
+        </h1>
+        <p className="lp-sub">
+          The books set a price on the same player props PrizePicks offers, and
+          that price carries their margin. CoreProp takes it out and shows you
+          what {sources || "the market"} actually think each line is worth.
+        </p>
+      </div>
+      {daily ? (
+        <LineChallenge
+          // Keyed by board identity so a swapped-in board (same day_index,
+          // different picks after a re-freeze) remounts the game with state
+          // re-seeded from localStorage against the NEW pick ids.
+          key={daily.day_index + ":" + daily.picks.map((p) => p.id).join(".")}
+          daily={daily}
+          cov={cov}
+          onStart={onStart}
+          onRefresh={() => fetchDaily(true)}
+        />
+      ) : null}
+      <div className="lp-cta-row lp-center">
+        <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={onStart}>
+          See pricing
+        </button>
+        <button className="cp-btn cp-btn-ghost cp-btn-lg" onClick={onLogin}>
+          Log in
+        </button>
       </div>
     </section>
   );
 }
 
-// The hero panel: one line, and where the book's margin hides.
+// ───────── Daily line challenge ─────────
 //
-// Replaces a 3-column table of book / price / implied %, which asked the reader
-// to do the comparison in their head. The rebuild shows the actual textbook
-// demonstration of vig: stack both sides of each market as one bar, and it runs
-// PAST the 100% marker. The overhang is the margin — visible without reading a
-// figure, and the reason the posted price isn't the real probability.
-function ExampleCard() {
-  const p = LP_EXAMPLE;
-  const m = LP_EXAMPLE_MATH;
-  // The 100% gridline sits at a fixed fraction of the track so the overhang has
-  // room to show. Scaled off the widest total, not hardcoded, so a wider market
-  // can't overflow its bar.
-  const scale = Math.max(...m.rows.map((r) => r.totalPct)) * 1.02;
-  const hundredAt = (100 / scale) * 100;
-  return (
-    <figure className="lp-ex">
-      <header className="lp-ex-hd">
-        <div className="lp-ex-line">
-          <LeaguePill league={p.league} />
-          <span className="lp-ex-player">{p.player}</span>
-        </div>
-        <div className="lp-ex-bet">
-          <span className="lp-ex-side">{p.side}</span>
-          <span className="lp-ex-num mono">{p.line}</span>
-          <span className="lp-ex-prop">{p.prop}</span>
-        </div>
-      </header>
+// Frozen API contract (the backend builds to the same document):
+//   GET  /api/public/daily-pick            -> { day_index, picks: [...] }
+//        No probabilities, no favored side, no book odds — the answer must not
+//        be readable in the Network tab before the visitor commits to a side.
+//   GET  /api/public/daily-pick/reveal?id= -> { id, favored, p_more, p_less,
+//        vig_pct, books: [{ book, side, american }] }
+//        p_more/p_less/vig_pct are computed server-side FROM exactly that
+//        books array, so the on-screen receipt is re-derivable by a reader.
+//   POST /api/public/event                 -> 204, fire-and-forget analytics.
+//
+// Same ground rule as the rest of this file, enforced by
+// tests/api_tests/test_landing_claims.py: every number the game renders —
+// lines, trending counts, probabilities, book prices, vig — arrived from one
+// of those responses at runtime. Nothing is typed into JSX.
 
-      <div className="lp-ex-bars">
-        <div className="lp-ex-scale">
-          <span className="lp-ex-100" style={{ left: `${hundredAt}%` }}>100%</span>
+const LP_GAME_LS = "coreprop:minigame";
+
+// Fire-and-forget analytics. sendBeacon survives the navigation that
+// cta_clicked immediately triggers; the fetch fallback sets keepalive for the
+// same reason. Analytics must never break the game, hence the broad try.
+function lpEvent(event, dayIndex, pickId, meta) {
+  try {
+    const body = JSON.stringify({
+      event,
+      day_index: dayIndex,
+      ...(pickId ? { pick_id: pickId } : {}),
+      ...(meta ? { meta } : {}),
+    });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon("/api/public/event", new Blob([body], { type: "application/json" }));
+    } else {
+      fetch("/api/public/event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        keepalive: true,
+      }).catch(() => {});
+    }
+  } catch (e) { /* never surface */ }
+}
+
+// localStorage: { day_index, plays: [{ id, side, correct }], dismissed }. A
+// different day_index resets the game — the key stores exactly one day's
+// state. Restored plays are intersected with the CURRENT board's pick ids:
+// the same day_index can serve two boards (the Render-wake unfrozen board vs
+// the blob frozen minutes later), and counting foreign plays would flip a
+// visitor straight to the paywall with dots painted on picks they never saw.
+function lpLoadPlays(dayIndex, picks) {
+  try {
+    const s = JSON.parse(localStorage.getItem(LP_GAME_LS) || "null");
+    if (!s || s.day_index !== dayIndex || !Array.isArray(s.plays)) return [];
+    const ids = new Set((picks || []).map((p) => p.id));
+    return s.plays.filter((p) => p && p.id && p.side && ids.has(p.id));
+  } catch (e) { return []; }
+}
+function lpLoadDismissed(dayIndex) {
+  try {
+    const s = JSON.parse(localStorage.getItem(LP_GAME_LS) || "null");
+    return !!(s && s.day_index === dayIndex && s.dismissed);
+  } catch (e) { return false; }
+}
+// Patch-style writer so plays and dismissed don't clobber each other; a
+// different stored day is discarded wholesale (same reset semantics as load).
+function lpSaveState(dayIndex, patch) {
+  try {
+    let s = JSON.parse(localStorage.getItem(LP_GAME_LS) || "null");
+    if (!s || s.day_index !== dayIndex || !Array.isArray(s.plays)) s = { day_index: dayIndex, plays: [] };
+    localStorage.setItem(LP_GAME_LS, JSON.stringify({ ...s, ...patch }));
+  } catch (e) { /* private mode: the game still works, it just won't persist */ }
+}
+
+// Checked at fire time, not mount time, so an OS-level toggle mid-session is
+// honoured. The CSS side of the same setting lives in index.html (.lp-game
+// block, reduced-motion re-grant).
+function lpReducedMotion() {
+  return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
+// trending_count -> the compact form the PP card uses ("7013" -> "7.0K").
+// Non-positive returns null so the flame hides (the backend defaults sparse
+// boards to 0, and PP itself shows no flame without a count — a flame with a
+// literal "0" beside it would be worse than no flame).
+function lpTrending(n) {
+  if (typeof n !== "number" || !isFinite(n) || n <= 0) return null;
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+}
+
+// game_start (ISO-8601 UTC) -> "Thu 7:00pm" in America/New_York, the wall
+// clock the card's audience reads schedules in.
+function lpGameTime(iso) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "short",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).formatToParts(new Date(iso));
+    const get = (t) => (parts.find((p) => p.type === t) || {}).value || "";
+    return `${get("weekday")} ${get("hour")}:${get("minute")}${get("dayPeriod").toLowerCase()}`;
+  } catch (e) { return ""; }
+}
+
+function lpAmerican(n) { return n > 0 ? `+${n}` : String(n); }
+
+// PrizePicks' exact more/less arrow (26x26, round-cap 2px stem + chevron
+// head). This path IS the down arrow; the up arrow is the same path rotated
+// 180deg, which is how PP renders theirs too.
+const LP_ARROW_D = "M11.9223 17.5426L11.9223 5.83687C11.9223 5.28811 12.3671 4.84326 12.9159 4.84326C13.4646 4.84326 13.9095 5.28811 13.9095 5.83687L13.9095 17.5426L18.9472 13.2216C19.3548 12.872 19.9674 12.9138 20.3238 13.3154C20.6888 13.7267 20.6459 14.3573 20.2284 14.7154L13.8842 20.157C13.3271 20.6349 12.5047 20.6349 11.9476 20.157L5.60333 14.7154C5.18591 14.3573 5.14296 13.7267 5.50798 13.3154C5.86439 12.9138 6.47698 12.872 6.88456 13.2216L11.9223 17.5426Z";
+function LpArrow({ dir }) {
+  return (
+    <svg
+      viewBox="0 0 26 26" width="26" height="26" fill="currentColor" aria-hidden="true"
+      style={dir === "up" ? { transform: "rotate(180deg)" } : undefined}
+    >
+      <path d={LP_ARROW_D} />
+    </svg>
+  );
+}
+
+// The win-burst mascot, drawn once and kept isolated so it can be swapped for
+// different art without touching the particle physics: a bright-green sphere
+// (two overlapping circles fake the radial shading), two up-and-out horns,
+// arched closed eyes, small smirk. Returns markup — the FX layer sets it as
+// innerHTML on throwaway particles.
+function goblinSVG(size) {
+  return (
+    `<svg width="${size}" height="${size}" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">` +
+    `<path d="M8.5 8.5 L3.5 1.5 L11.5 5.5 Z" fill="#5CA806"/>` +
+    `<path d="M23.5 8.5 L28.5 1.5 L20.5 5.5 Z" fill="#5CA806"/>` +
+    `<circle cx="16" cy="17.5" r="12" fill="#78D808"/>` +
+    `<circle cx="12.5" cy="14" r="8" fill="#93E82B" opacity=".55"/>` +
+    `<path d="M9.5 15.5 Q12 12.8 14.5 15.5" stroke="#123300" stroke-width="1.8" fill="none" stroke-linecap="round"/>` +
+    `<path d="M17.5 15.5 Q20 12.8 22.5 15.5" stroke="#123300" stroke-width="1.8" fill="none" stroke-linecap="round"/>` +
+    `<path d="M12.5 21.5 Q16.5 24.5 20.5 20.8" stroke="#123300" stroke-width="1.8" fill="none" stroke-linecap="round"/>` +
+    `</svg>`
+  );
+}
+
+function lpXSVG(size) {
+  return (
+    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">` +
+    `<path d="M5 5 L19 19 M19 5 L5 19" stroke="#FF4A4A" stroke-width="4" stroke-linecap="round"/>` +
+    `</svg>`
+  );
+}
+
+// Shared particle-arc helper: WAAPI keyframes for a launch at (vx, vy) px/s
+// under gravity, fading over the last 30%.
+function lpArcKeyframes(vx, vy, durMs, spinDeg) {
+  const g = 980;
+  return [0, 0.33, 0.66, 1].map((k) => {
+    const t = (durMs / 1000) * k;
+    return {
+      offset: k,
+      transform: `translate(${vx * t}px, ${vy * t + 0.5 * g * t * t}px) rotate(${spinDeg * k}deg)`,
+      opacity: k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3,
+    };
+  });
+}
+
+function lpMakeOverlay(hostEl) {
+  const overlay = document.createElement("div");
+  overlay.className = "lp-game-fx";
+  overlay.setAttribute("aria-hidden", "true");
+  hostEl.appendChild(overlay);
+  return overlay;
+}
+
+// WIN: card pop, radial flash from the tapped button, 44-particle burst on
+// gravity arcs (18 goblin sprites + 26 confetti rects — the mix is the
+// intended read of the "~44-particle goblin burst" spec; don't "fix" the
+// i % 5 ratio), floating "+EV" chips. All hand-rolled WAAPI —
+// no libraries, no new script tags (the page deliberately ships exactly three
+// third-party scripts). Skipped entirely under prefers-reduced-motion.
+function lpWinFx(hostEl, btnEl) {
+  if (lpReducedMotion() || !hostEl || !hostEl.animate) return;
+  const card = hostEl.querySelector(".lp-game-card");
+  if (card) {
+    card.animate(
+      [{ transform: "scale(1)" }, { transform: "scale(1.04)" }, { transform: "scale(1)" }],
+      { duration: 250, easing: "ease-out" }
+    );
+  }
+  const overlay = lpMakeOverlay(hostEl);
+  if (btnEl) {
+    const hr = hostEl.getBoundingClientRect();
+    const br = btnEl.getBoundingClientRect();
+    const flash = document.createElement("span");
+    flash.className = "lp-game-flash";
+    flash.style.left = `${br.left - hr.left + br.width / 2}px`;
+    flash.style.top = `${br.top - hr.top + br.height / 2}px`;
+    overlay.appendChild(flash);
+    flash.animate(
+      [
+        { transform: "translate(-50%,-50%) scale(.2)", opacity: 0.9 },
+        { transform: "translate(-50%,-50%) scale(3)", opacity: 0 },
+      ],
+      { duration: 450, easing: "ease-out", fill: "forwards" }
+    );
+  }
+  const cx = hostEl.offsetWidth / 2;
+  const cy = hostEl.offsetHeight / 2;
+  const sizes = [16, 22, 28];
+  for (let i = 0; i < 44; i++) {
+    const el = document.createElement("span");
+    el.className = "lp-game-particle";
+    if (i % 5 < 2) {
+      el.innerHTML = goblinSVG(sizes[i % 3]);
+    } else {
+      el.className += " lp-game-confetti";
+      const s = 5 + (i % 4) * 2;
+      el.style.width = `${s}px`;
+      el.style.height = `${Math.round(s * 1.6)}px`;
+    }
+    el.style.left = `${cx}px`;
+    el.style.top = `${cy}px`;
+    overlay.appendChild(el);
+    const dur = 1400 + Math.random() * 400;
+    const ang = Math.random() * Math.PI * 2;
+    const v = 200 + Math.random() * 280;
+    const spin = (Math.random() < 0.5 ? -1 : 1) * (360 + Math.random() * 540);
+    el.animate(
+      lpArcKeyframes(Math.cos(ang) * v, Math.sin(ang) * v - 260, dur, spin),
+      { duration: dur, easing: "linear", fill: "forwards" }
+    );
+  }
+  for (let i = 0; i < 3; i++) {
+    const chip = document.createElement("span");
+    chip.className = "lp-game-evchip";
+    chip.textContent = "+EV";
+    chip.style.left = `${cx + (i - 1) * 64}px`;
+    chip.style.top = `${cy}px`;
+    overlay.appendChild(chip);
+    chip.animate(
+      [
+        { transform: "translate(-50%,-50%)", opacity: 0 },
+        { transform: "translate(-50%,-80%)", opacity: 1, offset: 0.2 },
+        { transform: "translate(-50%,-240%)", opacity: 0 },
+      ],
+      { duration: 1100, delay: 150 * i, easing: "ease-out", fill: "forwards" }
+    );
+  }
+  setTimeout(() => overlay.remove(), 2200);
+}
+
+// LOSS: shake, red wash, a giant X stamped over the card with overshoot that
+// lingers ~1.2s, and 16 red X shards on the same gravity arcs. The content
+// desaturation is a CSS class (.lp-game-body.is-lost), not FX, so it survives
+// reduced-motion and stays until "Next pick".
+function lpLossFx(hostEl) {
+  if (lpReducedMotion() || !hostEl || !hostEl.animate) return;
+  const card = hostEl.querySelector(".lp-game-card");
+  if (card) {
+    const xs = [0, -9, 8, -6, 5, -3, 0];
+    card.animate(
+      xs.map((x, i) => ({ transform: `translateX(${x}px)`, offset: i / (xs.length - 1) })),
+      { duration: 500, easing: "ease-out" }
+    );
+  }
+  const overlay = lpMakeOverlay(hostEl);
+  const wash = document.createElement("span");
+  wash.className = "lp-game-wash";
+  overlay.appendChild(wash);
+  wash.animate([{ opacity: 0.55 }, { opacity: 0 }], { duration: 600, easing: "ease-out", fill: "forwards" });
+  const stamp = document.createElement("span");
+  stamp.className = "lp-game-stamp";
+  stamp.innerHTML = lpXSVG(120);
+  overlay.appendChild(stamp);
+  stamp.animate(
+    [
+      { transform: "translate(-50%,-50%) scale(2.4)", opacity: 0 },
+      { transform: "translate(-50%,-50%) scale(.92)", opacity: 1, offset: 0.2 },
+      { transform: "translate(-50%,-50%) scale(1)", opacity: 1, offset: 0.3 },
+      { transform: "translate(-50%,-50%) scale(1)", opacity: 1, offset: 0.9 },
+      { transform: "translate(-50%,-50%) scale(1)", opacity: 0 },
+    ],
+    { duration: 1650, easing: "ease-out", fill: "forwards" }
+  );
+  const cx = hostEl.offsetWidth / 2;
+  const cy = hostEl.offsetHeight / 2;
+  for (let i = 0; i < 16; i++) {
+    const shard = document.createElement("span");
+    shard.className = "lp-game-particle";
+    shard.innerHTML = lpXSVG(10 + (i % 3) * 5);
+    shard.style.left = `${cx}px`;
+    shard.style.top = `${cy}px`;
+    overlay.appendChild(shard);
+    const dur = 900 + Math.random() * 400;
+    const ang = Math.random() * Math.PI * 2;
+    const v = 260 + Math.random() * 220;
+    const spin = (Math.random() < 0.5 ? -1 : 1) * (240 + Math.random() * 360);
+    shard.animate(
+      lpArcKeyframes(Math.cos(ang) * v, Math.sin(ang) * v - 180, dur, spin),
+      { duration: dur, easing: "linear", fill: "forwards" }
+    );
+  }
+  setTimeout(() => overlay.remove(), 2200);
+}
+
+function LineChallenge({ daily, cov, onStart, onRefresh }) {
+  const dayIndex = daily.day_index;
+  const total = daily.picks.length;   // "3 free" when possible; fewer if the backfill ran dry
+  const [plays, setPlays] = React.useState(() => lpLoadPlays(dayIndex, daily.picks));
+  const [reveal, setReveal] = React.useState(null);   // reveal payload + { side, correct }
+  const [sel, setSel] = React.useState(null);         // side tapped on the current card
+  const [busy, setBusy] = React.useState(false);      // reveal fetch in flight
+  const [flipped, setFlipped] = React.useState(() => lpLoadPlays(dayIndex, daily.picks).length >= total);
+  const [dismissed, setDismissed] = React.useState(() => lpLoadDismissed(dayIndex));
+  const [imgFailed, setImgFailed] = React.useState({});
+  const [loadErr, setLoadErr] = React.useState(false);
+  const flipRef = React.useRef(null);
+
+  // Once per mount, including the restored already-played state.
+  React.useEffect(() => { lpEvent("game_viewed", dayIndex); }, []);
+
+  const playedIds = new Set(plays.map((p) => p.id));
+  // While the reveal is open the card must stay on the pick just graded, not
+  // advance to the next unplayed one — that's what "Next pick" is for.
+  const revealPick = reveal ? daily.picks.find((p) => p.id === reveal.id) : null;
+  const nextPick = daily.picks.find((p) => !playedIds.has(p.id)) || null;
+  const card = revealPick || nextPick;
+  const done = plays.length >= total;
+
+  const pickSide = async (side, ev) => {
+    if (!card || busy || sel || reveal) return;
+    const btn = ev.currentTarget;
+    setBusy(true);
+    setSel(side);
+    setLoadErr(false);
+    lpEvent("pick_made", dayIndex, card.id, { side });
+    let r = null;
+    try {
+      const res = await fetch(`/api/public/daily-pick/reveal?id=${encodeURIComponent(card.id)}`);
+      if (res.ok) r = await res.json();
+    } catch (e) { /* falls through to the retry state */ }
+    setBusy(false);
+    if (!r || (r.favored !== "more" && r.favored !== "less")) {
+      // Couldn't grade it. Put the card back rather than inventing a result —
+      // and refetch the board: the id may belong to a board that no longer
+      // exists server-side (8am ET rollover, Render-wake re-freeze), where
+      // retrying the same dead id would loop forever. If the board actually
+      // changed, Hero's key swap remounts the game on the live picks.
+      setSel(null);
+      setLoadErr(true);
+      if (onRefresh) onRefresh();
+      return;
+    }
+    const correct = side === r.favored;
+    const nextPlays = [...plays, { id: card.id, side, correct }];
+    setPlays(nextPlays);
+    lpSaveState(dayIndex, { plays: nextPlays });
+    setReveal({ ...r, side, correct });
+    lpEvent("revealed", dayIndex, card.id, { correct });
+    if (flipRef.current) (correct ? lpWinFx : lpLossFx)(flipRef.current, btn);
+    if (nextPlays.length >= total) {
+      setTimeout(() => {
+        setFlipped(true);
+        lpEvent("plays_exhausted", dayIndex);
+      }, 1600);
+    }
+  };
+
+  const next = () => { setReveal(null); setSel(null); };
+  const cta = () => { lpEvent("cta_clicked", dayIndex); onStart && onStart(); };
+  const dismiss = () => { setDismissed(true); lpSaveState(dayIndex, { dismissed: true }); };
+
+  // Disclosed BEFORE the first play: this is a limited free game.
+  const meterText = done ? "Free picks played" : `Play ${plays.length + 1} of ${total} free`;
+
+  // Restored already-played state has no card left for the front face, so the
+  // CTA panel renders flat — there is no flip to animate on a fresh reload.
+  const standaloneBack = done && !card;
+
+  const btnCls = (side) => {
+    if (sel !== side) return "";
+    if (reveal) return reveal.correct ? " is-win" : " is-loss";
+    return " is-sel";
+  };
+
+  return (
+    <div className="lp-game" aria-label="Daily line challenge">
+      <div className="lp-game-meter" aria-live="polite">
+        <span className="lp-game-dots" aria-hidden="true">
+          {daily.picks.map((p) => {
+            // Keyed by pick id, not position: restored plays can be a partial
+            // subset, and a positional lookup would paint win/loss dots on
+            // picks the plays don't belong to.
+            const pl = plays.find((x) => x.id === p.id);
+            return (
+              <i
+                key={p.id}
+                className={"lp-game-dot" + (pl ? (pl.correct ? " is-won" : " is-lost") : "")}
+              />
+            );
+          })}
+        </span>
+        <span>{meterText}</span>
+      </div>
+
+      {/* Visible from the FIRST play, not just post-exhaustion: the card is a
+        * deliberate PP near-clone, so what this is (and is not) must be
+        * readable while it's playable. This is the game's ONE copy of the
+        * line — the CTA back panel and minbar don't repeat it, per the
+        * disclaimer-placement rule in CLAUDE.md. */}
+      <p className="lp-game-demo">Demo only · No wagering · No prizes</p>
+
+      {done && dismissed ? (
+        // The dismissed paywall collapses to one line — it must stay dismissible.
+        <div className="lp-game-minbar">
+          <span>Free picks done for today</span>
+          <button type="button" className="cp-link" onClick={cta}>See pricing</button>
         </div>
-        {m.rows.map((r) => (
-          <div key={r.book} className="lp-ex-bar">
-            <div className="lp-ex-bar-top">
-              <span className="lp-ex-book">{r.book}</span>
-              <span className="lp-ex-price mono">
-                {r.over > 0 ? `+${r.over}` : r.over} / {r.under > 0 ? `+${r.under}` : r.under}
-              </span>
+      ) : standaloneBack ? (
+        <div className="lp-game-stagebg">
+          <LpCtaPanel cov={cov} onCta={cta} onDismiss={dismiss} />
+        </div>
+      ) : (
+        <div className="lp-game-stagebg">
+          {/* perspective lives on .lp-game-flip (the PARENT of the rotating
+            * element); pointer-events is toggled per face because Safari
+            * hit-tests the hidden face of a preserve-3d flip. `inert` (the
+            * empty-string form React 18 forwards as an attribute) removes the
+            * aria-hidden face from the TAB ORDER too — pointer-events alone
+            * left two focusable buttons inside the hidden back face, the axe
+            * aria-hidden-focus failure. */}
+          <div className="lp-game-flip" ref={flipRef}>
+            <div className={"lp-game-flip-inner" + (flipped ? " is-flipped" : "")}>
+              <div
+                className="lp-game-face lp-game-front"
+                style={flipped ? { pointerEvents: "none" } : undefined}
+                aria-hidden={flipped}
+                inert={flipped ? "" : undefined}
+              >
+                {card && (
+                  <div className={"lp-game-card" + (reveal && reveal.correct ? " is-winner" : "")}>
+                    <div className={"lp-game-body" + (reveal && !reveal.correct ? " is-lost" : "")}>
+                      <div className="lp-game-top">
+                        {/* PP's card also carries an "L5" (last-5-games) stat
+                          * toggle here. Deliberately NOT cloned: "L5" implies
+                          * five games of data behind it and no last-5 datum
+                          * exists in the daily-pick payload — same ground rule
+                          * as every other figure. Add it back only if/when the
+                          * API ships one. */}
+                        {lpTrending(card.trending_count) && (
+                          <span className="lp-game-trend">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="#FF7A1A" aria-hidden="true">
+                              <path d="M12 2c1.2 3-.9 4.6-2.2 6.1C8.3 9.8 7 11.4 7 14a5 5 0 0 0 10 0c0-1.9-.8-3.3-1.8-4.5-.4 1-.9 1.7-1.7 2.2.4-2.7-.2-6.6-1.5-9.7z" />
+                            </svg>
+                            {lpTrending(card.trending_count)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="lp-game-photo">
+                        {card.image_url && !imgFailed[card.id] ? (
+                          <img
+                            src={card.image_url}
+                            alt=""
+                            onError={() => setImgFailed((f) => ({ ...f, [card.id]: true }))}
+                          />
+                        ) : (
+                          // Never a broken image: same initials-tile idiom as
+                          // the avatar in components.jsx, keyed on the team.
+                          <span className="lp-game-photo-fb" aria-hidden="true">{card.team}</span>
+                        )}
+                      </div>
+                      <div className="lp-game-meta">
+                        <div className="lp-game-teampos">{card.team} - {card.position}</div>
+                        <div className="lp-game-player">{card.player}</div>
+                        <div className="lp-game-matchup">
+                          <b>vs {card.opponent}</b> <span>{lpGameTime(card.game_start)}</span>
+                        </div>
+                      </div>
+                      <div className="lp-game-line">
+                        <span className="lp-game-swap" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#C9C8D1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M4 8h13l-3-3M20 16H7l3 3" />
+                          </svg>
+                        </span>
+                        <span className="lp-game-num">{card.line}</span>
+                        <span className="lp-game-prop">{card.prop}</span>
+                      </div>
+                      <div className={"lp-game-btns" + (!sel && !reveal && !busy ? " is-idle" : "")}>
+                        <button
+                          type="button"
+                          className={"lp-game-btn" + btnCls("less")}
+                          disabled={busy || !!sel || !!reveal}
+                          onClick={(e) => pickSide("less", e)}
+                        >
+                          <LpArrow dir="down" /> Less
+                        </button>
+                        <button
+                          type="button"
+                          className={"lp-game-btn lp-game-btn-r" + btnCls("more")}
+                          disabled={busy || !!sel || !!reveal}
+                          onClick={(e) => pickSide("more", e)}
+                        >
+                          <LpArrow dir="up" /> More
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div
+                className="lp-game-face lp-game-backface"
+                style={!flipped ? { pointerEvents: "none" } : undefined}
+                aria-hidden={!flipped}
+                inert={!flipped ? "" : undefined}
+              >
+                <LpCtaPanel cov={cov} onCta={cta} onDismiss={dismiss} />
+              </div>
             </div>
-            <div className="lp-ex-track">
-              <span className="lp-ex-over"  style={{ width: `${(r.overPct / scale) * 100}%` }} />
-              <span className="lp-ex-under" style={{ width: `${(r.underPct / scale) * 100}%` }} />
-              <span className="lp-ex-rule" style={{ left: `${hundredAt}%` }} />
-            </div>
-            <div className="lp-ex-bar-foot">
-              <span className="mono">{r.totalPct.toFixed(1)}%</span> priced
-              <span className="lp-ex-excess mono">+{r.vigPct.toFixed(1)}%</span>
-            </div>
+          </div>
+          {loadErr && (
+            // role="alert": the side buttons silently re-enable on a grading
+            // failure, so a screen reader must hear why nothing happened.
+            <p className="lp-game-err" role="alert">Couldn't grade that one — tap a side to try again.</p>
+          )}
+        </div>
+      )}
+
+      {/* aria-live container present from mount so the reveal is announced. */}
+      <div className="lp-game-reveal-slot" role="status" aria-live="polite">
+        {reveal && !flipped && (
+          <LpRevealPanel r={reveal} showNext={!done} onNext={next} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The receipt. Every figure renders verbatim from the reveal response — the
+// only arithmetic is percent formatting and the implied-probability total,
+// which for a two-sided devig is 100 plus the vig by construction (the backend
+// computes vig_pct from exactly the books array shown above it).
+function LpRevealPanel({ r, showNext, onNext }) {
+  const impliedTotal = (100 + r.vig_pct).toFixed(1);
+  const morePct = (r.p_more * 100).toFixed(1);
+  const lessPct = (r.p_less * 100).toFixed(1);
+  const favoredMore = r.favored === "more";
+  return (
+    <div className="lp-game-reveal">
+      <p className={"lp-game-verdict " + (r.correct ? "is-good" : "is-bad")}>
+        {r.correct ? "You took the better side." : "That was the worse side."}
+      </p>
+      <h3 className="lp-game-rv-h">The market's number, with the margin removed</h3>
+      <div className="lp-game-quotes">
+        {(r.books || []).map((b, i) => (
+          <div key={i} className="lp-game-quote mono">
+            <span>{b.book} · {b.side === "more" ? "More" : "Less"}</span>
+            <span>{lpAmerican(b.american)}</span>
           </div>
         ))}
       </div>
-
-      <div className="lp-ex-key">
-        <span className="lp-ex-key-item"><i className="lp-ex-sw lp-ex-sw-over" /> Over</span>
-        <span className="lp-ex-key-item"><i className="lp-ex-sw lp-ex-sw-under" /> Under</span>
-        <span className="lp-ex-key-note">Both sides sum past 100%. The excess is the house margin.</span>
-      </div>
-
-      <div className="lp-ex-out">
-        <div className="lp-ex-out-l">
-          <span className="lp-ex-out-k">Margin removed</span>
-          <span className="lp-ex-out-v mono">{m.fairPct.toFixed(1)}%</span>
+      <div className="lp-game-rv-div" />
+      <p className="lp-game-rv-total mono">
+        implied total {impliedTotal}%&nbsp;&nbsp;← {r.vig_pct}% vig
+      </p>
+      <div className="lp-game-bars">
+        <div className="lp-game-barrow">
+          <span className="lp-game-barlbl">More</span>
+          <div className="lp-game-bartrack">
+            <span
+              className={"lp-game-barfill" + (favoredMore ? " is-fav" : "")}
+              style={{ "--p": r.p_more }}
+            />
+          </div>
+          <span className="lp-game-barpct mono">{morePct}%</span>
         </div>
-        <div className="lp-ex-out-r">
-          <span className="lp-ex-out-k">Break-even, 6-leg Power</span>
-          <span className="lp-ex-out-be mono">{LP_POWER_6_BE_PCT.toFixed(2)}%</span>
+        <div className="lp-game-barrow">
+          <span className="lp-game-barlbl">Less</span>
+          <div className="lp-game-bartrack">
+            <span
+              className={"lp-game-barfill" + (!favoredMore ? " is-fav" : "")}
+              style={{ "--p": r.p_less }}
+            />
+          </div>
+          <span className="lp-game-barpct mono">{lessPct}%</span>
         </div>
       </div>
+      <p className="lp-game-rv-close">Same payout either way — but it was never a coin flip.</p>
+      {showNext && (
+        <button type="button" className="cp-btn cp-btn-ghost lp-game-next" onClick={onNext}>
+          Next pick
+        </button>
+      )}
+    </div>
+  );
+}
 
-      <figcaption className="lp-ex-cap">Sample prices</figcaption>
-    </figure>
+// The back of the card once the free plays run out. The source-count/cadence
+// line interpolates coverage facts the same way the rest of the page does
+// (books_noun, fmtRefresh); with no coverage payload it states no figures.
+function LpCtaPanel({ cov, onCta, onDismiss }) {
+  const sub = cov
+    ? `CoreProp finds the mispriced side across ${cov.books.length} ${cov.books_noun}, every ${fmtRefresh(cov.refresh_minutes)}.`
+    : "CoreProp finds the mispriced side on every line it prices.";
+  return (
+    <div className="lp-game-ctap">
+      <button type="button" className="lp-game-ctap-x" aria-label="Dismiss" onClick={onDismiss}>✕</button>
+      {/* Not "Want to keep playing?" — the paid app has no minigame, so that
+        * heading promised something the subscription doesn't deliver. The
+        * pivot is to what it DOES deliver: the full board, all day. The demo
+        * disclaimer line lives above the stage (visible from play one), not
+        * here. */}
+      <h3 className="lp-game-ctap-h">Want the full board?</h3>
+      <p className="lp-game-ctap-sub">{sub}</p>
+      <button type="button" className="cp-btn cp-btn-primary cp-btn-lg" onClick={onCta}>
+        See pricing
+      </button>
+    </div>
   );
 }
 
@@ -394,11 +928,14 @@ function Footer({ cov }) {
       </div>
       {/* One legal line, not three. The old version also opened with "CoreProp
         * is an analytics tool and does not accept wagers", which the pricing
-        * page's FAQ and its own footer each repeated. */}
+        * page's FAQ and its own footer each repeated. The non-affiliation
+        * sentence joined this same block when the hero minigame started
+        * rendering a PrizePicks-styled card — one footer line, said once, per
+        * the disclaimer-placement rule in CLAUDE.md. */}
       <p className="lp-foot-disc">
-        CoreProp is an analytics tool and does not accept wagers. 21+ where
-        applicable. If you or someone you know has a gambling problem, call
-        1-800-GAMBLER.
+        CoreProp is an analytics tool and does not accept wagers. Not affiliated
+        with, endorsed by, or sponsored by PrizePicks. 21+ where applicable. If
+        you or someone you know has a gambling problem, call 1-800-GAMBLER.
       </p>
     </footer>
   );

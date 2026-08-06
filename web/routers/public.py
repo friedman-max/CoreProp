@@ -17,12 +17,24 @@ same class of information as `/api/status`, which is already unauthenticated.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+import json
+import logging
+import threading
+import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from typing import Literal, Optional
+
+from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel, field_validator
 
 import config as cfg
 from web.state import _lock, _state
 
 router = APIRouter(prefix="/api/public", tags=["public"])
+
+logger = logging.getLogger(__name__)
 
 # The books the pipeline actually scrapes for pricing, in the order the +EV
 # board shows them. PrizePicks is listed separately because it is the source of
@@ -68,3 +80,326 @@ def get_coverage():
         "refresh_minutes": refresh_minutes,
         "trial_days":      BILLING_TRIAL_DAYS,
     }
+
+
+# ---------------------------------------------------------------------------
+# Landing minigame — daily pick, reveal, telemetry, headshot proxy
+#
+# Same doctrine as /coverage: anything the server can't answer, the page omits
+# rather than guesses. Two additional rules specific to the game:
+#
+#   1. The pre-pick payload (GET /daily-pick) must not contain the answer in
+#      any form — no probabilities, no favored side, no book odds. A visitor
+#      with the Network tab open learns nothing before committing to a pick.
+#   2. The reveal's numbers are computed from exactly the book quotes it
+#      returns (web/minigame.py::devig_books), so the receipt is re-derivable
+#      by hand. See web/minigame.py for the selection/freeze rules.
+# ---------------------------------------------------------------------------
+
+# ── Per-IP sliding-window rate limiter ─────────────────────────────────────
+# In-memory on purpose: single worker, and the goal is only to stop a naive
+# loop from hammering the unauthenticated endpoints — not to be a real WAF.
+# Every public route enforces it, including the image proxy (a cache miss
+# there does a network fetch on the shared sync threadpool).
+_RATE_LIMIT = 60          # requests
+_RATE_WINDOW_SEC = 60.0   # per sliding window
+_rate_lock = threading.Lock()
+_rate_hits: dict[str, deque] = {}
+
+
+# Hard ceiling on tracked IPs. Stale-entry eviction alone is not a bound: a
+# burst of distinct spoofed addresses inside one window is all "fresh", so
+# freshness-based eviction removes nothing while the dict grows without limit.
+_RATE_MAX_IPS = 4096
+
+
+def _client_ip(request: Request) -> str:
+    # Render terminates TLS at a proxy, so the peer address is the proxy's.
+    # Use the RIGHTMOST X-Forwarded-For hop: the proxy APPENDS the real peer
+    # to whatever the client sent, so the leftmost value is attacker-chosen
+    # (keying on it let one caller mint a fresh rate bucket per request).
+    # The rightmost is the only hop our own proxy vouches for.
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[-1].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _enforce_rate_limit(request: Request) -> None:
+    now = time.monotonic()
+    ip = _client_ip(request)
+    with _rate_lock:
+        hits = _rate_hits.get(ip)
+        if hits is None:
+            hits = _rate_hits[ip] = deque()
+        while hits and now - hits[0] > _RATE_WINDOW_SEC:
+            hits.popleft()
+        if len(hits) >= _RATE_LIMIT:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        hits.append(now)
+        # Bound the table: drop idle IPs so a slow scan over many addresses
+        # can't grow this dict forever...
+        if len(_rate_hits) > _RATE_MAX_IPS:
+            for stale_ip in [k for k, v in _rate_hits.items() if not v or now - v[-1] > _RATE_WINDOW_SEC]:
+                _rate_hits.pop(stale_ip, None)
+            # ...and if everything is fresh (spoofed-address burst), evict
+            # oldest-first-seen regardless. Losing a live bucket only resets
+            # one caller's window — strictly better than unbounded growth.
+            while len(_rate_hits) > _RATE_MAX_IPS:
+                _rate_hits.pop(next(iter(_rate_hits)), None)
+
+
+@router.get("/daily-pick")
+def get_daily_pick(request: Request):
+    """Today's frozen selection, answer-free. See module comment rule #1."""
+    _enforce_rate_limit(request)
+    # Lazy import (same reason as BILLING_TRIAL_DAYS above): web.minigame
+    # imports web.state only, but keeping router-level imports minimal keeps
+    # the import graph obvious.
+    from web import minigame
+
+    idx, blob = minigame.get_or_freeze_today()
+    picks = []
+    for p in blob.get("picks", []):
+        has_image = bool(p.get("image_source_url")) and cfg.HEADSHOTS_ENABLED
+        picks.append({
+            "id":             p["id"],
+            "player":         p.get("player"),
+            "team":           p.get("team"),
+            "opponent":       p.get("opponent"),
+            "position":       p.get("position"),
+            "league":         p.get("league"),
+            "prop":           p.get("prop"),
+            "line":           p.get("line"),
+            "game_start":     p.get("game_start"),
+            "trending_count": p.get("trending_count", 0),
+            # The proxy URL, never the PrizePicks URL: the source stays
+            # server-side so the page can't be told to hotlink PP, and the id
+            # gate below keeps this from being an open proxy.
+            "image_url":      f"/api/public/player-image?pick={p['id']}" if has_image else None,
+        })
+    return {"day_index": idx, "picks": picks}
+
+
+@router.get("/daily-pick/reveal")
+def get_daily_pick_reveal(request: Request, id: str):
+    """The answer for one pick, after the visitor commits. p_more/p_less/
+    vig_pct were computed from exactly the books array returned here
+    (web/minigame.py::devig_books) — the receipt is re-derivable by hand."""
+    _enforce_rate_limit(request)
+    from web import minigame
+
+    # find_pick searches today's blob first, then the recent frozen days: a
+    # visitor's board can outlive the blob that served it (tab open across
+    # the 8am ET boundary, or the Render-wake unfrozen board replaced by the
+    # real freeze minutes later). Grading from the pick's own frozen day is
+    # exact — the alternative is 404ing every card the visitor holds into a
+    # permanent "tap to try again" loop.
+    p = minigame.find_pick(id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Unknown pick id")
+    return {
+        "id":      p["id"],
+        "favored": p["favored"],
+        "p_more":  p["p_more"],
+        "p_less":  p["p_less"],
+        "vig_pct": p["vig_pct"],
+        "books":   p["books"],
+    }
+
+
+# meta is a jsonb column with no DB-side cap; an unauthenticated endpoint must
+# bound what it persists. The frontend's biggest meta is {"side": "less"} — a
+# few tens of bytes — so 2KB is generous headroom, not a constraint.
+_EVENT_META_MAX_BYTES = 2048
+
+# Telemetry writes drain through one small pool instead of a thread per
+# request: per-request threads under flood meant unbounded OS threads + DB
+# connections. The semaphore is the queue bound — when it's exhausted the
+# event is shed (204 regardless; telemetry must never matter that much).
+_event_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="landing_event")
+_event_slots = threading.Semaphore(64)
+
+
+class LandingEvent(BaseModel):
+    """Funnel telemetry. The enum is closed on purpose — a free-text event
+    field on an unauthenticated endpoint becomes a junk drawer immediately."""
+    event: Literal["game_viewed", "pick_made", "revealed", "plays_exhausted", "cta_clicked"]
+    day_index: int
+    pick_id: Optional[str] = None
+    meta: Optional[dict] = None
+
+    @field_validator("meta")
+    @classmethod
+    def _meta_bounded(cls, v: Optional[dict]) -> Optional[dict]:
+        if v is not None:
+            serialized = json.dumps(v, separators=(",", ":"), default=str)
+            if len(serialized) > _EVENT_META_MAX_BYTES:
+                raise ValueError(f"meta exceeds {_EVENT_META_MAX_BYTES} bytes")
+        return v
+
+
+@router.post("/event", status_code=204)
+def post_landing_event(request: Request, body: LandingEvent):
+    """Fire-and-forget funnel event: the visitor's response never waits on
+    Supabase, and a write failure is logged, not surfaced."""
+    _enforce_rate_limit(request)
+
+    row = {
+        "ts":        datetime.now(timezone.utc).isoformat(),
+        "event":     body.event,
+        "day_index": body.day_index,
+        "pick_id":   body.pick_id,
+        "meta":      body.meta or {},
+    }
+
+    def _log_landing_event_bg(row=row):
+        try:
+            # writer() per CLAUDE.md: new write paths go through the audited
+            # service-role seam. When Supabase env is absent the shim's
+            # execute() raises and we drop the event silently.
+            from engine.writer import writer
+            writer("landing.event").table("landing_events").insert(row).execute()
+        except Exception as exc:
+            logger.debug("landing_events insert failed: %s", exc)
+        finally:
+            _event_slots.release()
+
+    if _event_slots.acquire(blocking=False):
+        try:
+            _event_pool.submit(_log_landing_event_bg)
+        except RuntimeError:  # interpreter shutdown
+            _event_slots.release()
+    # else: queue full — shed the event rather than grow anything unbounded.
+    return Response(status_code=204)
+
+
+# ── Headshot proxy ─────────────────────────────────────────────────────────
+# pick_id -> (content_type, bytes). Only today's (at most 3) picks are ever
+# cached, so this stays tiny; cleared wholesale when it grows past a bound
+# rather than tracking day rollover explicitly.
+_image_cache: dict[str, tuple[str, bytes]] = {}
+_image_cache_lock = threading.Lock()
+# Single-flight for upstream fetches: N concurrent misses for the same pick
+# must not fire N parallel 5s httpx calls out of the shared sync threadpool
+# (thundering herd). One coarse lock is enough at <= 3 images per day —
+# waiters re-check the byte cache after acquiring.
+_image_fetch_lock = threading.Lock()
+_IMAGE_CACHE_MAX = 32
+_IMAGE_FETCH_TIMEOUT_SEC = 5.0
+# Hard byte cap on the streamed upstream body. Real PP headshots are tens of
+# KB; anything past 2MB is not a headshot and must not be buffered whole into
+# the 512MB worker.
+_IMAGE_MAX_BYTES = 2 * 1024 * 1024
+# Browser-ish headers: PP's CDN serves these publicly to the app, and the
+# scraper already presents the same Referer (scrapers/prizepicks.py).
+_IMAGE_FETCH_HEADERS = {
+    "Referer": "https://app.prizepicks.com/",
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    ),
+    "Accept": "image/avif,image/webp,image/png,image/*,*/*;q=0.8",
+}
+
+
+def _fetch_image(source_url: str) -> tuple[str, bytes]:
+    """Streamed, capped, image-only fetch of a server-chosen URL.
+
+    Raises on anything suspicious; the caller maps every failure to 404.
+    Hardenings, each load-bearing:
+      * https only — the id gate controls the first URL, this controls its
+        scheme.
+      * no redirect following — a 30x could point the fetch at a host the id
+        gate never approved (link-local/metadata addresses included).
+      * content-type must be image/* — the bytes are re-served from OUR
+        origin, so upstream text/html would become first-party active
+        content (and get cached for the whole day).
+      * streamed with a byte cap — resp.content would buffer an arbitrarily
+        large body into the 512MB worker.
+    """
+    if not source_url.lower().startswith("https://"):
+        raise ValueError("non-https source url")
+    import httpx
+    with httpx.stream(
+        "GET",
+        source_url,
+        headers=_IMAGE_FETCH_HEADERS,
+        timeout=_IMAGE_FETCH_TIMEOUT_SEC,
+        follow_redirects=False,
+    ) as resp:
+        resp.raise_for_status()
+        content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+        if not content_type.startswith("image/"):
+            raise ValueError(f"upstream content-type {content_type!r} is not an image")
+        chunks: list[bytes] = []
+        size = 0
+        for chunk in resp.iter_bytes():
+            size += len(chunk)
+            if size > _IMAGE_MAX_BYTES:
+                raise ValueError("upstream body exceeds byte cap")
+            chunks.append(chunk)
+        return content_type, b"".join(chunks)
+
+
+@router.get("/player-image")
+def get_player_image(request: Request, pick: str):
+    """Proxied player headshot for one of the frozen picks.
+
+    The id gate is the whole security story: only ids present in a recent
+    frozen selection resolve (find_pick — same board-swap tolerance as the
+    reveal endpoint), so this cannot be used as an open proxy — the server
+    chooses the upstream URL, never the caller. Rate-limited like the other
+    public endpoints: cache hits are cheap, but a miss does a network fetch
+    on the shared sync threadpool and an unauthenticated burst of misses
+    must not be free.
+    """
+    _enforce_rate_limit(request)
+
+    # Kill switch (config.HEADSHOTS_ENABLED). 404 rather than 403/503 so the
+    # frontend's single "no image -> fallback avatar" path covers it.
+    if not cfg.HEADSHOTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    from web import minigame
+
+    p = minigame.find_pick(pick)
+    source_url = p.get("image_source_url") if p else None
+    if not source_url:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    with _image_cache_lock:
+        cached = _image_cache.get(pick)
+    if cached is None:
+        # Single-flight: concurrent misses queue here; whoever fetched first
+        # populates the cache and the rest find it on re-check.
+        with _image_fetch_lock:
+            with _image_cache_lock:
+                cached = _image_cache.get(pick)
+            if cached is None:
+                try:
+                    cached = _fetch_image(source_url)
+                except Exception as exc:
+                    # 404, not 5xx: the frontend treats any image failure as
+                    # "use the fallback avatar", and a transient CDN error
+                    # shouldn't look like a server bug in our own monitoring.
+                    logger.debug("player-image fetch failed for %s: %s", pick, exc)
+                    raise HTTPException(status_code=404, detail="Not found")
+                with _image_cache_lock:
+                    if len(_image_cache) >= _IMAGE_CACHE_MAX:
+                        _image_cache.clear()
+                    _image_cache[pick] = cached
+
+    content_type, body = cached
+    return Response(
+        content=body,
+        media_type=content_type,
+        headers={
+            # Long client cache: the image for a given pick id never changes
+            # within the day it's valid, and the id itself rotates daily.
+            "Cache-Control": "public, max-age=86400, immutable",
+            # The media_type is validated image/*, but never let a browser
+            # second-guess bytes served from our origin.
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

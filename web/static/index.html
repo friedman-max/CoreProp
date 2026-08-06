@@ -129,9 +129,12 @@ a{color:inherit;text-decoration:none}
   outline:2px solid var(--primary-2);outline-offset:2px;border-radius:6px;
 }
 
-/* Honour the OS "reduce motion" setting. The landing page no longer animates
- * anything, but the app tabs still run row/leg entrance and modal transitions,
- * and prefers-reduced-motion is a vestibular-safety setting, not a preference. */
+/* Honour the OS "reduce motion" setting. prefers-reduced-motion is a
+ * vestibular-safety setting, not a preference. The app tabs run row/leg
+ * entrance and modal transitions, and the landing hero's minigame animates
+ * again (lpNudge/lpDotPop/lpRevealIn/lpBarGrow plus WAAPI FX in landing.jsx)
+ * — the minigame relies on this clamp for its CSS side and on
+ * lpReducedMotion() for the JS-driven FX. */
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{
     animation-duration:.01ms!important;animation-iteration-count:1!important;
@@ -247,64 +250,17 @@ a{color:inherit;text-decoration:none}
 .lp-section-hd{margin:0 0 28px}
 
 /* HERO */
+/* A single centered column now: headline, the daily line challenge (.lp-game,
+ * its own block after FOOTER below), CTA row. The two-column copy+example grid
+ * and the .lp-ex sample panel left with ExampleCard (landing.jsx) — the game's
+ * reveal shows the same devig receipt on a live market instead of a canned one. */
 .lp-hero{max-width:var(--lp-max);margin:0 auto;padding:clamp(40px,6vw,76px) 22px var(--lp-gap)}
-/* align-items:center, not start: the copy column and the example card are
- * different heights, and pinning both to the top left ~80px of ragged white
- * space under the shorter one. Centering shares the difference. */
-.lp-hero-inner{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr);gap:clamp(32px,4vw,64px);align-items:center}
-@media (max-width:900px){.lp-hero-inner{grid-template-columns:1fr;gap:36px;align-items:start}}
+.lp-hero-hd{max-width:760px;margin:0 auto;text-align:center}
+.lp-hero-hd .lp-sub{margin:0 auto}
+.lp-hero .lp-cta-row{justify-content:center;margin-top:26px}
 .lp-sub{font-size:17px;line-height:1.6;color:var(--text-2);max-width:56ch;margin:0 0 26px}
 .lp-cta-row{display:flex;gap:12px;flex-wrap:wrap}
 .lp-cta-row.lp-center{justify-content:center}
-/* Sample-line panel (.lp-ex). Was a 3-column table of book / price / implied %,
- * which made the reader do the comparison in their head. Now it's a bar per
- * book: the fair probability as a solid fill, the book's margin as a hatched
- * segment past it, and the two output numbers called out below. Same figures,
- * all still computed in landing.jsx (LP_EXAMPLE_MATH) rather than typed. */
-.lp-ex{margin:0;background:var(--card);border:1px solid var(--hair-2);border-radius:var(--radius);padding:20px}
-.lp-ex-hd{padding-bottom:16px;border-bottom:1px solid var(--hair)}
-.lp-ex-line{display:flex;align-items:center;gap:10px}
-.lp-ex-player{font-size:16px;font-weight:600}
-.lp-ex-bet{display:flex;align-items:baseline;gap:8px;margin-top:8px}
-.lp-ex-side{font-size:11px;font-weight:700;letter-spacing:.05em;padding:3px 7px;border-radius:5px;background:var(--green-hi);color:#86EFAC}
-.lp-ex-num{font-size:15px;font-weight:600}
-.lp-ex-prop{color:var(--text-2);font-size:14px}
-
-.lp-ex-bars{display:flex;flex-direction:column;gap:16px;padding:18px 0 16px}
-/* The 100% gridline gets its own row above the bars so the label sits clear of
- * them; the rule itself repeats inside each track. */
-.lp-ex-scale{position:relative;height:13px}
-.lp-ex-100{position:absolute;top:0;transform:translateX(-50%);font-size:10px;letter-spacing:.04em;color:var(--text-3);font-weight:600;white-space:nowrap}
-.lp-ex-bar-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:7px}
-.lp-ex-book{font-size:12.5px;color:var(--text-2);font-weight:500}
-.lp-ex-price{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums;white-space:nowrap}
-.lp-ex-track{position:relative;display:flex;height:12px;border-radius:3px;overflow:hidden;background:#0a0a12;border:1px solid var(--hair)}
-/* Over and Under are two hues of the SAME accent rather than a colour pair with
- * a semantic (red/green) reading — neither side is "good" here, they're just the
- * two halves of one market. The 100% rule is drawn on top of both. */
-.lp-ex-over{background:var(--primary-2)}
-.lp-ex-under{background:rgba(111,188,236,.38)}
-.lp-ex-rule{position:absolute;top:-1px;bottom:-1px;width:2px;background:var(--text);opacity:.85;transform:translateX(-1px)}
-.lp-ex-bar-foot{display:flex;align-items:baseline;gap:6px;margin-top:6px;font-size:11.5px;color:var(--text-3)}
-.lp-ex-bar-foot .mono{color:var(--text-2);font-variant-numeric:tabular-nums}
-.lp-ex-excess{margin-left:auto;color:#FCA5A5;font-weight:600;font-variant-numeric:tabular-nums}
-
-.lp-ex-key{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:var(--text-3);padding-bottom:16px;border-bottom:1px solid var(--hair)}
-.lp-ex-key-item{display:inline-flex;align-items:center;gap:6px}
-.lp-ex-sw{width:9px;height:9px;border-radius:2px;flex-shrink:0}
-.lp-ex-sw-over{background:var(--primary-2)}
-.lp-ex-sw-under{background:rgba(111,188,236,.38)}
-.lp-ex-key-note{flex:1 1 100%;line-height:1.45}
-
-.lp-ex-out{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding-top:16px}
-.lp-ex-out-l,.lp-ex-out-r{display:flex;flex-direction:column;gap:5px;min-width:0}
-.lp-ex-out-r{padding-left:14px;border-left:1px solid var(--hair)}
-.lp-ex-out-k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);font-weight:600}
-.lp-ex-out-v{font-size:24px;font-weight:700;color:var(--green);line-height:1}
-.lp-ex-out-be{font-size:24px;font-weight:700;color:var(--text-2);line-height:1}
-/* Caption last in the DOM and visually last: it's a footnote, not a heading.
- * As a <figcaption> it stays associated with the figure for assistive tech. */
-.lp-ex-cap{margin-top:16px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);font-weight:600}
 
 /* COVERAGE — a definition list, because that's what it is. */
 .lp-cov{max-width:var(--lp-max);margin:0 auto;padding:0 22px var(--lp-gap)}
@@ -365,6 +321,131 @@ a{color:inherit;text-decoration:none}
 .lp-foot-base{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:24px;padding-top:16px;border-top:1px solid var(--hair);color:var(--text-3);font-size:12px}
 .lp-foot-cov{color:var(--text-3)}
 .lp-foot-disc{margin:14px 0 0;color:var(--text-3);font-size:12.5px;line-height:1.55;max-width:80ch}
+
+/* MINIGAME (.lp-game) — the hero's daily line challenge (landing.jsx).
+ * The card is a deliberate near-clone of the PrizePicks large card, so the
+ * "pick a side" gesture is instantly familiar: their measured tokens are
+ * #121320 card / #050614 stage / #2C2C39 hairlines / 22px radius / #6EFF00
+ * selected / #FF4A4A loss / #93939C + #FBF9FF text. These hexes are PP's, not
+ * ours — do not swap them for the site tokens, and don't reuse .bt-slip
+ * classes here. The footer carries the non-affiliation line. Win/loss FX
+ * (goblin burst, shake, X stamp) are hand-rolled WAAPI in landing.jsx;
+ * everything below is layout + states. */
+.lp-game{display:flex;flex-direction:column;align-items:center;gap:16px;margin:38px 0 4px}
+.lp-game-meter{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--text-3);font-weight:600;letter-spacing:.03em}
+/* The one in-game copy of "Demo only · No wagering · No prizes": visible from
+ * the first play (the CTA back panel does NOT repeat it). Negative margin
+ * tucks it under the meter instead of consuming a full flex gap. */
+.lp-game-demo{margin:-10px 0 0;font-size:11.5px;color:var(--text-3)}
+.lp-game-dots{display:inline-flex;gap:6px}
+.lp-game-dot{width:6px;height:6px;border-radius:50%;background:var(--card-3);display:inline-block}
+.lp-game-dot.is-won{background:#6EFF00;animation:lpDotPop .3s ease}
+.lp-game-dot.is-lost{background:#FF4A4A}
+@keyframes lpDotPop{0%{transform:scale(1)}50%{transform:scale(1.9)}100%{transform:scale(1)}}
+/* PP-dark stage behind the card so it pops on the site's lighter page ground. */
+.lp-game-stagebg{background:#050614;border:1px solid #2C2C39;border-radius:26px;padding:24px 22px;display:flex;flex-direction:column;align-items:center}
+/* 3D flip into the CTA panel: perspective on the PARENT of the rotating
+ * element; JS toggles pointer-events per face because Safari hit-tests the
+ * hidden face of a preserve-3d flip. */
+.lp-game-flip{position:relative;width:min(330px,86vw);perspective:1100px}
+.lp-game-flip-inner{position:relative;transform-style:preserve-3d;transition:transform .7s cubic-bezier(.35,.9,.3,1)}
+.lp-game-flip-inner.is-flipped{transform:rotateY(180deg)}
+.lp-game-face{backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.lp-game-backface{position:absolute;inset:0;transform:rotateY(180deg);display:flex}
+/* The card itself — PP large-card geometry. */
+.lp-game-card{background:#121320;border:1px solid #2C2C39;border-radius:22px;overflow:hidden;transition:border-color .25s ease}
+.lp-game-card.is-winner{border-color:#6EFF00}
+.lp-game-body{display:flex;flex-direction:column;transition:filter .3s ease}
+/* Loss: content (not the border) desaturates until "Next pick". */
+.lp-game-body.is-lost{filter:grayscale(.75) brightness(.85)}
+/* flex-end: only the trending flame lives here now (PP's "L5" chip is not
+ * cloned — it implies last-5-games data the payload doesn't carry). */
+.lp-game-top{display:flex;justify-content:flex-end;align-items:center;padding:14px 16px 4px;min-height:24px}
+.lp-game-trend{display:inline-flex;align-items:center;gap:5px;color:#FBF9FF;font-size:13px;font-weight:500}
+.lp-game-photo{height:150px;display:grid;place-items:center}
+.lp-game-photo img{max-height:150px;max-width:80%;object-fit:contain;display:block}
+/* Image fallback: initials tile, same idiom as the nav avatar — never a
+ * broken-image glyph. */
+.lp-game-photo-fb{width:84px;height:84px;border-radius:18px;background:#23242F;color:#BAB9C1;display:grid;place-items:center;font-weight:800;font-size:22px;letter-spacing:.04em}
+.lp-game-meta{text-align:center;padding:2px 16px 0}
+.lp-game-teampos{color:#93939C;font-size:14px}
+.lp-game-player{color:#FBF9FF;font-size:23px;font-weight:700;letter-spacing:-.01em;margin-top:2px}
+.lp-game-matchup{margin-top:2px;font-size:14px}
+.lp-game-matchup b{color:#FBF9FF;font-weight:700}
+.lp-game-matchup span{color:#93939C}
+.lp-game-line{display:flex;align-items:center;justify-content:center;gap:10px;padding:14px 16px 16px}
+.lp-game-swap{width:34px;height:34px;border-radius:50%;background:#23242F;display:grid;place-items:center;flex-shrink:0}
+.lp-game-num{color:#FBF9FF;font-size:32px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.lp-game-prop{color:#93939C;font-size:17px}
+/* Less / More: real buttons, full card width, center hairline. */
+.lp-game-btns{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid #2C2C39;height:58px}
+.lp-game-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:transparent;border:0;color:#FBF9FF;font-size:17px;font-weight:600;cursor:pointer;height:100%;border-radius:0;transition:background .15s ease,color .15s ease}
+.lp-game-btn svg{flex-shrink:0}
+.lp-game-btn-r{border-left:1px solid #2C2C39}
+.lp-game-btn:disabled{cursor:default}
+.lp-game-btn.is-sel,.lp-game-btn.is-win{background:#6EFF00;color:#050614}
+.lp-game-btn.is-loss{background:#FF4A4A;color:#050614}
+/* Idle nudge: soft inner green pulses alternating between the halves (offset
+ * half a cycle) purely to invite a tap. No copy, no odds claim. Known
+ * tradeoff vs the LANDING block's no-continuous-work rule: an infinite
+ * box-shadow loop repaints two buttons while the hero is idle. Accepted
+ * deliberately — the invite is the point of the game — and it stops the
+ * moment a side is picked (.is-idle drops). */
+@keyframes lpNudge{0%,100%{box-shadow:inset 0 0 0 0 rgba(110,255,0,0)}50%{box-shadow:inset 0 0 26px rgba(110,255,0,.20)}}
+.lp-game-btns.is-idle .lp-game-btn{animation:lpNudge 2s ease-in-out infinite}
+.lp-game-btns.is-idle .lp-game-btn-r{animation-delay:1s}
+/* FX layer (win burst / loss stamp). Appended and removed by landing.jsx,
+ * aria-hidden, never interactive. */
+.lp-game-fx{position:absolute;inset:0;pointer-events:none;overflow:visible;z-index:5}
+.lp-game-particle{position:absolute;display:block;line-height:0;will-change:transform,opacity}
+.lp-game-confetti{background:#6EFF00;border-radius:1px}
+.lp-game-flash{position:absolute;width:130px;height:130px;border-radius:50%;background:radial-gradient(circle,rgba(110,255,0,.55),rgba(110,255,0,0) 70%)}
+.lp-game-evchip{position:absolute;padding:4px 11px;border-radius:999px;background:#0A2A12;border:1px solid rgba(110,255,0,.4);color:#6EFF00;font-weight:800;font-size:13px;letter-spacing:.04em;white-space:nowrap}
+.lp-game-wash{position:absolute;inset:0;background:rgba(255,74,74,.5);border-radius:22px}
+.lp-game-stamp{position:absolute;left:50%;top:50%;line-height:0}
+.lp-game-err{margin:12px 0 0;font-size:12.5px;color:#FCA5A5;text-align:center}
+/* The reveal receipt, sliding in under the card. The container (.lp-game-
+ * reveal-slot) is an aria-live region present from mount; while empty it
+ * would still consume a 16px flex gap, so :empty pulls that back (keeps the
+ * live region in the accessibility tree, unlike display:none). */
+.lp-game-reveal-slot{width:min(374px,92vw)}
+.lp-game-reveal-slot:empty{margin-top:-16px}
+.lp-game-reveal{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--radius);padding:18px;animation:lpRevealIn .35s ease both}
+@keyframes lpRevealIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.lp-game-verdict{margin:0 0 8px;font-weight:700;font-size:15px}
+.lp-game-verdict.is-good{color:#6EFF00}
+.lp-game-verdict.is-bad{color:#FF4A4A} /* the one loss red (matches dots/buttons/X) — no third red */
+.lp-game-rv-h{margin:0 0 12px;font-size:13px;font-weight:600;color:var(--text-2);letter-spacing:.01em}
+.lp-game-quotes{display:flex;flex-direction:column;gap:5px}
+.lp-game-quote{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;color:var(--text-2);font-variant-numeric:tabular-nums}
+.lp-game-rv-div{height:1px;background:var(--hair);margin:12px 0}
+.lp-game-rv-total{margin:0 0 12px;font-size:12.5px;color:var(--text-2);font-variant-numeric:tabular-nums}
+.lp-game-bars{display:flex;flex-direction:column;gap:8px}
+.lp-game-barrow{display:grid;grid-template-columns:44px 1fr 56px;align-items:center;gap:10px;font-size:12.5px}
+.lp-game-barlbl{color:var(--text-2);font-weight:600}
+.lp-game-bartrack{height:10px;border-radius:4px;background:#0a0a12;border:1px solid var(--hair);overflow:hidden}
+/* Animate scaleX, not width — no layout per frame. --p is the probability
+ * (0..1) straight off the reveal response, set inline by landing.jsx. */
+.lp-game-barfill{display:block;height:100%;background:#4B4C5C;transform-origin:left;animation:lpBarGrow .6s .15s cubic-bezier(.2,.8,.2,1) both}
+.lp-game-barfill.is-fav{background:#6EFF00}
+@keyframes lpBarGrow{from{transform:scaleX(0)}to{transform:scaleX(var(--p,0))}}
+.lp-game-barpct{text-align:right;color:var(--text)}
+.lp-game-rv-close{margin:14px 0 0;font-size:13px;color:var(--text-2);line-height:1.5}
+.lp-game-next{margin-top:14px}
+/* Back-of-card CTA panel, and its dismissed one-line remnant. */
+.lp-game-ctap{position:relative;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:12px;background:#121320;border:1px solid #2C2C39;border-radius:22px;padding:30px 22px;min-height:300px;width:min(330px,86vw)}
+.lp-game-ctap-x{position:absolute;top:10px;right:10px;width:30px;height:30px;border-radius:8px;background:transparent;border:0;color:#93939C;cursor:pointer;font-size:14px}
+.lp-game-ctap-x:hover{background:rgba(255,255,255,.06);color:#FBF9FF}
+.lp-game-ctap-h{margin:0;font-size:22px;font-weight:700;color:#FBF9FF;letter-spacing:-.01em}
+.lp-game-ctap-sub{margin:0;font-size:14px;line-height:1.55;color:var(--text-2);max-width:34ch}
+.lp-game-minbar{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--hair-2);border-radius:999px;padding:8px 8px 8px 18px;font-size:12.5px;color:var(--text-3)}
+/* prefers-reduced-motion: the global .01ms clamp above kills every
+ * animation/transition here, including the flip and the idle nudge, and
+ * landing.jsx skips particles/shake/pop in JS (lpReducedMotion). The flip
+ * and reveal become instant swaps — that's the intended reduced-motion
+ * treatment, not an oversight. (A previous "re-grant an opacity fade" block
+ * here was dead code: the flip animates transform and the reveal mounts
+ * fresh, so nothing ever changed opacity for the transition to run on.) */
 
 /* ═══════════════════════════════════════════ +EV PAGE ═══════════════════════════════════════════ */
 .ev{display:grid;grid-template-columns:1fr 340px;gap:0;min-height:calc(100vh - 65px)}
