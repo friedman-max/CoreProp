@@ -2863,6 +2863,268 @@ def report_slip_status(req: SlipStatusRequest, token: str = Query("", alias="cp_
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Auto-placement
+#
+# Arms the browser extension to place an auto-backtested slip on PrizePicks with
+# no human in the loop. Real money moves, so the rules live HERE, not in the
+# extension: the client asks what it may do and the server decides. A user can
+# open devtools on the extension; they cannot talk this endpoint into a larger
+# stake than their row allows.
+#
+# AUTO_PLACE_ENABLED is the global kill switch — set it false on Render to
+# disarm every user at once without a deploy.
+# ---------------------------------------------------------------------------
+
+AUTO_PLACE_ENABLED = os.getenv("AUTO_PLACE_ENABLED", "false").lower() == "true"
+
+# How long after a slip is logged it stays eligible. Past this the priced line
+# is stale enough that placing is guesswork, and the point of the feature is to
+# beat the line rather than chase it.
+_AUTO_PLACE_MAX_AGE_MIN = 10
+
+# Consecutive failures before the server stops handing out work.
+_AUTO_PLACE_FAIL_LIMIT = 3
+
+
+def _auto_place_settings(user: dict) -> dict:
+    """Resolve a user's effective auto-place state, applying every gate."""
+    cfg = _get_user_config(user) or {}
+    mode = str(cfg.get("auto_place_mode") or "off").lower()
+
+    # Consent is mandatory and tracked separately from the mode: a row that
+    # somehow has mode='live' with no recorded disclaimer acceptance is off.
+    if not cfg.get("auto_place_consent_at"):
+        mode = "off"
+    if not AUTO_PLACE_ENABLED:
+        mode = "off"
+
+    stake = float(cfg.get("auto_place_stake") or 1)
+    max_stake = float(cfg.get("auto_place_max_stake") or 5)
+    return {
+        "mode": mode,
+        # Clamp rather than reject: the ceiling is the user's own stated limit,
+        # so honouring it silently is right, but it must never be exceeded.
+        "stake": max(0.0, min(stake, max_stake)),
+        "max_stake": max_stake,
+        "daily_cap": float(cfg.get("auto_place_daily_cap") or 0),
+        "fail_streak": int(cfg.get("auto_place_fail_streak") or 0),
+    }
+
+
+def _auto_place_spent_today(db, user_id: str) -> float:
+    """Total stake actually placed by the bot since UTC midnight."""
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        rows = (db.table("auto_place_log").select("stake")
+                .eq("user_id", user_id).eq("status", "placed")
+                .gte("created_at", start.isoformat()).execute().data) or []
+    except Exception as exc:
+        # Fail CLOSED. If the cap cannot be read, report it as fully spent so
+        # the bot stands down rather than placing unbounded wagers.
+        logger.error("auto_place: cannot read daily spend for %s: %s", user_id, exc)
+        return float("inf")
+    return sum(float(r.get("stake") or 0) for r in rows)
+
+
+@app.get("/api/auto-place/status")
+def auto_place_status(user: dict = Depends(get_current_user)):
+    """What the extension may do right now — and why not, if not."""
+    from engine.database import get_user_db
+
+    s = _auto_place_settings(user)
+    db = get_user_db(user["jwt"])
+    spent = _auto_place_spent_today(db, user["id"]) if db else float("inf")
+    remaining = max(0.0, s["daily_cap"] - spent)
+
+    blocked = None
+    if not AUTO_PLACE_ENABLED:
+        blocked = "auto-placement is disabled server-side"
+    elif s["mode"] == "off":
+        blocked = "not armed"
+    elif s["fail_streak"] >= _AUTO_PLACE_FAIL_LIMIT:
+        blocked = f"disarmed after {s['fail_streak']} consecutive failures"
+    elif remaining < s["stake"]:
+        blocked = f"daily cap reached (${spent:.2f} of ${s['daily_cap']:.2f})"
+
+    return {
+        "armed": blocked is None,
+        "mode": s["mode"],
+        "stake": s["stake"],
+        "max_stake": s["max_stake"],
+        "daily_cap": s["daily_cap"],
+        "spent_today": None if spent == float("inf") else spent,
+        "remaining_today": remaining,
+        "fail_streak": s["fail_streak"],
+        "blocked_reason": blocked,
+    }
+
+
+@app.get("/api/auto-place/queue")
+def auto_place_queue(user: dict = Depends(get_current_user)):
+    """Slips the bot is cleared to place, newest first.
+
+    Derived rather than stored: a slip qualifies if it was logged inside the
+    freshness window and has no auto_place_log row yet. That keeps the audit
+    table the single source of truth for what has been attempted — a separate
+    queue table could drift out of step with it and double-place.
+    """
+    from engine.database import get_user_db
+
+    s = _auto_place_settings(user)
+    if s["mode"] == "off" or s["fail_streak"] >= _AUTO_PLACE_FAIL_LIMIT:
+        return {"slips": [], "mode": s["mode"], "stake": s["stake"]}
+
+    db = get_user_db(user["jwt"])
+    if not db:
+        return {"slips": [], "mode": s["mode"], "stake": s["stake"]}
+
+    spent = _auto_place_spent_today(db, user["id"])
+    if spent + s["stake"] > s["daily_cap"]:
+        return {"slips": [], "mode": s["mode"], "stake": s["stake"],
+                "blocked_reason": "daily cap reached"}
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=_AUTO_PLACE_MAX_AGE_MIN)
+    try:
+        slips = (db.table("slips")
+                 .select("id, timestamp, slip_type, n_legs")
+                 .gte("timestamp", cutoff.isoformat())
+                 .order("timestamp", desc=True).limit(10).execute().data) or []
+        if not slips:
+            return {"slips": [], "mode": s["mode"], "stake": s["stake"]}
+
+        sids = [row["id"] for row in slips]
+        attempted = {r["slip_id"] for r in (
+            db.table("auto_place_log").select("slip_id")
+            .in_("slip_id", sids).execute().data or [])}
+        legs = (db.table("legs")
+                .select("slip_id, leg_num, player, league, prop, line, side, game_start")
+                .in_("slip_id", sids).order("leg_num").execute().data) or []
+    except Exception as exc:
+        logger.error("auto_place: queue read failed for %s: %s", user["id"], exc)
+        return {"slips": [], "mode": s["mode"], "stake": s["stake"]}
+
+    by_slip: dict = {}
+    for leg in legs:
+        by_slip.setdefault(leg["slip_id"], []).append(leg)
+
+    now = datetime.now(timezone.utc)
+    out = []
+    for sl in slips:
+        if sl["id"] in attempted:
+            continue
+        rows = by_slip.get(sl["id"]) or []
+        if not rows:
+            continue
+        # Never hand over a slip whose game has already started: the matcher has
+        # no date awareness and would stage a live or entirely wrong game.
+        started = False
+        for leg in rows:
+            gs = leg.get("game_start")
+            if not gs:
+                continue
+            try:
+                when = datetime.fromisoformat(str(gs).replace("Z", "+00:00"))
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                if when <= now:
+                    started = True
+                    break
+            except (ValueError, TypeError):
+                continue
+        if started:
+            continue
+
+        out.append({
+            "slip_id": sl["id"],
+            "slip_type": sl.get("slip_type") or "Power",
+            "n_legs": sl.get("n_legs") or len(rows),
+            "legs": [{
+                "player": leg["player"], "league": leg["league"],
+                "prop": leg["prop"], "line": leg["line"],
+                "side": "over" if str(leg.get("side", "")).lower().startswith("o") else "under",
+                "game_start": leg.get("game_start"),
+            } for leg in rows],
+        })
+
+    # One at a time. Never hand the bot a burst of wagers to fire.
+    return {"slips": out[:1], "mode": s["mode"], "stake": s["stake"]}
+
+
+class AutoPlaceResult(BaseModel):
+    slip_id: str
+    status: str                 # placed | skipped | failed
+    reason: str = ""
+    stake: float = 0
+    legs_total: int = 0
+    legs_staged: int = 0
+    detail: dict = {}
+    version: str = ""
+
+
+@app.post("/api/auto-place/result")
+def auto_place_result(req: AutoPlaceResult, user: dict = Depends(get_current_user)):
+    """Record an attempt and update the failure streak.
+
+    The log row is what marks a slip as attempted, so this must be called for
+    EVERY outcome including skips — otherwise the queue hands the same slip
+    back on the next poll and the bot retries it forever.
+    """
+    from engine.database import get_user_db
+
+    db = get_user_db(user["jwt"])
+    if not db:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
+
+    s = _auto_place_settings(user)
+    status = req.status if req.status in ("placed", "skipped", "failed") else "failed"
+
+    # Trust the client for narrative, never for money: the recorded stake is
+    # what policy allowed, not what the extension claims it typed.
+    stake = min(float(req.stake or 0), s["max_stake"]) if status == "placed" else 0.0
+
+    try:
+        db.table("auto_place_log").insert({
+            "user_id": user["id"],
+            "slip_id": req.slip_id,
+            "mode": s["mode"],
+            "status": status,
+            "reason": (req.reason or "")[:500],
+            "stake": stake,
+            "legs_total": req.legs_total,
+            "legs_staged": req.legs_staged,
+            "detail": req.detail or {},
+            "extension_ver": (req.version or "")[:32],
+        }).execute()
+    except Exception as exc:
+        logger.error("auto_place: log insert failed for %s: %s", user["id"], exc)
+        raise HTTPException(status_code=502, detail="Could not record the attempt.")
+
+    # A skip is a CORRECT outcome (the line moved), not a malfunction — only a
+    # genuine failure advances the streak toward auto-disarm.
+    streak = s["fail_streak"] + 1 if status == "failed" else 0
+    try:
+        db.table("user_config").update(
+            {"auto_place_fail_streak": streak}
+        ).eq("user_id", user["id"]).execute()
+    except Exception as exc:
+        logger.error("auto_place: streak update failed for %s: %s", user["id"], exc)
+
+    if status == "failed" and streak >= _AUTO_PLACE_FAIL_LIMIT:
+        logger.warning(
+            "auto_place: DISARMED user=%s after %d consecutive failures (last: %s)",
+            user["id"], streak, req.reason,
+        )
+
+    logger.info(
+        "auto_place: user=%s slip=%s %s (%s) stake=%.2f legs=%d/%d",
+        user["id"], req.slip_id, status, req.reason or "-",
+        stake, req.legs_staged, req.legs_total,
+    )
+    return {"ok": True, "fail_streak": streak,
+            "disarmed": streak >= _AUTO_PLACE_FAIL_LIMIT}
+
+
 class PPAvailabilityRequest(BaseModel):
     legs: list[dict]
 

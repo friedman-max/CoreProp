@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>CoreProp — Analytics (custom date range demo)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   Standalone harness for the REAL Analytics component
+   (web/static/dist/page-analytics.js). It stubs window.cpApi with
+   sample settled-slip data so the P&L chart + the new custom
+   date-range picker can be used without a logged-in account.
+   Not wired into the app; safe to open directly.
+   CSS below is copied verbatim from index.html so the component
+   looks exactly as it does in production.
+   ═══════════════════════════════════════════════════════════════ */
+:root{
+  --bg:#0a0a0d;--bg-2:#11111a;--card:#14141e;--card-2:#1a1a25;--card-3:#22222f;
+  --hair:rgba(255,255,255,.06);--hair-2:rgba(255,255,255,.10);
+  --text:#f4f4f8;--text-2:#b9b9c8;--text-3:#7a7a8b;--text-4:#4a4a59;
+  --primary:#6366F1;--primary-2:#818cf8;--primary-hi:rgba(99,102,241,.20);
+  --green:#22C55E;--green-hi:rgba(34,197,94,.14);--red:#EF4444;--red-hi:rgba(239,68,68,.10);--amber:#F59E0B;
+  --logo-1:#7EE7F5;--logo-2:#3DA9F0;--logo-3:#5B6BF0;
+  --radius:14px;--radius-sm:10px;--radius-xs:8px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+button{font-family:inherit}
+
+.demo-note{max-width:1480px;margin:0 auto;padding:16px 22px 0;color:var(--text-3);font-size:12.5px;line-height:1.6}
+.demo-note b{color:var(--text-2)}
+.demo-note code{font-family:"JetBrains Mono",monospace;color:var(--logo-2)}
+
+.bd-page{padding:18px 22px 60px;max-width:1480px;margin:0 auto}
+.an-panel{background:linear-gradient(180deg,#13131c,#0f0f17);border:1px solid var(--hair);border-radius:14px;padding:18px 20px;margin-bottom:14px}
+.an-section-sub{font-size:12px;color:var(--text-3)}
+.an-section-h{margin:20px 0 10px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);display:flex;align-items:center;gap:10px}
+
+.pnl-header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:12px;gap:12px;flex-wrap:wrap}
+.pnl-title{font-size:13px;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;font-weight:600}
+.pnl-title-sub{text-transform:none;opacity:.7;letter-spacing:0;margin-left:6px;font-size:11.5px}
+.pnl-total{font-size:38px;font-weight:800;letter-spacing:-.02em;font-family:"JetBrains Mono",monospace;line-height:1.1;margin-top:4px}
+.pnl-hover{color:var(--text-3);font-size:13px;font-family:"JetBrains Mono",monospace}
+.pnl-chart{margin:0 -4px}
+.pnl-chart svg{display:block;width:100%}
+.pnl-range{display:inline-flex;gap:2px;background:#0a0a12;border:1px solid var(--hair);padding:3px;border-radius:8px;margin-top:8px}
+.pnl-range-btn{background:transparent;border:0;color:var(--text-3);padding:6px 12px;border-radius:6px;font-weight:600;font-size:11.5px;cursor:pointer;letter-spacing:.04em;font-family:"JetBrains Mono",monospace}
+.pnl-range-btn:hover{color:var(--text)}
+.pnl-range-btn.is-on{background:#1f1f2e;color:white}
+.pnl-range-btn.is-custom.is-on{background:linear-gradient(180deg,var(--primary-2),var(--primary));color:#fff;box-shadow:0 1px 0 rgba(255,255,255,.22) inset}
+.pnl-custom{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;background:#0a0a12;border:1px solid var(--hair);padding:6px 8px;border-radius:10px}
+.pnl-custom-field{display:inline-flex;align-items:center;gap:8px}
+.pnl-custom-field>span{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-family:"JetBrains Mono",ui-monospace,monospace}
+.pnl-custom-input{background:#14141e;border:1px solid var(--hair-2);color:var(--text);border-radius:8px;padding:7px 10px;font-size:12.5px;font-family:"JetBrains Mono",ui-monospace,monospace;outline:none;color-scheme:dark;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease}
+.pnl-custom-input:hover{border-color:var(--primary-2)}
+.pnl-custom-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-hi)}
+.pnl-custom-arrow{color:var(--text-4);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
+.tone-good{color:var(--green)!important}
+.tone-bad{color:#FCA5A5!important}
+
+.bt-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px}
+.bt-card{background:linear-gradient(180deg,#13131c,#0f0f17);border:1px solid var(--hair);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column}
+.bt-card-label{font-size:11px;font-weight:600;letter-spacing:.05em;color:var(--text-3);text-transform:uppercase;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;min-height:2.4em;line-height:1.25}
+.bt-card-sub{font-size:9.5px;opacity:.7;text-transform:none;letter-spacing:0}
+.bt-card-value{font-size:22px;font-weight:700;margin-top:auto;padding-top:6px;letter-spacing:-.01em;font-family:"JetBrains Mono",monospace}
+.bt-card.tone-good .bt-card-value{color:var(--green)}
+.bt-card.tone-bad .bt-card-value{color:#FCA5A5}
+.cp-skel{display:inline-block;border-radius:6px;background:#1a1a26;height:22px;width:64px}
+
+.cp-input{background:#0e0e16;border:1px solid var(--hair);color:var(--text);border-radius:10px;padding:12px 14px;font-size:14px;width:100%;outline:none;transition:border-color .15s ease, box-shadow .15s ease;font-family:inherit}
+.cp-input:focus{border-color:var(--primary);box-shadow:0 0 0 4px var(--primary-hi)}
+.cp-input-sm{padding:8px 10px;font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="demo-note">
+  <b>Analytics — custom date range demo.</b> This mounts the real
+  <code>page-analytics.js</code> component with sample settled-slip data. Use the range
+  row under the chart: the presets (1D…MAX) work as before, and the new
+  <code>Custom</code> button reveals <b>From</b> / <b>To</b> date pickers that scope the
+  equity curve <i>and</i> every stat card to your chosen window.
+</div>
+
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+
+<script>
+// Expose the bare hooks globally, exactly like components.jsx does in the app,
+// so the compiled page-analytics.js (which uses bare useState/useMemo/etc)
+// resolves them.
+const { useState, useEffect, useRef, useMemo } = React;
+
+// StatCard is defined in page-backtest.jsx in the app; the analytics component
+// depends on it. Copied verbatim here so the stat grid renders identically.
+function StatCard({ label, sub, value, tone, loading }) {
+  return React.createElement("div", { className: "bt-card tone-" + (loading ? "neutral" : (tone || "neutral")) },
+    React.createElement("div", { className: "bt-card-label" }, label, !loading && sub ? React.createElement("span", { className: "bt-card-sub" }, "(" + sub + ")") : null),
+    React.createElement("div", { className: "bt-card-value" }, loading ? React.createElement("span", { className: "cp-skel" }) : value)
+  );
+}
+
+// ---- sample data: ~95 days of settled slips, dates relative to today so the
+//      presets AND custom ranges all resolve against real wall-clock time. ----
+function makeSample() {
+  var now = Date.now(), DAY = 86400000;
+  var timeline = [], legs = [], clv = [];
+  var n = 48, startAgo = 95;
+  for (var i = 0; i < n; i++) {
+    var frac = i / (n - 1);
+    var t = now - (startAgo * (1 - frac)) * DAY - Math.random() * 0.4 * DAY;
+    var win = Math.random() < 0.52;
+    var delta = win ? (1 + Math.random() * 4.2) : -(1 + Math.random() * 1.7);
+    if (Math.random() < 0.06) delta = 0;
+    timeline.push({ _t: t, timestamp: new Date(t).toISOString(), pnl: +delta.toFixed(2) });
+    var L = 1 + Math.floor(Math.random() * 3);
+    for (var j = 0; j < L; j++) {
+      var p = 0.54 + Math.random() * 0.18;
+      var out = Math.random() < (p - 0.02) ? 1 : 0;
+      legs.push({ timestamp: new Date(t).toISOString(), true_prob: +p.toFixed(4), outcome: out });
+      if (Math.random() < 0.5) {
+        var c = (Math.random() - 0.45) * 0.05;
+        clv.push({ timestamp: new Date(t).toISOString(), true_prob: +p.toFixed(4), closing_prob: +(p + c).toFixed(4), clv_pct: +c.toFixed(4) });
+      }
+    }
+  }
+  timeline.sort(function (a, b) { return a._t - b._t; });
+  var cum = 0;
+  timeline.forEach(function (pt, k) { cum += pt.pnl; pt.cum_pnl = +cum.toFixed(2); pt.slip_id = "slip_" + k; delete pt._t; });
+  return { pnl_timeline: timeline, resolved_legs: legs, clv_legs: clv, n_clv_tracked: clv.length, clv_plus_rate: 0.55, avg_clv_pct: 0.004 };
+}
+
+var SAMPLE = makeSample();
+window.cpApi = { apiFetch: function (path) { return Promise.resolve(SAMPLE); } };
+</script>
+
+<script src="dist/page-analytics.js"></script>
+
+<script>
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AnalyticsPage));
+</script>
+
+</body>
+</html>
