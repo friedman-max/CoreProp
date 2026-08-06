@@ -77,6 +77,16 @@ _NUM_PICKS = 3
 # short board.
 _BACKFILL_LOOKBACK_DAYS = 14
 
+# Hours after the 8am boundary during which a sub-standard board is served but
+# NOT frozen. The boundary is deliberately set before most of the day's lines
+# post, so the 8am snapshot is the *worst* one all day: observed live on
+# 2026-08-06, the 8:04am recompute found nothing in band and backfilled all
+# three slots from the previous day. Freezing that would have locked yesterday's
+# cards in until the next 8am. Instead the board stays provisional until it can
+# be built from today's own in-band candidates; past this deadline whatever is
+# best-available freezes, so the board stops churning for the bulk of the day.
+_SETTLE_HOURS = 4
+
 # Serialized match rows carry one display-odds column per book (see
 # web/app.py::_base_for_side and the fd_odds/dk_odds/... fields appended to
 # each side's row). These are the same numbers the +EV table shows. Each odds
@@ -114,6 +124,17 @@ def day_index(now: datetime | None = None) -> int:
         now = now.replace(tzinfo=timezone.utc)
     shifted = now.astimezone(_ET) - timedelta(hours=_DAY_BOUNDARY_HOUR)
     return (shifted.date() - _EPOCH).days
+
+
+def _hours_since_boundary(now: datetime) -> float:
+    """Hours elapsed since this board's 8am ET boundary. Computed off the ET
+    civil clock (not a fixed 24h grid) so it stays correct across DST."""
+    et = now.astimezone(_ET)
+    boundary = et.replace(hour=_DAY_BOUNDARY_HOUR, minute=0, second=0, microsecond=0)
+    if et < boundary:
+        # Before 8am: this board began at 8am *yesterday*.
+        boundary -= timedelta(days=1)
+    return (et - boundary).total_seconds() / 3600.0
 
 
 def _state_key(idx: int) -> str:
@@ -432,7 +453,25 @@ def _compute_blob(idx: int, now_utc: datetime) -> tuple[dict, bool]:
         "frozen_at": now_utc.isoformat().replace("+00:00", "Z"),
         "picks": picks,
     }
-    freezable = bool(match_rows) and bool(picks)
+
+    # A board only earns the freeze when it is a full slate built from TODAY's
+    # own in-band candidates. `bool(match_rows)` is not enough: a successful
+    # scrape that yields nothing in band still backfills a full board out of
+    # yesterday's blob, and freezing that locks stale cards in for 24h (the
+    # 8am boundary lands before most lines post, so this is the common case,
+    # not the edge case). Anything weaker is served provisionally and
+    # recomputed on the next request until the day's real slate posts.
+    fresh_ids = {c["id"] for c in candidates}
+    earned = (
+        len(picks) == _NUM_PICKS
+        and all(p["id"] in fresh_ids for p in picks)
+        and all(_in_band(p, _BAND_LO, None) for p in picks)
+    )
+    # Escape hatch: on a genuinely thin day the bar above may never be met, and
+    # a board that reshuffles every 5 minutes is worse than a settled marginal
+    # one. Past the deadline, take what we have.
+    settled = _hours_since_boundary(now_utc) >= _SETTLE_HOURS
+    freezable = bool(picks) and (earned or (settled and bool(match_rows)))
     return blob, freezable
 
 

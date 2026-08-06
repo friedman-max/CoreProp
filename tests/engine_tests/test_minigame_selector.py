@@ -264,6 +264,58 @@ def test_floor_tier_fires_only_when_band_and_backfill_are_empty():
     minigame.reset_for_tests()
 
 
+def test_backfilled_board_is_served_but_not_frozen():
+    """Observed live at the 2026-08-06 8:04am rollover: the scrape succeeded
+    but nothing qualified in band, so all three slots came from yesterday's
+    blob. Freezing that would pin stale cards for 24h — the board must stay
+    provisional so the evening slate can still claim the day."""
+    minigame.reset_for_tests()
+    # Yesterday: a real in-band board that freezes.
+    yesterday = datetime(2026, 8, 5, 15, 0, tzinfo=timezone.utc)
+    with _lock:
+        _state["matches"] = _rows("Kelsey Mitchell") + _rows("Caitlin Clark", line=21.5) \
+            + _rows("A'ja Wilson", line=19.5)
+    y_idx, y_blob = minigame.get_or_freeze_today(yesterday)
+    assert len(y_blob["picks"]) == 3
+
+    # Today, 8:04am ET: scrape is non-empty but holds nothing in band.
+    morning = datetime(2026, 8, 6, 12, 4, tzinfo=timezone.utc)
+    assert minigame.day_index(morning) == y_idx + 1
+    with _lock:
+        _state["matches"] = _rows("Coin Flip", _COIN)
+    blob, freezable = minigame._compute_blob(minigame.day_index(morning), morning)
+    assert [p["id"] for p in blob["picks"]] == [p["id"] for p in y_blob["picks"]]
+    assert freezable is False, "backfilled morning board must not freeze"
+    minigame.reset_for_tests()
+
+
+def test_thin_day_settles_after_the_deadline():
+    """The provisional state can't last all day — a board that reshuffles
+    every scrape is worse than a settled marginal one."""
+    minigame.reset_for_tests()
+    with _lock:
+        _state["matches"] = _rows("Mike Trout", (-125, 101)) \
+            + _rows("Elly De La Cruz", (-130, 105), line=1.5) \
+            + _rows("Trea Turner", (-128, 103), line=2.5)
+    # 9am ET — inside the settle window, sub-band board stays provisional.
+    early = datetime(2026, 8, 6, 13, 0, tzinfo=timezone.utc)
+    _blob, freezable = minigame._compute_blob(minigame.day_index(early), early)
+    assert freezable is False
+    # 1pm ET — past the deadline, the same board settles.
+    late = datetime(2026, 8, 6, 17, 0, tzinfo=timezone.utc)
+    blob, freezable = minigame._compute_blob(minigame.day_index(late), late)
+    assert freezable is True and len(blob["picks"]) == 3
+    minigame.reset_for_tests()
+
+
+def test_hours_since_boundary_handles_pre_8am():
+    # 2am ET belongs to the board that started 8am the previous day: 18h in.
+    pre = datetime(2026, 8, 6, 6, 0, tzinfo=timezone.utc)   # 02:00 ET
+    assert minigame._hours_since_boundary(pre) == pytest.approx(18.0, abs=0.1)
+    post = datetime(2026, 8, 6, 13, 0, tzinfo=timezone.utc)  # 09:00 ET
+    assert minigame._hours_since_boundary(post) == pytest.approx(1.0, abs=0.1)
+
+
 # ── determinism ────────────────────────────────────────────────────────────
 
 def test_same_day_same_picks():
