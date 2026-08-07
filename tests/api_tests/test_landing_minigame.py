@@ -117,6 +117,60 @@ def test_daily_pick_is_frozen_for_the_day(client):
     assert ids1 == ids2
 
 
+def test_daily_pick_is_stable_across_reloads_on_a_provisional_board(client):
+    """The reported bug end-to-end: "on reload they should be able to play the
+    same set of 3 each time". The seeded snapshot here is sub-band, so the
+    board never earns the freeze — the exact case v1.1 recomputed per request.
+    Selection-level coverage is in tests/engine_tests/test_minigame_selector.py;
+    this one asserts the HTTP surface a visitor actually reloads."""
+    minigame.reset_for_tests()
+    rows = []
+    # -125/+101 devigs to .5276, -130/+105 to .5367, -128/+103 to .5322: above
+    # the .52 floor, below the .55 band.
+    for i, (over, under) in enumerate(((-125, 101), (-130, 105), (-128, 103))):
+        rows += _rows(f"Sub Band {i}", over, under, line=20.5 + i)
+    with _lock:
+        _state["matches"] = rows
+    first = client.get("/api/public/daily-pick").json()
+    assert len(first["picks"]) == 3
+
+    # A new scrape lands with an entirely different sub-band slate.
+    rows2 = []
+    for i, (over, under) in enumerate(((-125, 101), (-130, 105), (-128, 103))):
+        rows2 += _rows(f"Other Guy {i}", over, under, line=30.5 + i)
+    with _lock:
+        _state["matches"] = rows2
+    second = client.get("/api/public/daily-pick").json()
+    assert [p["id"] for p in second["picks"]] == [p["id"] for p in first["picks"]]
+    assert all(p["player"].startswith("Sub Band") for p in second["picks"])
+
+
+def test_daily_pick_revalidates_with_an_etag(client):
+    """Every landing-page hit calls this endpoint, so a repeat visitor inside
+    the same board should cost a 304 and not a re-serialized body — the same
+    weak-ETag contract web/app.py::_cached_response uses for the authed
+    payloads."""
+    r = client.get("/api/public/daily-pick")
+    etag = r.headers.get("etag")
+    assert etag and etag.startswith('W/"')
+    assert r.headers.get("cache-control") == "no-cache"
+
+    again = client.get("/api/public/daily-pick", headers={"If-None-Match": etag})
+    assert again.status_code == 304
+    assert again.headers.get("etag") == etag
+    assert again.content == b""
+
+
+def test_daily_pick_etag_tracks_the_board_not_the_clock(client):
+    """The tag is hashed over the response bytes, so a board upgrade
+    invalidates it for free and an unchanged board keeps revalidating cheaply.
+    A time-derived tag would churn on every request instead."""
+    a = client.get("/api/public/daily-pick")
+    b = client.get("/api/public/daily-pick")
+    assert a.headers["etag"] == b.headers["etag"]
+    assert a.content == b.content
+
+
 # ── reveal ─────────────────────────────────────────────────────────────────
 
 def test_reveal_unknown_id_404(client):

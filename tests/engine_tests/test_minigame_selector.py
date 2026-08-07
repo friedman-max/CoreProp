@@ -11,10 +11,13 @@ Covers the contract's load-bearing math with no network and no TestClient:
     whole point of the receipt.
   * Backfill pulls from the most recent previous day's frozen selection and
     never invents cards.
+  * Reloading is stable: a cached provisional board is served unchanged, and
+    is replaced at most once — only by a board that earned the freeze.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import threading
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -306,6 +309,413 @@ def test_thin_day_settles_after_the_deadline():
     blob, freezable = minigame._compute_blob(minigame.day_index(late), late)
     assert freezable is True and len(blob["picks"]) == 3
     minigame.reset_for_tests()
+
+
+# ── provisional caching: stable reloads, at most one upgrade ───────────────
+#
+# The bug this section pins down (reported after v1 shipped): "on reload they
+# should be able to play the same set of 3 each time". After 282ff3f stopped
+# freezing un-earned boards, an un-earned board was recomputed on EVERY request
+# from a candidate pool that moves with each 5-minute scrape, so the three
+# players changed per reload. A cached provisional blob fixes that without
+# reintroducing the stale-morning-board pin 282ff3f removed.
+
+# 9am ET — one hour into the day, well inside the _SETTLE_HOURS window, so a
+# sub-band board stays provisional rather than settling.
+_MORNING = datetime(2026, 8, 6, 13, 0, tzinfo=timezone.utc)
+
+# Sub-band pairs: -125/+101 devigs to .5276, -130/+105 to .5367, -128/+103 to
+# .5322 — all above the .52 floor, all below the .55 band, so a board built
+# from them is servable but never earns the freeze.
+_SUB_BAND = ((-125, 101), (-130, 105), (-128, 103))
+
+
+def _provisional_rows(names):
+    """A floor-tier (sub-band) snapshot: fills a board, never earns it."""
+    rows = []
+    for i, name in enumerate(names):
+        rows += _rows(name, _SUB_BAND[i % len(_SUB_BAND)], line=20.5 + i)
+    return rows
+
+
+def _earned_rows(names):
+    """An in-band snapshot on future games: earns the freeze immediately."""
+    rows = []
+    for i, name in enumerate(names):
+        rows += _rows(name, _FAV_OVER, line=20.5 + i, trending=500 + i)
+    return rows
+
+
+def _capture_mirror(monkeypatch):
+    """Record app_state_cache writes. _adopt mirrors on a daemon thread, so the
+    event is what the caller waits on rather than a sleep."""
+    calls: list[tuple[str, dict]] = []
+    fired = threading.Event()
+
+    def _fake_sync(key, data):
+        calls.append((key, data))
+        fired.set()
+        return True
+
+    monkeypatch.setattr(minigame, "sync_state_to_supabase", _fake_sync)
+    return calls, fired
+
+
+def test_provisional_board_is_stable_across_reloads():
+    """The reported bug, directly: the snapshot churns (new scrape, different
+    players) but neither board can earn the freeze, so the visitor must keep
+    seeing the first three cards. `now` is advanced past the upgrade throttle
+    so this proves the CACHE holds the board, not merely the rate limiter."""
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    _idx, first = minigame.get_or_freeze_today(_MORNING)
+    assert len(first["picks"]) == 3
+    assert first["status"] == minigame._STATUS_PROVISIONAL
+
+    with _lock:
+        _state["matches"] = _provisional_rows(["Shohei Ohtani", "Juan Soto", "Aaron Judge"])
+    _idx, second = minigame.get_or_freeze_today(_MORNING + timedelta(seconds=61))
+    assert [p["id"] for p in second["picks"]] == [p["id"] for p in first["picks"]]
+    assert {p["player"] for p in second["picks"]} == {"Mike Trout", "Elly De La Cruz",
+                                                     "Trea Turner"}
+
+
+def test_provisional_board_upgrades_once_to_an_earned_board():
+    """A provisional board must not pin the day — that was the 282ff3f bug. It
+    yields exactly once, to a board that earned the freeze, and then stops
+    responding to the snapshot forever."""
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    _idx, provisional = minigame.get_or_freeze_today(_MORNING)
+    assert provisional["status"] == minigame._STATUS_PROVISIONAL
+
+    # The evening slate posts: three in-band future markets.
+    with _lock:
+        _state["matches"] = _earned_rows(["Kelsey Mitchell", "Caitlin Clark", "A'ja Wilson"])
+    _idx, upgraded = minigame.get_or_freeze_today(_MORNING + timedelta(seconds=61))
+    assert upgraded["status"] == minigame._STATUS_EARNED
+    assert {p["player"] for p in upgraded["picks"]} == {"Kelsey Mitchell", "Caitlin Clark",
+                                                       "A'ja Wilson"}
+
+    # ...and never again, however much the snapshot moves.
+    with _lock:
+        _state["matches"] = _earned_rows(["Napheesa Collier", "Breanna Stewart", "Sabrina Ionescu"])
+    _idx, after = minigame.get_or_freeze_today(_MORNING + timedelta(seconds=600))
+    assert after is upgraded
+
+
+def test_upgrade_attempts_are_throttled():
+    """Rebuilding the candidate graph on every landing-page hit is the load
+    half of "it should instantly load like the rest of the website". Inside the
+    throttle window the cached board is returned without a recompute, even
+    though a better board is already available."""
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    _idx, provisional = minigame.get_or_freeze_today(_MORNING)
+
+    with _lock:
+        _state["matches"] = _earned_rows(["Kelsey Mitchell", "Caitlin Clark", "A'ja Wilson"])
+    _idx, throttled = minigame.get_or_freeze_today(_MORNING + timedelta(seconds=10))
+    assert throttled is provisional, "upgrade attempted inside the throttle window"
+
+    _idx, upgraded = minigame.get_or_freeze_today(_MORNING + timedelta(seconds=61))
+    assert upgraded["status"] == minigame._STATUS_EARNED
+
+
+def test_provisional_blob_is_mirrored_to_app_state_cache(monkeypatch):
+    """Instant load after a Render wake depends on this: the process comes back
+    with an empty snapshot and a ~90s boot scrape ahead of it, so a board that
+    only lives in this process is a board the next visitor doesn't get. v1
+    mirrored earned blobs only."""
+    calls, fired = _capture_mirror(monkeypatch)
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    idx, blob = minigame.get_or_freeze_today(_MORNING)
+    assert blob["status"] == minigame._STATUS_PROVISIONAL
+    assert fired.wait(2.0), "provisional blob was never mirrored"
+    (key, mirrored), = calls
+    assert key == minigame._state_key(idx)
+    assert mirrored["status"] == minigame._STATUS_PROVISIONAL
+    assert [p["id"] for p in mirrored["picks"]] == [p["id"] for p in blob["picks"]]
+
+
+def test_disable_persistence_suppresses_the_mirror(monkeypatch):
+    """app_state_cache is keyed by day alone and a local instance points at the
+    same Supabase as prod, so an ungated write lets a dev box overwrite the
+    board prod is serving — the reason web/app.py::_sync_all is gated. Barely
+    mattered while only earned boards mirrored; provisional boards mirror on
+    essentially every local boot."""
+    calls, fired = _capture_mirror(monkeypatch)
+    monkeypatch.setattr(minigame.cfg, "DISABLE_PERSISTENCE", True)
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    _idx, blob = minigame.get_or_freeze_today(_MORNING)
+    # The board is still built, cached and served — only the write is skipped.
+    assert len(blob["picks"]) == 3
+    assert not fired.wait(0.5)
+    assert calls == []
+
+
+def test_mirrored_provisional_blob_survives_a_restart_and_can_still_upgrade(monkeypatch):
+    """The mirror round-trip: a restarted process serves the stored board
+    immediately (no scrape yet, empty snapshot) and still knows it is
+    provisional, so the day is not pinned to it."""
+    calls, fired = _capture_mirror(monkeypatch)
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    minigame.get_or_freeze_today(_MORNING)
+    assert fired.wait(2.0)
+    (_key, mirrored), = calls
+
+    # Restart: caches gone, snapshot empty, only the mirror remains.
+    minigame.reset_for_tests()
+    monkeypatch.setattr(minigame, "load_state_from_supabase", lambda key: (mirrored, None))
+    with _lock:
+        _state["matches"] = []
+    _idx, served = minigame.get_or_freeze_today(_MORNING + timedelta(minutes=5))
+    assert [p["id"] for p in served["picks"]] == [p["id"] for p in mirrored["picks"]]
+
+    with _lock:
+        _state["matches"] = _earned_rows(["Kelsey Mitchell", "Caitlin Clark", "A'ja Wilson"])
+    _idx, upgraded = minigame.get_or_freeze_today(_MORNING + timedelta(minutes=10))
+    assert upgraded["status"] == minigame._STATUS_EARNED
+
+
+def test_the_settle_deadline_never_shrinks_a_cached_board():
+    """The settle arm of `freezable` is quantity-blind (`bool(picks)`), so an
+    afternoon recompute that finds only one market left — the others tipped off
+    and were pulled — must not replace a full board AND pin the short one for
+    the rest of the day. The visitor would lose two of their three free picks
+    mid-session."""
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    _idx, full = minigame.get_or_freeze_today(_MORNING)
+    assert len(full["picks"]) == 3
+
+    # 2pm ET: past _SETTLE_HOURS, and the snapshot now holds one lone market.
+    with _lock:
+        _state["matches"] = _rows("Shohei Ohtani", (-125, 101), line=99.5)
+    late = _MORNING + timedelta(hours=5)
+    lone, freezable = minigame._compute_blob(minigame.day_index(late), late)
+    assert freezable is True and len(lone["picks"]) == 1, "premise: this board would freeze"
+
+    _idx, served = minigame.get_or_freeze_today(late)
+    assert served is full
+    # Still provisional, so a real evening slate can still claim the day.
+    assert served["status"] == minigame._STATUS_PROVISIONAL
+
+
+def test_a_provisional_day_is_not_a_backfill_source():
+    """Provisional blobs mirror to app_state_cache now, and a provisional board
+    is by construction mostly backfill itself — so accepting one as a source
+    would chain a card forward one day at a time forever and
+    _BACKFILL_LOOKBACK_DAYS would bound the chain instead of the card's age."""
+    idx = minigame.day_index(_MORNING)
+    with minigame._frozen_lock:
+        minigame._frozen_cache[idx - 1] = {
+            "day_index": idx - 1,
+            "status": minigame._STATUS_PROVISIONAL,
+            "picks": [_fake_pick("aaa"), _fake_pick("bbb"), _fake_pick("ccc")],
+        }
+    with _lock:
+        _state["matches"] = _rows("Only Today")
+    _i, blob = minigame.get_or_freeze_today(_MORNING)
+    assert [p["player"] for p in blob["picks"]] == ["Only Today"]
+
+    # The same blob marked earned IS a source — that's the backfill this test
+    # must not have broken.
+    minigame.reset_for_tests()
+    with minigame._frozen_lock:
+        minigame._frozen_cache[idx - 1] = {
+            "day_index": idx - 1,
+            "status": minigame._STATUS_EARNED,
+            "picks": [_fake_pick("aaa"), _fake_pick("bbb"), _fake_pick("ccc")],
+        }
+    _i, blob = minigame.get_or_freeze_today(_MORNING)
+    assert len(blob["picks"]) == 3
+
+
+def test_the_empty_board_path_is_throttled_too():
+    """An empty board is deliberately never adopted, so "throttle only when a
+    board exists" never bound: every request rebuilt the entire candidate graph
+    on the one endpoint every landing hit and every bot calls."""
+    calls: list[int] = []
+    real_build = minigame._build_candidates
+
+    def _counting_build(rows, images):
+        calls.append(1)
+        return real_build(rows, images)
+
+    minigame._build_candidates = _counting_build
+    try:
+        # Non-empty snapshot, nothing qualifying: -110/-110 devigs to exactly
+        # 0.5, below the 0.52 floor, and there is no history to backfill.
+        with _lock:
+            _state["matches"] = _rows("Coin Flip", _COIN)
+        for sec in range(5):
+            _idx, blob = minigame.get_or_freeze_today(_MORNING + timedelta(seconds=sec))
+            assert blob["picks"] == []
+        assert len(calls) == 1
+
+        # ...and the day is not wedged: past the window it rebuilds and can
+        # still claim a board.
+        with _lock:
+            _state["matches"] = _earned_rows(["Kelsey Mitchell", "Caitlin Clark", "A'ja Wilson"])
+        _idx, blob = minigame.get_or_freeze_today(_MORNING + timedelta(seconds=61))
+        assert len(blob["picks"]) == 3
+    finally:
+        minigame._build_candidates = real_build
+
+
+def test_a_concurrently_installed_board_is_not_overwritten():
+    """The compute runs without _frozen_lock, so on the cold-start path N
+    requests each build their own board. The first one installed wins: deferring
+    only to EARNED boards meant thread B's board replaced the three cards
+    thread A had already serialized and sent."""
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    idx, first = minigame.get_or_freeze_today(_MORNING)
+
+    # A thread that read `cached is None` before `first` was installed, landing
+    # late with its own provisional board.
+    late = minigame._blob(idx, _MORNING, [_fake_pick("zzz")], False)
+    assert minigame._adopt(idx, late, None) is first
+    with minigame._frozen_lock:
+        assert minigame._frozen_cache[idx] is first
+
+
+def test_grading_a_pick_never_moves_the_board():
+    """find_pick is a pure read. It used to call get_or_freeze_today, so the
+    reveal request could trigger the provisional -> earned upgrade that
+    invalidated its own pick id — the visitor tapped a side and got a 404 on
+    the card in front of them."""
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    idx, provisional = minigame.get_or_freeze_today(_MORNING)
+    held = provisional["picks"][0]["id"]
+
+    # The evening slate posts and the throttle window has passed: a
+    # get_or_freeze_today call here WOULD upgrade.
+    with _lock:
+        _state["matches"] = _earned_rows(["Kelsey Mitchell", "Caitlin Clark", "A'ja Wilson"])
+    reveal_at = _MORNING + timedelta(seconds=61)
+    graded = minigame.find_pick(held, reveal_at)
+    assert graded is not None and graded["id"] == held
+    with minigame._frozen_lock:
+        assert minigame._frozen_cache[idx] is provisional
+
+    # And once the upgrade does land (on a /daily-pick request), the id the
+    # visitor is still holding keeps grading off the superseded board.
+    _idx, upgraded = minigame.get_or_freeze_today(reveal_at)
+    assert upgraded is not provisional
+    assert minigame.find_pick(held, reveal_at)["id"] == held
+
+
+def test_a_visitor_mid_game_keeps_the_board_they_started_on():
+    """The one allowed board change is not an improvement for someone who has
+    already played: their stored plays are keyed on ids the new board doesn't
+    have, so the client drops all of them, the meter resets and they are handed
+    three fresh free picks. ?have= keeps serving them their board."""
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    idx, provisional = minigame.get_or_freeze_today(_MORNING)
+    held = [p["id"] for p in provisional["picks"]]
+
+    with _lock:
+        _state["matches"] = _earned_rows(["Kelsey Mitchell", "Caitlin Clark", "A'ja Wilson"])
+    _idx, upgraded = minigame.get_or_freeze_today(_MORNING + timedelta(seconds=61))
+    assert upgraded is not provisional
+
+    assert minigame.board_for_ids(idx, upgraded, held[:1]) is provisional
+    assert minigame.board_for_ids(idx, upgraded, held) is provisional
+    # A caller holding the live board, or nothing, or a forged id, gets the
+    # live board.
+    assert minigame.board_for_ids(idx, upgraded, [p["id"] for p in upgraded["picks"]]) is upgraded
+    assert minigame.board_for_ids(idx, upgraded, []) is upgraded
+    assert minigame.board_for_ids(idx, upgraded, ["deadbeef0000"]) is upgraded
+
+
+def test_failed_scrape_never_replaces_a_cached_board_with_nothing():
+    """The bail-out guards in web/app.py preserve state on a dead scrape, but a
+    zero-row snapshot still reaches here on a wake. An empty recompute must not
+    blank a board the visitor is mid-game on."""
+    with _lock:
+        _state["matches"] = _provisional_rows(["Mike Trout", "Elly De La Cruz", "Trea Turner"])
+    _idx, first = minigame.get_or_freeze_today(_MORNING)
+    with _lock:
+        _state["matches"] = []
+    _idx, second = minigame.get_or_freeze_today(_MORNING + timedelta(seconds=61))
+    assert second is first
+
+
+def test_missing_past_days_are_not_re_fetched_every_request(monkeypatch):
+    """_backfill walks _BACKFILL_LOOKBACK_DAYS back on every miss. Without a
+    negative cache that is 14 Supabase selects per request during exactly the
+    window where the page has nothing to show and is being reloaded."""
+    reads: list[str] = []
+
+    def _counting_load(key):
+        reads.append(key)
+        return None, None
+
+    monkeypatch.setattr(minigame, "load_state_from_supabase", _counting_load)
+    with _lock:
+        _state["matches"] = _rows("Only Today")   # 1 pick -> 2 slots backfill
+    minigame.get_or_freeze_today(_MORNING)
+    first_pass = len(reads)
+    assert first_pass >= minigame._BACKFILL_LOOKBACK_DAYS
+
+    minigame.get_or_freeze_today(_MORNING + timedelta(seconds=61))
+    # Today's key is still re-read (it is the one that can appear later); the
+    # past days are not.
+    assert len(reads) - first_pass <= 1
+
+
+class _FakeMonotonic:
+    """Stands in for the `time` module inside web.minigame only."""
+
+    def __init__(self):
+        self._t = 1000.0
+
+    def monotonic(self):
+        return self._t
+
+    def advance(self, seconds):
+        self._t += seconds
+
+
+def test_a_negative_cache_entry_expires_so_a_blip_is_not_permanent(monkeypatch):
+    """load_state_from_supabase collapses THREE outcomes into (None, None):
+    the row is absent, the query raised, and there is no DB client at all
+    (get_db() returns None before startup wires one up — precisely the Render
+    wake the mirror exists to cover). A permanent negative entry would let one
+    blip in that window strand the backfill for the life of the process, so
+    misses expire."""
+    clock = _FakeMonotonic()
+    monkeypatch.setattr(minigame, "time", clock)
+    idx = minigame.day_index(_MORNING) - 1        # a PAST day
+    key = minigame._state_key(idx)
+    reads: list[str] = []
+    stored: dict[str, dict] = {}                  # mirror unreachable for now
+
+    def _load(k):
+        reads.append(k)
+        return (stored[k], None) if k in stored else (None, None)
+
+    monkeypatch.setattr(minigame, "load_state_from_supabase", _load)
+
+    assert minigame._load_frozen(idx, negative_cache=True) is None
+    assert len(reads) == 1
+    # Inside the window the miss is remembered — that is the saving.
+    assert minigame._load_frozen(idx, negative_cache=True) is None
+    assert len(reads) == 1
+
+    # The mirror comes back (or a backfill script writes the day).
+    stored[key] = {"day_index": idx, "status": "earned", "picks": [{"id": "x"}]}
+    clock.advance(minigame._MISSING_TTL_SEC + 1)
+    got = minigame._load_frozen(idx, negative_cache=True)
+    assert got is not None and got["picks"][0]["id"] == "x"
+    assert len(reads) == 2
 
 
 def test_hours_since_boundary_handles_pre_8am():

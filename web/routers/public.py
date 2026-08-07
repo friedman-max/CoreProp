@@ -17,6 +17,7 @@ same class of information as `/api/status`, which is already unauthenticated.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -149,16 +150,43 @@ def _enforce_rate_limit(request: Request) -> None:
                 _rate_hits.pop(next(iter(_rate_hits)), None)
 
 
-@router.get("/daily-pick")
-def get_daily_pick(request: Request):
-    """Today's frozen selection, answer-free. See module comment rule #1."""
-    _enforce_rate_limit(request)
-    # Lazy import (same reason as BILLING_TRIAL_DAYS above): web.minigame
-    # imports web.state only, but keeping router-level imports minimal keeps
-    # the import graph obvious.
-    from web import minigame
+# Serialized daily-pick bodies, keyed by the board they were built from. A
+# blob is immutable once adopted and the only mutation is the once-a-day
+# provisional -> earned upgrade, so the bytes and the tag are constant for the
+# life of the board — yet the pre-memo code paid a 3x13-key dict rebuild, a
+# json.dumps and an md5 on EVERY request, including the 304s render.yaml's
+# `--threads 1` comment assumes are nearly free. HEADSHOTS_ENABLED is part of
+# the key because it changes image_url without changing the board.
+# Bounded: at most a handful of boards are live at once (today's, plus the
+# superseded ones still being served to mid-game visitors).
+_daily_payload_cache: dict[tuple, tuple[bytes, str]] = {}
+_daily_payload_lock = threading.Lock()
+_DAILY_PAYLOAD_MAX = 8
 
-    idx, blob = minigame.get_or_freeze_today()
+# Cap on ?have= — the client sends the ids it is mid-game on, which is at most
+# one board's worth. Anything longer is not a real client.
+_HAVE_MAX_IDS = 6
+
+
+def _if_none_match_matches(header: str | None, etag: str) -> bool:
+    """RFC 9110 If-None-Match: a comma-separated LIST of tags, or `*`. Exact
+    single-value equality made every multi-tag client pay for a full 200."""
+    if not header:
+        return False
+    for tag in header.split(","):
+        tag = tag.strip()
+        if tag == "*" or tag == etag:
+            return True
+    return False
+
+
+def _daily_payload(idx: int, blob: dict) -> tuple[bytes, str]:
+    key = (idx, blob.get("frozen_at"), blob.get("status"), cfg.HEADSHOTS_ENABLED)
+    with _daily_payload_lock:
+        hit = _daily_payload_cache.get(key)
+    if hit is not None:
+        return hit
+
     picks = []
     for p in blob.get("picks", []):
         has_image = bool(p.get("image_source_url")) and cfg.HEADSHOTS_ENABLED
@@ -178,7 +206,53 @@ def get_daily_pick(request: Request):
             # gate below keeps this from being an open proxy.
             "image_url":      f"/api/public/player-image?pick={p['id']}" if has_image else None,
         })
-    return {"day_index": idx, "picks": picks}
+    payload = json.dumps({"day_index": idx, "picks": picks},
+                         separators=(",", ":"), default=str).encode("utf-8")
+    # Weak (W/) for the same reason as web/app.py::_build_etag: gzip at the
+    # transport layer can mutate the bytes a strong tag would promise.
+    entry = (payload, 'W/"%s"' % hashlib.md5(payload).hexdigest()[:16])
+    with _daily_payload_lock:
+        if len(_daily_payload_cache) >= _DAILY_PAYLOAD_MAX:
+            _daily_payload_cache.clear()
+        _daily_payload_cache[key] = entry
+    return entry
+
+
+@router.get("/daily-pick")
+def get_daily_pick(request: Request, have: Optional[str] = None):
+    """Today's frozen selection, answer-free. See module comment rule #1.
+
+    `have` is the dot-separated list of pick ids the caller is already mid-game
+    on. The day allows one board change (provisional -> earned); for a visitor
+    who has already played, that change would drop their plays and hand them
+    three fresh free picks, so a caller that proves it holds a board this
+    process served keeps being served that board (web/minigame.py::board_for_ids).
+
+    Served with the same weak-ETag/304 contract as the authenticated payloads
+    in web/app.py::_cached_response. This is the one endpoint every landing-page
+    hit calls, including bots, so a repeat visitor inside the same board should
+    cost a 304 and not a re-serialized body — and the body it would have
+    re-serialized is memoized per board, so a 304 costs a dict lookup.
+    """
+    _enforce_rate_limit(request)
+    # Lazy import (same reason as BILLING_TRIAL_DAYS above): web.minigame
+    # imports web.state only, but keeping router-level imports minimal keeps
+    # the import graph obvious.
+    from web import minigame
+
+    idx, blob = minigame.get_or_freeze_today()
+    if have:
+        held = [t for t in have.replace(",", ".").split(".") if t][:_HAVE_MAX_IDS]
+        blob = minigame.board_for_ids(idx, blob, held)
+
+    payload, etag = _daily_payload(idx, blob)
+    if _if_none_match_matches(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers={"ETag": etag})
+    # no-cache, not max-age: the board can upgrade once mid-day (provisional ->
+    # earned), and a stale copy on an intermediary would show a visitor a board
+    # whose ids the reveal endpoint may no longer be serving from today's blob.
+    return Response(content=payload, media_type="application/json",
+                    headers={"ETag": etag, "Cache-Control": "no-cache"})
 
 
 @router.get("/daily-pick/reveal")
@@ -189,12 +263,13 @@ def get_daily_pick_reveal(request: Request, id: str):
     _enforce_rate_limit(request)
     from web import minigame
 
-    # find_pick searches today's blob first, then the recent frozen days: a
-    # visitor's board can outlive the blob that served it (tab open across
-    # the 8am ET boundary, or the Render-wake unfrozen board replaced by the
-    # real freeze minutes later). Grading from the pick's own frozen day is
-    # exact — the alternative is 404ing every card the visitor holds into a
-    # permanent "tap to try again" loop.
+    # find_pick searches today's blob, then the boards today has already
+    # replaced, then the recent frozen days: a visitor's board can outlive the
+    # blob that served it (tab open across the 8am ET boundary, or the
+    # provisional board upgraded while they were reading it). Grading from the
+    # pick's own board is exact — the alternative is 404ing every card the
+    # visitor holds into a permanent "tap to try again" loop. It is a pure
+    # read: grading must never be what moves the board.
     p = minigame.find_pick(id)
     if p is None:
         raise HTTPException(status_code=404, detail="Unknown pick id")

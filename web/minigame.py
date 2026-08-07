@@ -23,6 +23,41 @@ Design constraints that shaped this module
 * **Never invent data.** When fewer than 3 pairs qualify the fallback widens
   the probability band, then backfills from the most recent previous day's
   frozen selection. If everything is exhausted the day simply has fewer picks.
+
+Blob lifecycle: provisional -> earned
+-------------------------------------
+Every cached blob carries ``status``:
+
+* ``"earned"``   — final for the day. Served verbatim to every later request.
+* ``"provisional"`` — servable but not final (a backfill-only or floor-tier
+  board built before the day's real slate posted).
+
+The rule a visitor feels: **reloading the page must give the identical three
+cards.** v1.1 (282ff3f) stopped freezing un-earned boards, which fixed stale
+morning cards but reintroduced churn — a not-yet-earned board was recomputed
+from scratch on every request, and the candidate pool moves every 5-minute
+scrape, so the three players changed per reload. The fix is to cache
+provisional blobs too, and allow exactly one *upgrade*: a cached provisional is
+replaced only by a board that earned the freeze (or, past the settle deadline,
+by whatever the day managed, provided it is not SHORTER than what is cached —
+the settle arm is quantity-blind, and a board that shrinks is not an upgrade).
+Net effect is at most one visible board change per day and it is always an
+improvement. Upgrade attempts are throttled to ``_UPGRADE_MIN_INTERVAL_SEC``
+because the underlying scrape only moves every 5 minutes — without that, every
+landing-page hit would rebuild the candidate graph and re-read the backfill
+window.
+
+The board a visitor already started on is never taken away from them: the
+replaced blob is kept in ``_superseded`` for the rest of the day, ``find_pick``
+grades its ids, and ``GET /api/public/daily-pick?have=<ids>`` keeps serving it
+to the client that holds them (otherwise the upgrade would drop their plays and
+silently hand them three fresh free picks).
+
+Provisional blobs mirror to app_state_cache exactly like earned ones. That is
+what makes the game load instantly after a Render wake: the process comes back
+with no match snapshot and a ~90s boot scrape ahead of it, and the mirror is
+the only thing standing between the visitor and an empty hero. They are NOT
+backfill sources, though — see _backfill.
 """
 from __future__ import annotations
 
@@ -30,10 +65,12 @@ import hashlib
 import logging
 import random
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from statistics import fmean
 from zoneinfo import ZoneInfo
 
+import config as cfg
 from engine.devig import american_to_implied
 # Imported as module-level names (not called through the module) so tests can
 # monkeypatch web.minigame.load_state_from_supabase without touching the real
@@ -100,10 +137,51 @@ _BOOK_COLUMNS = (
     ("nv_odds", "nv_posted", "Novig"),
 )
 
-# Frozen blobs this process has already seen: day_index -> blob. Single
+# Blob status values. A blob without the key predates the field; those were
+# only ever mirrored when they earned the freeze, so absence means "earned".
+_STATUS_EARNED = "earned"
+_STATUS_PROVISIONAL = "provisional"
+
+# Minimum spacing between upgrade attempts on a provisional board. The scrape
+# behind the candidate pool only moves every REFRESH_INTERVAL_MINUTES (5 by
+# default), so retrying faster than this can only burn CPU and Supabase reads
+# on a landing page that may be hit many times a second.
+_UPGRADE_MIN_INTERVAL_SEC = 60.0
+
+# Cached blobs this process has already seen: day_index -> blob. Single
 # gunicorn worker (--workers 1), so this is the fast path and Supabase is only
-# the restart-survival mirror.
+# the restart-survival mirror. Holds provisional blobs as well as earned ones —
+# a provisional entry is what makes reloads stable (see module docstring).
 _frozen_cache: dict[int, dict] = {}
+# Wall-clock time of the last upgrade attempt per day. Keyed off the caller's
+# `now` rather than time.monotonic() so the throttle is testable and so it
+# matches the clock the settle deadline uses.
+_last_upgrade_attempt: dict[int, datetime] = {}
+# PAST days that came back empty from the mirror: day_index -> monotonic
+# deadline. Without it, _backfill re-issues up to _BACKFILL_LOOKBACK_DAYS
+# Supabase selects on every request that lands while the board is still empty.
+# Today's key is deliberately NOT negative-cached: it is the one that can go
+# from absent to present while the process is running.
+#
+# The entries EXPIRE rather than being remembered for the life of the process.
+# load_state_from_supabase collapses three different outcomes into (None, None)
+# — row absent, query raised, and client not built yet (get_db() is None under
+# DISABLE_PERSISTENCE or before startup has configured it). A permanent miss
+# would therefore let one transient blip during a Render wake poison all 14
+# lookback days for the whole process lifetime, which is exactly the cold-start
+# window the mirror exists to cover. A TTL keeps essentially all of the saving
+# (a request storm inside one window still costs one select per day) while
+# staying self-healing, and it also means a backfill script writing historical
+# days is picked up without a restart.
+_MISSING_TTL_SEC = 300.0
+_missing_cache: dict[int, float] = {}
+# Boards this process served today and then replaced (the one allowed
+# provisional -> earned upgrade, or a concurrent-compute loser). A visitor is
+# still holding their ids: the reveal must grade them, and /daily-pick?have=
+# keeps serving them the board they are mid-game on rather than resetting their
+# play meter. Only today's are kept, at most _SUPERSEDED_MAX of them.
+_SUPERSEDED_MAX = 3
+_superseded: dict[int, list[dict]] = {}
 _frozen_lock = threading.RLock()
 
 
@@ -374,17 +452,36 @@ def _select_picks(candidates: list[dict], idx: int, now_utc: datetime) -> list[d
     return picks
 
 
-def _load_frozen(idx: int) -> dict | None:
-    """Frozen blob for a day: in-process first, then the Supabase mirror."""
+def _load_frozen(idx: int, *, negative_cache: bool = False) -> dict | None:
+    """Cached blob for a day: in-process first, then the Supabase mirror.
+
+    `negative_cache=True` is for PAST days only (backfill, reveal lookback):
+    a miss is remembered for _MISSING_TTL_SEC so the next request doesn't
+    re-issue the same select. Never pass it for today — today's key is exactly
+    the one that can go from absent to present while the process is running.
+    """
+    mono = time.monotonic()
     with _frozen_lock:
         blob = _frozen_cache.get(idx)
+        deadline = _missing_cache.get(idx) if negative_cache else None
     if blob is not None:
         return blob
+    if deadline is not None and mono < deadline:
+        return None
     value, _ts = load_state_from_supabase(_state_key(idx))
     if isinstance(value, dict) and isinstance(value.get("picks"), list):
         with _frozen_lock:
             _frozen_cache[idx] = value
+            _missing_cache.pop(idx, None)
         return value
+    if negative_cache:
+        with _frozen_lock:
+            _missing_cache[idx] = mono + _MISSING_TTL_SEC
+            # Bounded: only today +/- the lookback window is ever queried, so
+            # yesterday's expired entries are dead weight.
+            for old in [k for k, dl in _missing_cache.items()
+                        if k < idx - _BACKFILL_LOOKBACK_DAYS and dl <= mono]:
+                _missing_cache.pop(old, None)
     return None
 
 
@@ -402,8 +499,15 @@ def _backfill(picks: list[dict], idx: int) -> list[dict]:
     for back in range(1, _BACKFILL_LOOKBACK_DAYS + 1):
         if len(picks) >= _NUM_PICKS:
             break
-        prev = _load_frozen(idx - back)
-        if not prev:
+        prev = _load_frozen(idx - back, negative_cache=True)
+        # EARNED days only. A provisional board is usually *itself* mostly
+        # backfill, and provisional blobs now mirror to app_state_cache
+        # (see _adopt), so accepting one as a source would let a card hop
+        # forward a day at a time forever — the chain, not the card, would be
+        # what _BACKFILL_LOOKBACK_DAYS bounds. Blobs written before the field
+        # existed default to earned: those were only ever mirrored when they
+        # earned the freeze.
+        if not prev or prev.get("status", _STATUS_EARNED) != _STATUS_EARNED:
             continue
         for p in prev.get("picks", []):
             if len(picks) >= _NUM_PICKS:
@@ -448,12 +552,6 @@ def _compute_blob(idx: int, now_utc: datetime) -> tuple[dict, bool]:
         )
         picks.extend(floor_pool[:_NUM_PICKS - len(picks)])
 
-    blob = {
-        "day_index": idx,
-        "frozen_at": now_utc.isoformat().replace("+00:00", "Z"),
-        "picks": picks,
-    }
-
     # A board only earns the freeze when it is a full slate built from TODAY's
     # own in-band candidates. `bool(match_rows)` is not enough: a successful
     # scrape that yields nothing in band still backfills a full board out of
@@ -472,72 +570,247 @@ def _compute_blob(idx: int, now_utc: datetime) -> tuple[dict, bool]:
     # one. Past the deadline, take what we have.
     settled = _hours_since_boundary(now_utc) >= _SETTLE_HOURS
     freezable = bool(picks) and (earned or (settled and bool(match_rows)))
-    return blob, freezable
+
+    return _blob(idx, now_utc, picks, freezable), freezable
 
 
-def get_or_freeze_today(now: datetime | None = None) -> tuple[int, dict]:
-    """The one entry point the routers use.
+def _blob(idx: int, now_utc: datetime, picks: list[dict], freezable: bool) -> dict:
+    return {
+        "day_index": idx,
+        "frozen_at": now_utc.isoformat().replace("+00:00", "Z"),
+        # Stamped into the blob (not just returned) so the status survives the
+        # app_state_cache mirror: a restart must be able to tell a settled
+        # board from one that is still waiting for the day's real slate.
+        "status": _STATUS_EARNED if freezable else _STATUS_PROVISIONAL,
+        "picks": picks,
+    }
 
-    Returns (day_index, blob). First caller of the day computes and freezes;
-    everyone after reads the frozen copy (in-process, or the app_state_cache
-    mirror after a restart).
+
+def _claim_compute_slot(idx: int, now_utc: datetime) -> bool:
+    """Record that a candidate rebuild is happening now; return whether it may.
+
+    Rate-limits the *attempt*, not the adoption: a provisional board is only
+    worth recomputing as often as the scrape behind it moves (5 min), so on a
+    landing page that may be hit many times a second every extra rebuild is
+    pure waste.
+
+    The FIRST attempt of a day is always granted — making the very first
+    visitor wait out a throttle window would leave the hero's game empty for
+    exactly the reason the caller is trying to avoid. Every attempt after it is
+    throttled on the stamp, INCLUDING the ones that produced no board at all.
+    That last part used to be an `enforce=cached is not None` flag, which never
+    bound: an empty board is deliberately not adopted, so `cached` stayed None
+    and every subsequent request rebuilt the whole candidate graph
+    (O(len(_state["matches"])) with the GIL held, on the one endpoint every
+    landing hit and every bot calls). The stamp is the throttle; whether the
+    attempt happened to yield something is not the throttle's business.
+
+    A backwards clock step (NTP correction, or a test replaying an earlier
+    instant) yields a negative delta and is treated as "go ahead": one extra
+    compute is cheap, whereas treating it as throttled could wedge the day.
     """
-    if now is None:
-        now = datetime.now(timezone.utc)
-    elif now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    idx = day_index(now)
+    with _frozen_lock:
+        last = _last_upgrade_attempt.get(idx)
+        granted = True
+        if last is not None:
+            elapsed = (now_utc - last).total_seconds()
+            if 0.0 <= elapsed < _UPGRADE_MIN_INTERVAL_SEC:
+                granted = False
+        if granted:
+            _last_upgrade_attempt[idx] = now_utc
+            # Only today's entry is ever consulted; drop the rest.
+            for old in [k for k in _last_upgrade_attempt if k < idx]:
+                _last_upgrade_attempt.pop(old, None)
+        return granted
 
-    loaded = _load_frozen(idx)
-    if loaded is not None:
-        return idx, loaded
 
-    # Compute WITHOUT holding _frozen_lock: the compute path takes
-    # web.state._lock for its snapshot, and the codebase rule is one lock at a
-    # time, never nested. Two concurrent first-requests may both compute; the
-    # result is deterministic, so last-writer-wins below is harmless (the
-    # double app_state_cache write upserts the same value twice).
-    blob, freezable = _compute_blob(idx, now.astimezone(timezone.utc))
-    if freezable:
-        with _frozen_lock:
-            existing = _frozen_cache.get(idx)
-            if existing is not None:
-                return idx, existing
-            _frozen_cache[idx] = blob
-            # Bound the in-process cache: only today + the backfill window are
-            # ever read again.
-            for old in [k for k in _frozen_cache if k < idx - _BACKFILL_LOOKBACK_DAYS]:
-                _frozen_cache.pop(old, None)
-        # Fire-and-forget mirror. sync_state_to_supabase swallows and logs
-        # failures; in-process-only is acceptable (a Render sleep loses it,
-        # and the recompute is deterministic given the same snapshot).
+def _adopt(idx: int, blob: dict, previous: dict | None) -> dict:
+    """Install a blob as the day's board and mirror it to app_state_cache.
+
+    Mirrors PROVISIONAL blobs too, which earned boards used to be alone in
+    doing. That mirror is the instant-load path: a Render wake starts with an
+    empty match snapshot and a ~90s boot scrape ahead of it, and without a
+    mirrored board the landing hero renders its game empty for that whole
+    window. A provisional blob on disk is strictly better than nothing, and it
+    is still allowed to upgrade once the real slate posts.
+    """
+    with _frozen_lock:
+        existing = _frozen_cache.get(idx)
+        # Another thread installed a board while we were computing (the compute
+        # deliberately runs without _frozen_lock — see the caller). Defer to it
+        # unconditionally, not just when it earned the freeze: on the
+        # cold-start path N concurrent requests each build their own board, and
+        # last-writer-wins there means visitor A's already-served three cards
+        # are replaced by visitor B's, which is the churn this module exists to
+        # eliminate. First board of the day wins; a legitimate upgrade still
+        # goes through because there `existing is previous` (the caller read
+        # the very object it is now replacing).
+        if existing is not None and existing is not previous:
+            return existing
+        _frozen_cache[idx] = blob
+        _missing_cache.pop(idx, None)
+        if existing is not None:
+            # Keep the board we just replaced resolvable. A visitor mid-play is
+            # holding ids from it: /daily-pick?have= keeps serving them their
+            # board, and find_pick grades those ids instead of 404ing the
+            # reveal of a pick that was on screen a second ago.
+            prior = _superseded.setdefault(idx, [])
+            prior.append(existing)
+            del prior[:-_SUPERSEDED_MAX]
+        # Bound the in-process caches: only today + the backfill window are
+        # ever read again, and superseded boards only matter for today.
+        for old in [k for k in _frozen_cache if k < idx - _BACKFILL_LOOKBACK_DAYS]:
+            _frozen_cache.pop(old, None)
+        for old in [k for k in _superseded if k < idx]:
+            _superseded.pop(old, None)
+    # Fire-and-forget mirror. sync_state_to_supabase swallows and logs
+    # failures; in-process-only is acceptable (a Render sleep loses it, and the
+    # recompute is deterministic given the same snapshot).
+    #
+    # DISABLE_PERSISTENCE is honoured for the same reason web/app.py::_sync_all
+    # honours it: a local/comparison instance shares Supabase with production,
+    # and app_state_cache is keyed by day alone, so an ungated write here lets
+    # a dev box overwrite the board prod is serving. That was survivable while
+    # only EARNED boards mirrored (rare, and the recompute is deterministic);
+    # now that provisional boards mirror too it would fire on essentially every
+    # local boot. Reads stay ungated on purpose — pulling prod's board into a
+    # local preview is exactly what you want.
+    if not cfg.DISABLE_PERSISTENCE:
         threading.Thread(
             target=sync_state_to_supabase,
             args=(_state_key(idx), blob),
             daemon=True,
         ).start()
-    return idx, blob
+    return blob
+
+
+def get_or_freeze_today(now: datetime | None = None) -> tuple[int, dict]:
+    """The one entry point the routers use.
+
+    Returns (day_index, blob). The first caller of the day computes; everyone
+    after is served the cached copy (in-process, or the app_state_cache mirror
+    after a restart) so a reload always shows the identical three cards.
+
+    A cached blob is replaced at most once, and only upwards: a provisional
+    board yields to one that earned the freeze (or, past the settle deadline,
+    to whatever the day managed to build). An earned board is never recomputed.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    now = now.astimezone(timezone.utc)
+    idx = day_index(now)
+
+    cached = _load_frozen(idx)
+    if cached is not None and cached.get("status", _STATUS_EARNED) == _STATUS_EARNED:
+        return idx, cached
+    # Provisional (or no board yet): a better board may exist, but finding out
+    # costs a full candidate rebuild, so only look occasionally. Throttled even
+    # with nothing to serve — an empty day must not mean a rebuild per request.
+    if not _claim_compute_slot(idx, now):
+        return idx, cached if cached is not None else _blob(idx, now, [], False)
+
+    # Compute WITHOUT holding _frozen_lock: the compute path takes
+    # web.state._lock for its snapshot, and the codebase rule is one lock at a
+    # time, never nested.
+    blob, freezable = _compute_blob(idx, now)
+
+    if not blob["picks"]:
+        # An empty board is never cached — that would pin the emptiness for the
+        # day — and never replaces a board we already have (the scrape can fail
+        # after a good board was built; yesterday's cards beat no cards).
+        #
+        # market_observatory is NOT a fallback source here, despite covering
+        # every priced market. Its `books` jsonb holds per-book DEVIGGED
+        # PROBABILITIES for one side ({"fanduel": 0.61}) — see
+        # web/app.py::_per_book_probs and the migration_003/016 column
+        # comments — not the per-book American quotes a reveal receipt is
+        # built from. Reconstructing odds from a devigged probability would
+        # print a price no book posted (the exact failure the *_posted gate
+        # above exists to prevent) and the stripped vig makes vig_pct
+        # unrecoverable, so the receipt could not be re-derived from what the
+        # page shows. The mirror in _adopt is the real cold-start answer.
+        return idx, cached if cached is not None else blob
+    if cached is not None:
+        if not freezable:
+            # Still provisional. Serving the NEW board here is what made the
+            # three players change on every reload; the cached one wins until
+            # an upgrade is genuinely available.
+            return idx, cached
+        if len(blob["picks"]) < len(cached["picks"]):
+            # Freezable, but SHORTER. The settle-deadline arm of `freezable` is
+            # quantity-blind (`bool(picks)`), so an evening recompute that finds
+            # one card left — the others tipped off and were pulled — would
+            # replace a full board and then pin the shrunken one for the rest of
+            # the day. The visitor would lose two of their three free picks
+            # mid-session (the client derives its play count from the board it
+            # is handed). An upgrade is only an upgrade if it goes up.
+            return idx, cached
+    return idx, _adopt(idx, blob, cached)
+
+
+def board_for_ids(idx: int, blob: dict, ids: list[str]) -> dict:
+    """The board a visitor is mid-game on, given the pick ids they hold.
+
+    The day allows exactly one board change (provisional -> earned). For a
+    visitor who has already played, that change is not an improvement: their
+    stored plays are keyed on ids the new board doesn't have, so the client
+    filters them all out, the meter resets to "Play 1 of 3 free" and they are
+    handed three fresh picks they didn't ask for. Serving the superseded board
+    to callers who prove they hold it keeps the session they started; everyone
+    else gets the upgraded board.
+
+    Unknown/forged ids simply don't match anything and fall through to `blob` —
+    only boards this process actually served are candidates.
+    """
+    if not ids:
+        return blob
+    wanted = set(ids)
+    if wanted <= {p.get("id") for p in blob.get("picks", [])}:
+        return blob
+    with _frozen_lock:
+        prior = list(_superseded.get(idx, ()))
+    for old in reversed(prior):    # most recently replaced first
+        if wanted <= {p.get("id") for p in old.get("picks", [])}:
+            return old
+    return blob
 
 
 def find_pick(pick_id: str, now: datetime | None = None) -> dict | None:
-    """Locate a pick by id: today's blob first, then the recent frozen days.
+    """Locate a pick by id: today's blob, then today's superseded boards, then
+    the recent frozen days.
 
-    The lookback exists because a visitor's board can outlive the blob that
+    A pure READ, deliberately. It used to call get_or_freeze_today, which is
+    the call that performs the provisional -> earned upgrade — so the reveal
+    request could trigger the very swap that invalidated its own pick id, and
+    the visitor got a 404 on the card they were looking at. Grading must never
+    move the board.
+
+    The fallbacks exist because a visitor's board can outlive the blob that
     served it: a tab left open across the 8am ET boundary is holding
-    yesterday's ids, and the Render-wake window can serve an UNFROZEN
-    backfill-only board whose ids differ from the blob frozen minutes later
-    (once the boot scrape lands). Grading an old-board pick is exact — the
-    full pick dicts (favored, p_more/p_less, books) are stored per frozen
-    day — so falling back beats 404ing the visitor into a dead retry loop.
-    Bounded by the same lookback as _backfill; a genuinely unknown id still
-    misses everything and the caller 404s.
+    yesterday's ids, and the Render-wake window can serve a backfill-only
+    board that is replaced minutes later once the boot scrape lands. Grading an
+    old-board pick is exact — the full pick dicts (favored, p_more/p_less,
+    books) are stored per board — so falling back beats 404ing the visitor into
+    a dead retry loop. A genuinely unknown id still misses everything and the
+    caller 404s.
     """
-    idx, blob = get_or_freeze_today(now)
+    if now is None:
+        now = datetime.now(timezone.utc)
+    idx = day_index(now)
+    blob = _load_frozen(idx) or {}
     for p in blob.get("picks", []):
         if isinstance(p, dict) and p.get("id") == pick_id:
             return p
+    with _frozen_lock:
+        prior = list(_superseded.get(idx, ()))
+    for old in reversed(prior):
+        for p in old.get("picks", []):
+            if isinstance(p, dict) and p.get("id") == pick_id:
+                return p
     for back in range(1, _BACKFILL_LOOKBACK_DAYS + 1):
-        prev = _load_frozen(idx - back)
+        prev = _load_frozen(idx - back, negative_cache=True)
         if not prev:
             continue
         for p in prev.get("picks", []):
@@ -547,6 +820,10 @@ def find_pick(pick_id: str, now: datetime | None = None) -> dict | None:
 
 
 def reset_for_tests() -> None:
-    """Drop the in-process frozen cache. Tests only."""
+    """Drop every in-process cache (blobs, negative lookups, upgrade throttle).
+    Tests only."""
     with _frozen_lock:
         _frozen_cache.clear()
+        _missing_cache.clear()
+        _last_upgrade_attempt.clear()
+        _superseded.clear()
