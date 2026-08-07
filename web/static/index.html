@@ -1493,16 +1493,21 @@ a{color:inherit;text-decoration:none}
      order. @babel/standalone was removed from the page: the browser no longer
      downloads ~600KB of Babel or transforms JSX on the main thread at load.
      After editing any .jsx, run ./build.sh and commit web/static/dist/. -->
-<script src="/static/dist/api.js"></script>
-<script src="/static/dist/tweaks-panel.js"></script>
-<script src="/static/dist/components.js"></script>
-<script src="/static/dist/landing.js"></script>
-<script src="/static/dist/ev-page.js"></script>
-<script src="/static/dist/page-boards.js"></script>
-<script src="/static/dist/page-backtest.js"></script>
-<script src="/static/dist/page-analytics.js"></script>
-<script src="/static/dist/pricing.js"></script>
-<script src="/static/dist/app-main.js"></script>
+<!-- ?v= is a ONE-TIME cache break for clients that cached a bundle before
+     web/app.py started sending Cache-Control: no-cache on dist/*.js. Those
+     browsers were heuristically reusing the old javascript against freshly
+     deployed html+css, which rendered the previous build. With the header in
+     place this query never needs bumping again. -->
+<script src="/static/dist/api.js?v=2"></script>
+<script src="/static/dist/tweaks-panel.js?v=2"></script>
+<script src="/static/dist/components.js?v=2"></script>
+<script src="/static/dist/landing.js?v=2"></script>
+<script src="/static/dist/ev-page.js?v=2"></script>
+<script src="/static/dist/page-boards.js?v=2"></script>
+<script src="/static/dist/page-backtest.js?v=2"></script>
+<script src="/static/dist/page-analytics.js?v=2"></script>
+<script src="/static/dist/pricing.js?v=2"></script>
+<script src="/static/dist/app-main.js?v=2"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

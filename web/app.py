@@ -1720,7 +1720,36 @@ def shutdown():
 
 import pathlib
 STATIC_DIR = pathlib.Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+class _RevalidatingStatic(StaticFiles):
+    """StaticFiles that forces revalidation on the JS bundles.
+
+    The dist/*.js filenames are stable across deploys and the <script> tags
+    carry no version query, so with no Cache-Control header at all a browser
+    falls back to HEURISTIC caching (typically 10% of the time since
+    Last-Modified) and will happily reuse a bundle for hours. index.html is
+    served separately with `no-cache`, so after a deploy a returning visitor
+    got the NEW html and CSS with the OLD javascript — which rendered the
+    previous build's components against classes that no longer exist. That is
+    exactly what happened on the 2026-08-07 minigame deploy: the landing page
+    came back as an unstyled dump of the old example card.
+
+    `no-cache` does not mean "don't cache" — it means "cache, but revalidate
+    before reuse". Starlette already emits ETag/Last-Modified, so the common
+    case stays a 304 with an empty body. Everything that is not a bundle
+    (images, fonts, icons) keeps the default and stays fully cacheable; those
+    already cache-bust via ?v= query strings where it matters.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if path.startswith("dist/") and path.endswith(".js"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", _RevalidatingStatic(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/health")
