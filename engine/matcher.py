@@ -41,6 +41,20 @@ class PrizePickLine:
     odds_type: str = "standard"  # "standard" or "goblin" (green devil — a
                                  # discounted, higher-hit-rate line). Demons
                                  # are dropped at scrape time.
+    # Player/projection metadata for the landing-page minigame cards
+    # (web/minigame.py). Carried on the line because this dataclass is the
+    # only vehicle that travels from the scraper through match_props into
+    # the pipeline's serialized match rows — a separate side-channel dict
+    # would have to be plumbed through every scraper call site instead.
+    opponent: str = ""       # PP `description` attr — opposing team abbr
+    position: str = ""       # "G", "F", "C", …
+    image_url: str = ""      # PP headshot URL. Only ~23% are real player
+                             # photos (NFL serves team logos under
+                             # /images/teams/); preserved verbatim here —
+                             # web/app.py's pp_player_images build drops
+                             # the /images/teams/ logo URLs so cards fall
+                             # back to the initials tile.
+    trending_count: int = 0  # PP popularity counter; the minigame ranks by it
 
 
 @dataclass(slots=True)

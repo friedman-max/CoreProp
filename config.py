@@ -187,6 +187,13 @@ NOVIG_ENABLED = os.getenv("NOVIG_ENABLED", "true").lower() in ("true", "1", "yes
 # sum over 1.0) exceeds this — thin exchange liquidity = untrustworthy price.
 NOVIG_MAX_SPREAD = float(os.getenv("NOVIG_MAX_SPREAD", "0.12"))
 
+# Landing minigame: serve PrizePicks player headshots through
+# GET /api/public/player-image. Off = the route 404s and the frontend falls
+# back to its no-photo card. A kill switch rather than a feature flag: PP could
+# start blocking the server-side fetch (or object to the proxying), and turning
+# it off must not require a code change.
+HEADSHOTS_ENABLED = os.getenv("HEADSHOTS_ENABLED", "true").lower() in ("true", "1", "yes")
+
 # Server
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))

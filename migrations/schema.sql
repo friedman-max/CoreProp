@@ -422,8 +422,44 @@ begin
 end $$;
 
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- migration_021 — landing-page minigame funnel telemetry
+--   Events arrive at an UNAUTHENTICATED endpoint (POST /api/public/event), so
+--   the browser must never touch this table directly with the published anon
+--   key. RLS with NO policies = deny-all; only the service-role writer
+--   (engine/writer.py, purpose "landing.event") inserts. No IP/UA/fingerprint
+--   columns on purpose — the funnel questions don't need identity.
+-- ─────────────────────────────────────────────────────────────────────────
+
+create table if not exists landing_events (
+  id        uuid        primary key default gen_random_uuid(),
+  ts        timestamptz default now(),
+  event     text        not null,
+  day_index int,
+  pick_id   text,
+  meta      jsonb       default '{}'::jsonb
+);
+
+create index if not exists idx_landing_events_day_event
+  on landing_events(day_index, event);
+
+alter table landing_events enable row level security;
+
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke all on public.landing_events from anon;
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    revoke all on public.landing_events from authenticated;
+  end if;
+end $$;
+
+
 -- migrations 011 (default bump — folded into 004 above) and 014 (one-time
 -- backfill repair) have no residual schema in a fresh project and are omitted
--- here intentionally.
+-- here intentionally. 019/020 (odds_type on market_observatory; auto-placement
+-- columns + auto_place_log) predate this note but are applied via their own
+-- files — fold them in here when next touched.
 
-do $$ begin raise notice 'CoreProp schema.sql applied: base tables + migrations 001-018'; end $$;
+do $$ begin raise notice 'CoreProp schema.sql applied: base tables + migrations 001-018, 021'; end $$;

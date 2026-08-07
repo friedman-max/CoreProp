@@ -83,6 +83,26 @@ app.add_middleware(
     allow_credentials=False,
 )
 
+# Global request-body ceiling. Without it any unauthenticated POST (e.g.
+# /api/public/event) is parsed fully into memory before validation runs — a
+# multi-MB body is a memory-flood primitive on the 512MB single worker. 1MB is
+# an order of magnitude above the largest legitimate payload (slips are a few
+# KB). Content-Length-based: a chunked request without the header passes here,
+# but Render's proxy buffers and stamps Content-Length on the way in.
+_MAX_REQUEST_BODY_BYTES = 1_000_000
+
+
+@app.middleware("http")
+async def _limit_request_body(request: Request, call_next):
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > _MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        except ValueError:
+            pass  # malformed header; let the framework reject it
+    return await call_next(request)
+
 # Results checker / CLV singletons (stateless, run in background via service role)
 _results_checker  = ESPNResultsChecker()
 _clv_tracker      = CLVTracker()
@@ -633,6 +653,19 @@ def _run_pipeline_body():
                     "pin_line":    _line_for_side(side, "pin"),
                     "nv_line":     _line_for_side(side, "nv"),
                     "start_time":  m.pp.start_time,
+                    # Card metadata for the landing minigame's daily selector
+                    # (web/minigame.py pairs over/under rows and needs to
+                    # filter goblins and rank by popularity). All short,
+                    # high-repetition strings — interned like league above.
+                    # image_url deliberately NOT here: it's ~80 bytes × every
+                    # row; the selector reads it from _state["pp_player_images"]
+                    # (one entry per player) instead.
+                    "pp_player_id":   m.pp.player_id,
+                    "odds_type":      _intern(getattr(m.pp, "odds_type", "standard") or "standard"),
+                    "team":           _intern(getattr(m.pp, "team", "") or ""),
+                    "opponent":       _intern(getattr(m.pp, "opponent", "") or ""),
+                    "position":       _intern(getattr(m.pp, "position", "") or ""),
+                    "trending_count": getattr(m.pp, "trending_count", 0) or 0,
                 }
 
             def _per_book_probs(side: str) -> dict:
@@ -666,6 +699,21 @@ def _run_pipeline_body():
                 # _display_odds already devigs/re-vigs from the available
                 # side, so this still produces a sensible display number.
                 return _display_odds(bk, side, margin)
+
+            def _book_posted(side: str, prefix: str) -> bool:
+                """True when the book DIRECTLY posts this side's price on the
+                equiv prop consulted for it. The fd_odds/dk_odds/... display
+                columns are NOT evidence of that: _display_odds derives a
+                missing side from the complement, and the matcher reuses the
+                exact-line prop for both equivalents even when it's one-sided.
+                The landing minigame gates its "both sides quoted" receipt on
+                these flags (web/minigame.py::_build_candidates) so it never
+                shows a quote the book didn't post."""
+                bk = _book_for_side(side, prefix)
+                if bk is None:
+                    return False
+                direct = bk.over_odds if side == "over" else bk.under_odds
+                return direct is not None
 
             def get_combined_true_odds(side):
                 """Compute the bet-decision probability for one side.
@@ -736,6 +784,13 @@ def _run_pipeline_body():
                         "dk_odds":  dk_o,
                         "pin_odds": pin_o,
                         "nv_odds":  nv_o,
+                        # Whether each display number above is a quote the book
+                        # actually posted for this side (vs derived from the
+                        # complement). See _book_posted.
+                        "fd_posted":  _book_posted("over", "fd"),
+                        "dk_posted":  _book_posted("over", "dk"),
+                        "pin_posted": _book_posted("over", "pin"),
+                        "nv_posted":  _book_posted("over", "nv"),
                         "true_odds": true,
                         # Emit the consensus probability too: the Combined Lines
                         # board's default sort is keyed on truePct (from
@@ -817,6 +872,11 @@ def _run_pipeline_body():
                         "dk_odds":  dk_u,
                         "pin_odds": pin_u,
                         "nv_odds":  nv_u,
+                        # See over-side note / _book_posted.
+                        "fd_posted":  _book_posted("under", "fd"),
+                        "dk_posted":  _book_posted("under", "dk"),
+                        "pin_posted": _book_posted("under", "pin"),
+                        "nv_posted":  _book_posted("under", "nv"),
                         "true_odds": true,
                         "true_prob": prob,  # see over-side note
                     })
@@ -933,10 +993,29 @@ def _run_pipeline_body():
             clv_current_probs = {}
             clv_current_book_probs = {}
 
+        # Landing-minigame headshot lookup: one URL per player rather than one
+        # per match row (see _base_for_side — rows carry the small metadata,
+        # this dict carries the heavy string). Built from pp_lines because the
+        # scraper attaches player metadata to every line it emits.
+        # Team-logo classification happens HERE (the "consumer's job" the
+        # scraper comment defers): NFL points image_url at team logos under
+        # /images/teams/, and a logo that fetches fine (200 + decodable) can
+        # never trip the frontend's onError fallback — it would render inside
+        # the player-photo circle as if it were a headshot. Dropping it from
+        # the map means has_image=False downstream and the card's initials
+        # tile engages instead.
+        pp_player_images = {
+            l.player_id: l.image_url
+            for l in pp_lines
+            if l.player_id and getattr(l, "image_url", "")
+            and "/images/teams/" not in l.image_url
+        }
+
         with _lock:
             _state["bets"]         = serialized_bets
             _state["bet_map"]      = {b.bet_id: b for b in bets}
             _state["matches"]      = serialized_matches
+            _state["pp_player_images"] = pp_player_images
             _state["pp_lines"]     = serialized_pp
             _state["fd_lines"]     = serialized_fd
             _state["dk_lines"]     = serialized_dk

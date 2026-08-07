@@ -58,6 +58,7 @@ _state: dict = {
     "bets":          [],        # list[dict] — serialized BetResult
     "bet_map":       {},        # bet_id -> BetResult (for slip calc)
     "matches":       [],        # list[dict] — unfiltered combined lines
+    "pp_player_images": {},     # pp_player_id -> PP image_url (landing minigame)
     "pp_lines":      [],        # list[dict] — raw PrizePicks lines
     "fd_lines":      [],        # list[dict] — raw FanDuel lines
     "dk_lines":      [],        # list[dict] — raw DraftKings lines
