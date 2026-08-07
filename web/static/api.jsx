@@ -54,7 +54,24 @@
     const sb = init();
     const { data, error } = await sb.auth.signUp({
       email, password,
-      options: { data: username ? { username } : {} },
+      options: {
+        data: username ? { username } : {},
+        // Without this, Supabase builds the confirmation link from the
+        // project's Site URL, whose default is http://localhost:3000 — so
+        // every confirmation email sent from production pointed at a dead
+        // localhost server and no new account could ever be activated.
+        //
+        // Derived from the live origin rather than hardcoded so localhost
+        // development, any preview deploy and production each confirm back to
+        // themselves. Root, not a deep link: `/` is the only page route this
+        // app registers (see web/app.py) and the SDK's detectSessionInUrl
+        // picks the tokens out of the returned hash there.
+        //
+        // NOTE: this URL must ALSO be on Supabase's Redirect URLs allow-list.
+        // Supabase silently ignores an un-allow-listed emailRedirectTo and
+        // falls back to Site URL, which would reproduce the same bug.
+        emailRedirectTo: `${window.location.origin}/`,
+      },
     });
     if (error) throw error;
     if (data.session) { currentSession = data.session; notify(); }
