@@ -1,9 +1,10 @@
 import os
+import secrets
 import time
 import logging
 import jwt
 from jwt import PyJWKClient
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 from dotenv import load_dotenv
@@ -11,6 +12,32 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Operator gate for the admin / manual-refresh routes.
+#
+# Lives here rather than in web/app.py so web/routers/*.py can depend on it
+# without importing web.app (which imports the routers — an import cycle).
+#
+# FAILS CLOSED: with ADMIN_TOKEN unset, every route carrying this dependency
+# is off. That is deliberate. These routes trigger real work on a
+# single-worker 512MB dyno — a full multi-book scrape, a calibration refit, an
+# auto-backtest sweep — and nothing in the frontend calls any of them, so
+# "disabled unless an operator opts in" is the correct default rather than a
+# degraded one.
+# ---------------------------------------------------------------------------
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+
+
+def require_admin(x_admin_token: str = Header("", alias="X-Admin-Token")) -> bool:
+    """403 unless a non-empty ADMIN_TOKEN is configured AND matched exactly."""
+    if not ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Admin endpoints are disabled.")
+    # Constant-time so a wrong token can't be recovered by timing the compare.
+    if not secrets.compare_digest(x_admin_token or "", ADMIN_TOKEN):
+        raise HTTPException(status_code=403, detail="Forbidden.")
+    return True
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")

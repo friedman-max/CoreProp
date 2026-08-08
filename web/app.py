@@ -34,6 +34,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.jobstores.base import JobLookupError
 from fastapi import FastAPI, HTTPException, Depends, Request, Response, Query
+
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -41,7 +42,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import statistics
-from web.auth import get_current_user, get_current_user_optional
+# require_admin gates the manual-refresh and admin routes below. It lives in
+# web/auth.py so web/routers/admin.py can import it without cycling through
+# this module. Fails closed when ADMIN_TOKEN is unset — see its docstring.
+from web.auth import get_current_user, get_current_user_optional, require_admin
 
 import config as cfg
 from engine.ev_calculator import BetResult, calculate_slip
@@ -2186,10 +2190,22 @@ def diagnose_auto_backtest(user: dict = Depends(get_current_user)):
 
 
 @app.get("/api/bootstrap")
-def get_bootstrap_legacy(request: Request):
+def get_bootstrap_legacy(request: Request,
+                         user: Optional[dict] = Depends(get_current_user_optional)):
     """Back-compat shim: old clients (or stale cached HTML) may still call
     this. Redirect to the lean core endpoint — the extra datasets load lazily
-    on tab activation now."""
+    on tab activation now.
+
+    MUST carry the same subscription gate as /api/bootstrap/core, which it
+    proxies byte for byte. It did not, and that was a complete paywall bypass:
+    while BILLING_ENFORCE was false the omission was invisible, but the moment
+    enforcement went live every other data route returned 402 and this one
+    still served the full +EV payload (~350KB, true_prob/edge/individual_ev_pct
+    included) to anyone with curl. Any new alias for a paid payload has to
+    repeat this check — the gate lives on the route, not on _cached_response.
+    """
+    if not _user_has_access(user):
+        raise HTTPException(status_code=402, detail="Subscription required.")
     return _cached_response("core", request)
 
 
@@ -2458,7 +2474,7 @@ def get_prizepicks(request: Request, user: Optional[dict] = Depends(get_current_
 
 
 @app.post("/api/prizepicks/refresh")
-def refresh_prizepicks():
+def refresh_prizepicks(_admin: bool = Depends(require_admin)):
     with _lock:
         if _state["is_scraping_pp"]:
             raise HTTPException(status_code=409, detail="PrizePicks scrape already in progress.")
@@ -2528,7 +2544,7 @@ def get_fanduel(request: Request, user: Optional[dict] = Depends(get_current_use
 
 
 @app.post("/api/fanduel/refresh")
-def refresh_fanduel():
+def refresh_fanduel(_admin: bool = Depends(require_admin)):
     with _lock:
         if _state["is_scraping_fd"]:
             raise HTTPException(status_code=409, detail="FanDuel scrape already in progress.")
@@ -2619,7 +2635,7 @@ def get_draftkings(request: Request, user: Optional[dict] = Depends(get_current_
 
 
 @app.post("/api/draftkings/refresh")
-def refresh_draftkings():
+def refresh_draftkings(_admin: bool = Depends(require_admin)):
     with _lock:
         if _state["is_scraping_dk"]:
             raise HTTPException(status_code=409, detail="DraftKings scrape already in progress.")
@@ -2703,7 +2719,7 @@ def get_pinnacle(request: Request, user: Optional[dict] = Depends(get_current_us
 
 
 @app.post("/api/pinnacle/refresh")
-def refresh_pinnacle():
+def refresh_pinnacle(_admin: bool = Depends(require_admin)):
     with _lock:
         if _state["is_scraping_pin"]:
             raise HTTPException(status_code=409, detail="Pinnacle scrape already in progress.")
@@ -3445,7 +3461,7 @@ class BacktestAddSlipRequest(BaseModel):
 
 
 @app.post("/api/admin/trigger-auto-backtest")
-def admin_trigger_auto_backtest():
+def admin_trigger_auto_backtest(_admin: bool = Depends(require_admin)):
     """LOCAL-TEST-ONLY endpoint. Fires the auto-backtest worker against
     the bets currently in _state, bypassing the run_pipeline early-returns
     that suppress it when the PrizePicks scrape fails (e.g. on a home IP
