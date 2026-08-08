@@ -4026,8 +4026,35 @@ def _get_or_create_customer(user: dict) -> str:
     return cust.id
 
 
-# Permanently comped accounts: founders, staff, testers, anyone who should
-# never be asked to pay. Comma-separated Supabase user UUIDs and/or emails.
+# Grandfathered accounts: every Supabase user that existed at the moment
+# billing was switched on (2026-08-08). They keep full access to CorePop Pro
+# permanently and are never asked to pay; everyone who signs up after this
+# point pays the monthly or yearly price like any other customer.
+#
+# Baked into the code rather than left to an env var so the policy ships with
+# the deploy and cannot be lost by an environment edit — this is a one-time
+# historical fact, not a setting. It is a closed list: nothing is ever added
+# here again. Use COMP_ACCOUNTS below for anyone comped from now on.
+#
+# Bare UUIDs, no emails: these identifiers are already carried in every JWT and
+# grant nothing on their own (you still have to authenticate as that user), but
+# the addresses attached to them are personal data and this repo does not need
+# to hold them.
+_GRANDFATHERED_ACCOUNTS = frozenset({
+    "aebbb50e-c0c3-4d6c-9eb4-b07556897cdc",
+    "ec2ad8e5-7620-4302-ae71-a3e99b387f80",
+    "862a8c74-a362-48be-b336-a984d2335c2e",
+    "20d39bb6-f796-45c9-b497-227d4f57232c",
+    "a541fb5d-d0fe-403c-ab0f-b2ab9d72a422",
+    "ccdf15cb-5b93-4e51-944a-475aa223b91c",
+    "9f560459-ac58-4835-bd42-7b3e35fe880d",
+    "b52d4d4d-e830-4a08-85bc-fae044f3f45d",
+    "fce8fbd6-3899-4d00-9cda-25859bbb984b",
+})
+
+# Additionally comped accounts, for anyone granted free access AFTER the
+# grandfather cutoff — new staff, a partner, a support make-good. Comma-
+# separated Supabase user UUIDs and/or emails.
 #
 #   COMP_ACCOUNTS=you@example.com,3f9a...-uuid,teammate@example.com
 #
@@ -4049,10 +4076,15 @@ COMP_ACCOUNTS = {
 
 
 def _is_comped(user: Optional[dict]) -> bool:
-    """True when this account is on the permanent free-access allowlist."""
-    if not COMP_ACCOUNTS or not user:
+    """True when this account never pays: grandfathered in at billing launch,
+    or explicitly comped since."""
+    if not user:
         return False
     uid = str(user.get("id") or "").strip().lower()
+    if uid and uid in _GRANDFATHERED_ACCOUNTS:
+        return True
+    if not COMP_ACCOUNTS:
+        return False
     email = str(user.get("email") or "").strip().lower()
     return bool((uid and uid in COMP_ACCOUNTS) or (email and email in COMP_ACCOUNTS))
 
