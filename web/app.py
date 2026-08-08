@@ -4026,14 +4026,49 @@ def _get_or_create_customer(user: dict) -> str:
     return cust.id
 
 
+# Permanently comped accounts: founders, staff, testers, anyone who should
+# never be asked to pay. Comma-separated Supabase user UUIDs and/or emails.
+#
+#   COMP_ACCOUNTS=you@example.com,3f9a...-uuid,teammate@example.com
+#
+# Deliberately an env var rather than a subscription_status='active' row in
+# user_config: a hand-written DB row claims a Stripe subscription that does not
+# exist, and _sync_subscription_to_db would overwrite it the moment that account
+# ever did touch Stripe. This is separate from billing state by design, so a
+# comp can be granted or revoked without touching anyone's billing record.
+#
+# UUIDs are the safer key. Matching an EMAIL is only as strong as Supabase's
+# "Confirm email" setting — with confirmation disabled, anyone who signs up
+# using a comped address would inherit the comp. Prefer UUIDs if that setting
+# is ever turned off.
+COMP_ACCOUNTS = {
+    s.strip().lower()
+    for s in _os.getenv("COMP_ACCOUNTS", "").split(",")
+    if s.strip()
+}
+
+
+def _is_comped(user: Optional[dict]) -> bool:
+    """True when this account is on the permanent free-access allowlist."""
+    if not COMP_ACCOUNTS or not user:
+        return False
+    uid = str(user.get("id") or "").strip().lower()
+    email = str(user.get("email") or "").strip().lower()
+    return bool((uid and uid in COMP_ACCOUNTS) or (email and email in COMP_ACCOUNTS))
+
+
 def _user_has_access(user: Optional[dict]) -> bool:
     """Access policy. When enforcement is off (or billing unconfigured), always
     grant. When on, require an active/trialing/past_due subscription, OR a
-    canceled sub still inside its paid period."""
+    canceled sub still inside its paid period — or a comped account."""
     if not BILLING_ENFORCE or not _billing_configured():
         return True
     if not user:
         return False
+    # Checked before the billing read so a comped account needs no user_config
+    # row at all, and costs no Supabase round-trip.
+    if _is_comped(user):
+        return True
     b = _read_user_billing(user)
     status = (b.get("subscription_status") or "").lower()
     if status in _ACTIVE_SUB_STATUSES:
@@ -4070,6 +4105,11 @@ def billing_status(user: dict = Depends(get_current_user)):
         "plan":               b.get("subscription_plan"),
         "current_period_end": b.get("current_period_end"),
         "active":             _user_has_access(user),
+        # So the client can tell "you have access because you're comped" from
+        # "you have access because you pay" — a comped account has no Stripe
+        # customer and must not be shown renewal dates or a manage-billing CTA
+        # that would 500 on a customer id that doesn't exist.
+        "comped":             _is_comped(user),
         "enforce":            BILLING_ENFORCE,
         "configured":         _billing_configured(),
     }
