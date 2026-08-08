@@ -8,8 +8,15 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
   const [ctaErr, setCtaErr] = useState("");
   const [portalBusy, setPortalBusy] = useState(false);
   const monthly = 50;
-  const yearly = Math.round(monthly * 12 * 0.85); // 15% off
+  // Flat $500/yr (matches the Stripe price actually wired up in
+  // STRIPE_PRICE_YEARLY) — not derived from a 15%-off formula, so it can
+  // never drift out of sync with what Stripe actually charges.
+  const yearly = 500;
   const yearlyPerMonth = (yearly / 12).toFixed(2);
+  // Derived from the two prices above (600 - 500 = 16.67%), not a literal —
+  // a hardcoded "Save 15%" would have quietly gone stale the moment the
+  // yearly price stopped being monthly*12*0.85.
+  const yearlySavePct = Math.round((1 - yearly / (monthly * 12)) * 100);
   // BILLING_TRIAL_DAYS, served by /api/public/coverage. Falls back to 7 (the
   // env default) for the pre-fetch render so the copy never reads "First
   // undefined days free".
@@ -86,7 +93,7 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
             className={"pp-tg-btn " + (billing === "yearly" ? "is-on" : "")}
             onClick={() => setBilling("yearly")}
           >
-            Yearly <span className="pp-save">Save 15%</span>
+            Yearly <span className="pp-save">Save {yearlySavePct}%</span>
           </button>
         </div>
       </header>
