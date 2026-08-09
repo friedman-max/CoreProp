@@ -155,7 +155,9 @@ Everything except Supabase has a sensible default in `config.py`. Override in
 | `SUPABASE_JWT_SECRET` | — | Verifies user JWTs server-side (HS256 path) |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | Bind address |
 | `HEADLESS` | `false` | Headed browser locally to bypass Cloudflare; headless on servers |
-| `REFRESH_INTERVAL_MINUTES` | `15` | Auto-refresh cadence |
+| `REFRESH_INTERVAL_MINUTES` | `15` | **Not wired up.** Nothing reads it; the live cadence is `_state["interval_min"]` in `web/state.py` (5 min), changeable only via `POST /api/config`, which does not persist across a restart |
+| `SNAPSHOT_SYNC_MIN` | `60` | How often the scrape snapshot is written to `app_state_cache`. Only read by the startup seed, which accepts 24h-old data, so this is a bandwidth control — set `0` to write every cycle |
+| `RESULTS_CHECK_MIN` | `30` | How often finished games are graded against ESPN. Was tied to the scrape cadence; grading is idempotent so this only affects how soon a result appears |
 | `MIN_INDIVIDUAL_EV_PCT` | `0.01` | Per-leg edge threshold for the +EV view |
 | `SCRAPE_ALL_LEAGUES` | `false` | Override per-league flags |
 | `LEAGUE_NBA` / `_WNBA` / `_MLB` / `_NHL` / `_NCAAB` | `true` | Per-league enable |

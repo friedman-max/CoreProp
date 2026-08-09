@@ -34,6 +34,13 @@ POST_START_GRACE_MINUTES = 0
 # when the app wasn't running during the tracking window.
 MISSED_CUTOFF_HOURS = 1
 
+# Default pre-game window in which update_observatory_closing_lines captures
+# per-market closes. update_closing_lines_from_probs uses it to avoid staging a
+# redundant market_observatory PATCH for any market the observatory pass is
+# about to write better data to. Kept as the default value of that method's
+# `capture_window_minutes` parameter so the two cannot drift apart.
+_OBS_CAPTURE_WINDOW_MIN = 240
+
 
 class CLVTracker:
     def __init__(self):
@@ -205,14 +212,33 @@ class CLVTracker:
                     # Stage the *raw* closing prob for market_observatory so
                     # a future/manual refit can use it as a CLV signal without
                     # the bias of double-correction.
-                    leg_player = row.get("player") or ""
-                    leg_league = row.get("league") or ""
-                    leg_prop = row.get("prop") or ""
-                    leg_side = row.get("side") or ""
-                    leg_game_start = row.get("game_start") or ""
-                    if leg_player and leg_league and leg_game_start:
-                        obs_key = (leg_player, leg_league, leg_prop, line, leg_side, leg_game_start)
-                        observatory_writes[obs_key] = float(new_cp_val)
+                    # Only for markets OUTSIDE the observatory capture window.
+                    # update_observatory_closing_lines runs immediately after
+                    # this method (same background thread, see _update_clv_bg)
+                    # and writes the identical round(closing_prob, 4) to the
+                    # same row — plus the per-book `_close` snapshot and lead
+                    # time, which this path cannot. Inside the window it is
+                    # strictly better, so staging a write here just pays for a
+                    # PATCH that is overwritten seconds later. Each of those
+                    # costs ~870 bytes on the wire (a six-filter URL and the
+                    # auth headers dwarf the 23-byte body), and outbound
+                    # bandwidth is metered — Render cut the Hobby allowance
+                    # 100GB -> 5GB on 2026-08-01.
+                    #
+                    # Beyond the window the observatory pass will not see the
+                    # row yet, so keep writing: the value is an early-line
+                    # consensus rather than a true close (see that method's
+                    # docstring), but it is better than leaving the column null
+                    # if the row somehow never gets revisited near tip.
+                    if mins_to_start > _OBS_CAPTURE_WINDOW_MIN:
+                        leg_player = row.get("player") or ""
+                        leg_league = row.get("league") or ""
+                        leg_prop = row.get("prop") or ""
+                        leg_side = row.get("side") or ""
+                        leg_game_start = row.get("game_start") or ""
+                        if leg_player and leg_league and leg_game_start:
+                            obs_key = (leg_player, leg_league, leg_prop, line, leg_side, leg_game_start)
+                            observatory_writes[obs_key] = float(new_cp_val)
 
                     logger.debug(
                         "CLVTracker: Update %s %s %s @%s -> %.4f",
@@ -255,7 +281,7 @@ class CLVTracker:
         current_probs: dict[tuple[str, str, str, float], float],
         current_book_probs: dict[tuple[str, str, str, float], dict[str, float]] | None = None,
         *,
-        capture_window_minutes: int = 240,
+        capture_window_minutes: int = _OBS_CAPTURE_WINDOW_MIN,
     ) -> int:
         """Standalone observatory closing-line capture (Phase 1A audit PR-3a).
 

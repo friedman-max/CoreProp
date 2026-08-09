@@ -1075,13 +1075,44 @@ def _run_pipeline_body():
         # sync_state_to_supabase auto-gzips payloads over 256KB, so the books
         # (fd/dk/pin_lines, 2-5MB raw) compress to ~300-500KB — well under any
         # PostgREST request cap.
+        #
+        # THROTTLED to _SNAPSHOT_SYNC_MIN, not written every cycle. These seven
+        # keys have exactly ONE reader, _seed_state_from_db_sync at startup, and
+        # it accepts anything newer than _SEED_MAX_AGE_MIN (1440min = 24h). No
+        # request path reads app_state_cache. Writing ~2.8MB of snapshot 288x a
+        # day to serve a consumer that tolerates day-old data was ~58% of this
+        # service's outbound bandwidth, which is metered: Render cut the Hobby
+        # allowance from 100GB to 5GB on 2026-08-01 and suspended the service on
+        # 08-08. Hourly keeps the seed far fresher than its own staleness bound
+        # at 1/12th the bytes. The boot scrape overwrites it within a minute of
+        # any restart anyway, so a slightly older seed is never user-visible.
+        #
+        # last_refresh is exempt and still written every cycle: it is one short
+        # ISO string (~90 bytes, no measurable cost) and it is the timestamp the
+        # seed loader ages every other key against, so letting it drift behind
+        # the datasets it describes would make a fresh snapshot look stale.
         def _sync_all():
-            sync_state_to_supabase("bets", serialized_bets)
-            sync_state_to_supabase("matches", serialized_matches)
-            sync_state_to_supabase("pp_lines", serialized_pp)
-            sync_state_to_supabase("fd_lines", serialized_fd)
-            sync_state_to_supabase("dk_lines", serialized_dk)
-            sync_state_to_supabase("pin_lines", serialized_pin)
+            global _last_snapshot_sync
+            now_mono = time.monotonic()
+            due = (
+                _last_snapshot_sync is None
+                or (now_mono - _last_snapshot_sync) >= _SNAPSHOT_SYNC_MIN * 60
+            )
+            if due:
+                sync_state_to_supabase("bets", serialized_bets)
+                sync_state_to_supabase("matches", serialized_matches)
+                sync_state_to_supabase("pp_lines", serialized_pp)
+                sync_state_to_supabase("fd_lines", serialized_fd)
+                sync_state_to_supabase("dk_lines", serialized_dk)
+                sync_state_to_supabase("pin_lines", serialized_pin)
+                _last_snapshot_sync = now_mono
+            else:
+                logger.info(
+                    "persistence      snapshot sync skipped (%.1f/%d min since last) "
+                    "— seed tolerance is %d min",
+                    (now_mono - _last_snapshot_sync) / 60.0,
+                    _SNAPSHOT_SYNC_MIN, _SEED_MAX_AGE_MIN,
+                )
             if _state["last_refresh"]:
                 sync_state_to_supabase("last_refresh", _state["last_refresh"].isoformat())
 
@@ -1351,6 +1382,74 @@ def _run_pipeline_body():
                     rows_to_upsert.append(row)
                 if not rows_to_upsert:
                     return
+
+                # ── Dedup within the batch (correctness, not just bytes) ──
+                # Two entries can collapse to the same market_key: the key is
+                # player|league|prop|line|side|start, so a player quoted on the
+                # same market by two PrizePicks projections (a standard and a
+                # goblin at the same line, or the same prop under two aliases)
+                # yields duplicate keys in one payload. Postgres rejects the
+                # whole statement in that case — observed in production
+                # 2026-08-08 11:46:33Z:
+                #   'ON CONFLICT DO UPDATE command cannot affect row a second
+                #    time' (code 21000)
+                # The _OPTIONAL_COLS handler below reads any failure as a
+                # missing column, so it retried seven times, each resend
+                # carrying the full ~2,000-row body, and every attempt failed
+                # for the same reason. That cycle logged nothing at all: a
+                # ~5MB burst that also silently dropped an observatory
+                # generation. Keep the LAST occurrence, matching what a
+                # merge-duplicates upsert would have settled on.
+                _deduped = {}
+                for r in rows_to_upsert:
+                    _deduped[r["market_key"]] = r
+                if len(_deduped) != len(rows_to_upsert):
+                    logger.info(
+                        "Observatory: collapsed %d duplicate market_key(s) in batch",
+                        len(rows_to_upsert) - len(_deduped),
+                    )
+                rows_to_upsert = list(_deduped.values())
+
+                # ── Skip keys already sent by this process ──
+                # ignore_duplicates=True means the server discards a re-sent
+                # key (see the note below), so re-uploading a market on every
+                # cycle buys nothing. Measured on 2026-08-08: ~2,000 rows
+                # re-sent per cycle to add ~9 new ones, uncompressed, which was
+                # ~29% of this service's metered egress.
+                #
+                # Correct under BOTH readings of the upsert semantics. If the
+                # server truly ignores duplicates, skipping them is a no-op. If
+                # it is in fact merging them (the 21000 error above names DO
+                # UPDATE, which argues it may be), then those re-sends were
+                # overwriting the frozen ENTRY snapshot the comment below says
+                # must never be overwritten — so skipping them restores the
+                # documented contract. Either way this only ever sends less and
+                # stores at least as much.
+                #
+                # Hashes, not full keys: at ~25k rows/day a set of raw key
+                # strings is several MB of permanent RSS, and this runs on a
+                # 512MB tier (see CLAUDE.md). Cleared daily so a long-lived
+                # process cannot grow without bound and so a row deleted
+                # out-of-band gets re-sent within a day. A worker recycle
+                # (--max-requests 1000) also resets it, making one full
+                # re-upload per recycle the expected steady state.
+                _today = datetime.now(timezone.utc).date()
+                global _obs_sent_day, _obs_sent_keys
+                if _obs_sent_day != _today:
+                    _obs_sent_keys = set()
+                    _obs_sent_day = _today
+                _fresh = [
+                    r for r in rows_to_upsert
+                    if hash(r["market_key"]) not in _obs_sent_keys
+                ]
+                if not _fresh:
+                    logger.info(
+                        "Observatory: no new markets this cycle (%d already sent today)",
+                        len(rows_to_upsert),
+                    )
+                    return
+                _skipped = len(rows_to_upsert) - len(_fresh)
+                rows_to_upsert = _fresh
                 # ignore_duplicates=True ON PURPOSE: the FIRST scrape of a
                 # market freezes `books` as the ENTRY per-book snapshot and is
                 # never overwritten on re-scrape. The closing per-book snapshot
@@ -1369,11 +1468,21 @@ def _run_pipeline_body():
                 def _strip(rows, col):
                     for r in rows:
                         r.pop(col, None)
+                # Only mark keys as sent once the write actually landed, so a
+                # failed cycle retries the same markets next time instead of
+                # dropping them permanently.
+                def _mark_sent(rows):
+                    for r in rows:
+                        _obs_sent_keys.add(hash(r["market_key"]))
                 try:
                     obs_db.table("market_observatory").upsert(
                         rows_to_upsert, on_conflict="market_key", ignore_duplicates=True
                     ).execute()
-                    logger.info("Observatory: logged %d observations", len(rows_to_upsert))
+                    _mark_sent(rows_to_upsert)
+                    logger.info(
+                        "Observatory: logged %d observations (%d already sent, skipped)",
+                        len(rows_to_upsert), _skipped,
+                    )
                 except Exception as upsert_exc:
                     last_exc = upsert_exc
                     succeeded = False
@@ -1385,6 +1494,7 @@ def _run_pipeline_body():
                             obs_db.table("market_observatory").upsert(
                                 rows_to_upsert, on_conflict="market_key", ignore_duplicates=True
                             ).execute()
+                            _mark_sent(rows_to_upsert)
                             logger.info(
                                 "Observatory: logged %d observations (stripped '%s' — apply pending migration)",
                                 len(rows_to_upsert), col,
@@ -1429,7 +1539,36 @@ def _run_pipeline_body():
         threading.Thread(target=_update_clv_bg, daemon=True).start()
 
         # ── Results checker: back-fill any pending rows non-blocking ──
+        # THROTTLED to _RESULTS_CHECK_MIN. This grades finished games against
+        # ESPN box scores, and it rode the 5-minute scrape cadence purely
+        # because it was launched from this function — nothing about grading
+        # wants that frequency. Both entry points clear the whole ESPN cache on
+        # the way in AND out (see check_pending_results /
+        # check_observatory_results), so consecutive runs share nothing and each
+        # one re-fetches every scoreboard and summary it needs: ~120-320 ESPN
+        # calls per cycle, ~35-92k a day, for games that finish a few times an
+        # hour. Throttling changes no outcome, only how soon a final box score
+        # is noticed (worst case _RESULTS_CHECK_MIN later), and every grader is
+        # idempotent — a row already graded is skipped, and check_observatory_results
+        # only looks at games that ended >= 2h ago.
+        #
+        # Kept inside the pipeline rather than promoted to its own scheduler job
+        # so it cannot run concurrently with a scrape: both walk market_observatory,
+        # and _write_observatory_result grades by DELETE + re-INSERT, which is
+        # only safe while the scraper is not upserting the same market_key.
         def _check_results_bg():
+            global _last_results_check
+            now_mono = time.monotonic()
+            if (
+                _last_results_check is not None
+                and (now_mono - _last_results_check) < _RESULTS_CHECK_MIN * 60
+            ):
+                logger.debug(
+                    "ResultsChecker: skipped (%.1f/%d min since last run)",
+                    (now_mono - _last_results_check) / 60.0, _RESULTS_CHECK_MIN,
+                )
+                return
+            _last_results_check = now_mono
             try:
                 updated = _results_checker.check_pending_results()
                 if updated:
@@ -1623,10 +1762,33 @@ def startup():
 
 
 # Any cached snapshot older than this is considered stale and ignored on
-# startup (and proactively purged from Supabase). 
-# Set to 1440 (24h) so users can instantly load the UI with yesterday's lines 
+# startup (and proactively purged from Supabase).
+# Set to 1440 (24h) so users can instantly load the UI with yesterday's lines
 # while the background scrape runs, rather than facing a 60s loading screen.
 _SEED_MAX_AGE_MIN = 1440
+
+# How often _sync_all actually writes the snapshot datasets to app_state_cache.
+# Deliberately far below _SEED_MAX_AGE_MIN (the only consumer's own tolerance)
+# and far above the scrape cadence. Every-cycle writes were the single largest
+# consumer of Render's metered outbound bandwidth; see _sync_all for the full
+# reasoning. Env-overridable so this can be tuned (or set to 0 for
+# write-every-cycle) without a code change.
+_SNAPSHOT_SYNC_MIN = int(os.getenv("SNAPSHOT_SYNC_MIN", "60"))
+
+# monotonic() of the last snapshot write, or None if none this process. Only
+# touched by _sync_all, which runs on a daemon thread one cycle at a time.
+_last_snapshot_sync = None
+
+# market_key hashes already upserted to market_observatory today, and the UTC
+# date they belong to. Lets _log_observatory_bg send only markets it has not
+# seen; see that function for why this is safe and why it stores hashes.
+_obs_sent_keys: set = set()
+_obs_sent_day = None
+
+# How often the ESPN result grader runs, and the monotonic() of its last run.
+# Decoupled from the scrape cadence it used to inherit; see _check_results_bg.
+_RESULTS_CHECK_MIN = int(os.getenv("RESULTS_CHECK_MIN", "30"))
+_last_results_check = None
 
 
 def _parse_updated_at(s: str | None):
