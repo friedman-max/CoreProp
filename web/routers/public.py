@@ -102,7 +102,17 @@ def get_coverage():
 # loop from hammering the unauthenticated endpoints — not to be a real WAF.
 # Every public route enforces it, including the image proxy (a cache miss
 # there does a network fetch on the shared sync threadpool).
-_RATE_LIMIT = 60          # requests
+#
+# One landing session is already ~15-17 calls (coverage + daily-pick, a reveal
+# per pick, three player-images, and a telemetry event per action), and every
+# reload revalidates — even a 304 is counted here. At the old 60/min ceiling
+# that tripped after ~4 reload-and-replays from one IP, which is exactly what
+# an owner testing the page or a few visitors behind one NAT do — and the 429
+# landed on the reveal, surfacing as the minigame's "Couldn't grade that one."
+# 180/min clears a heavy replay session (~10 sessions) while still stopping a
+# real loop (hundreds-to-thousands/min). Pinned by
+# tests/api_tests/test_landing_minigame.py::test_rate_limit_clears_a_realistic_replay_session.
+_RATE_LIMIT = 180         # requests
 _RATE_WINDOW_SEC = 60.0   # per sliding window
 _rate_lock = threading.Lock()
 _rate_hits: dict[str, deque] = {}

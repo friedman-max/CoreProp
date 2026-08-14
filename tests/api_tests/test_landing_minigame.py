@@ -292,7 +292,7 @@ def test_event_rejects_oversized_meta(client):
 def test_rate_limiter_kicks_in(client):
     from web.routers import public as public_router
 
-    # Exhaust the window quickly instead of issuing 60 real requests.
+    # Exhaust the window quickly instead of issuing _RATE_LIMIT real requests.
     ok = client.get("/api/public/daily-pick")
     assert ok.status_code == 200
     with public_router._rate_lock:
@@ -300,3 +300,23 @@ def test_rate_limiter_kicks_in(client):
         while len(hits) < public_router._RATE_LIMIT:
             hits.append(hits[-1])
     assert client.get("/api/public/daily-pick").status_code == 429
+
+
+def test_rate_limit_clears_a_realistic_replay_session(client):
+    """The owner testing the page reloads and replays the daily game many times
+    a minute. One load+play is well over a dozen public calls — coverage,
+    daily-pick (each reload revalidates, and even a 304 is counted), a reveal per
+    pick, and a telemetry event per action — so a 60/min ceiling tripped on the
+    tester and surfaced as the minigame's "Couldn't grade that one": a 429 on the
+    reveal, which the client renders as an ungradeable pick. The limit must clear
+    a heavy replay session; the abuse ceiling stays pinned by the test above."""
+    from web.routers import public as public_router
+
+    public_router._rate_hits.clear()
+    # ~120 assorted public calls in one window is well beyond a single obsessive
+    # tester's minute, and still far below a hammering loop.
+    for i in range(120):
+        assert client.get("/api/public/daily-pick").status_code == 200, (
+            f"rate-limited at request {i + 1} — a visitor replaying the game a "
+            "few times a minute must not be throttled into 'Couldn't grade that one.'"
+        )
