@@ -790,14 +790,15 @@ async function stageLeg(leg, index) {
     currentLeague = wantLeague;
   }
 
-  const deadline = Date.now() + LEG_BUDGET_MS;
-
   // Type the player's name so the board filters down to them, then hunt the
   // filtered set. If the search bar can't be opened we still hunt — it just
   // means scrolling the whole league board instead of a handful of cards.
   const searched = await searchForPlayer(leg.player);
   if (!searched) log(`leg ${index}: search unavailable, scanning the full board`);
 
+  // Start the hunt budget only after the search settles — a slow search must
+  // not eat into the time huntLeg gets to walk the board.
+  const deadline = Date.now() + LEG_BUDGET_MS;
   const found = await huntLeg(leg, deadline);
 
   if (found.card) {
