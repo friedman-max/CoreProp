@@ -469,15 +469,24 @@ class CLVTracker:
             # Only the partial-write recovery path uses these fields — full
             # leg rows were 3x bigger and the rest is unused.
             cols = "slip_id, leg_num, closing_prob, clv_pct, true_prob, raw_true_prob, game_start"
-            # Paginate — this scans the WHOLE legs table, so it hit the silent
-            # 1000-row cap earliest of the three readers. Truncation here means
-            # missed closing lines are never finalized.
+            # Push the candidate predicate to PostgREST: we only ever act on
+            # partial-write rows (closing_prob captured, clv_pct still null).
+            # This USED to select the WHOLE legs table (settled + pending) every
+            # cycle and filter in Python — the largest remaining Supabase egress
+            # line item, and it returns finalized=0 on almost every pass. The
+            # `closing_prob IS NOT NULL AND clv_pct IS NULL` filter cuts the
+            # transfer to the handful of real candidates. Still paginate: with
+            # the filter the 1000-row cap is unreachable in practice, but the
+            # `.order().range()` guard is free and keeps the pass correct if a
+            # backlog of partial writes ever exceeds a page.
             rows = []
             _page_size = 1000
             _offset = 0
             while True:
                 _page = (
                     db.table("legs").select(cols)
+                      .not_.is_("closing_prob", "null")
+                      .is_("clv_pct", "null")
                       .order("slip_id", desc=False)
                       .range(_offset, _offset + _page_size - 1)
                       .execute()
