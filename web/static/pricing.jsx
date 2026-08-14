@@ -1,7 +1,23 @@
 // Pricing / checkout-style sell page. Single tier: $50/mo.
 const { useState: useStateP } = React;
 
-function PricingPage({ onStart, onBack, loggedIn, locked }) {
+// cpApi surfaces a failed fetch as `HTTP <code>: <body>` (see apiFetch), so a
+// billing error would otherwise render to a paying user as raw red JSON like
+// `HTTP 400: {"detail":"No billing account yet."}`. Pull out the server's
+// `detail` sentence when present, otherwise strip the `HTTP nnn:` prefix.
+function friendlyBillingError(msg) {
+  if (!msg) return "Something went wrong. Please try again.";
+  const m = /HTTP\s+\d+:\s*(\{[\s\S]*\})/.exec(msg);
+  if (m) {
+    try {
+      const d = JSON.parse(m[1]).detail;
+      if (d) return typeof d === "string" ? d : "Something went wrong. Please try again.";
+    } catch (_) { /* not JSON — fall through */ }
+  }
+  return msg.replace(/^HTTP\s+\d+:\s*/, "") || "Something went wrong. Please try again.";
+}
+
+function PricingPage({ onStart, onBack, loggedIn, locked, comped }) {
   const cov = useCoverage();                         // shared with landing.jsx
   const [billing, setBilling] = useState("monthly"); // monthly | yearly
   const [cta, setCta] = useState("idle");            // idle | loading | error
@@ -60,6 +76,9 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
       // original behavior so the button still does something useful.
       console.warn("checkout failed:", e.message);
       if (/not configured|503/i.test(e.message || "")) {
+        // Fall back to onStart, but reset the button — otherwise it stays frozen
+        // on "Redirecting to checkout…" forever (disabled={cta === "loading"}).
+        setCta("idle");
         onStart && onStart();
       } else {
         setCtaErr(e.message || "Couldn't start checkout.");
@@ -158,13 +177,13 @@ function PricingPage({ onStart, onBack, loggedIn, locked }) {
           <button className="cp-btn pp-cta" onClick={onCta} disabled={cta === "loading"}>
             {cta === "loading" ? "Redirecting to checkout…" : `Start ${trialDays} days free`}
           </button>
-          {ctaErr && <div className="pp-cta-sub" role="alert" style={{color:"#FCA5A5"}}>{ctaErr}</div>}
+          {ctaErr && <div className="pp-cta-sub" role="alert" style={{color:"#FCA5A5"}}>{friendlyBillingError(ctaErr)}</div>}
           {/* The word "cancel" appeared six times on this page. It's in the
             * header and the FAQ; this line just needs to state the price. */}
           <div className="pp-cta-sub">
             Then ${billing === "monthly" ? monthly + "/mo" : yearly + "/yr"}.
           </div>
-          {loggedIn && (
+          {loggedIn && !comped && (
             <button
               type="button"
               className="cp-link cp-center"

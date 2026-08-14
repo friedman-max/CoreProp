@@ -17,6 +17,14 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "tableTint": "off"
 }/*EDITMODE-END*/;
 
+// Captured ONCE at script load, before any effect can strip the param. Effect B
+// in App() removes ?checkout=success from the URL on mount (cosmetic), so on a
+// fresh Stripe return where the Supabase session resolves a tick after mount,
+// re-reading window.location.search inside the billing-poll effect would see
+// the param already gone — the webhook-lag retry loop would never run and a
+// just-paid user could be bounced to a locked pricing page. Freeze it here.
+const CHECKOUT_SUCCESS = /[?&]checkout=success/.test(window.location.search || "");
+
 function App() {
   // Start on the app (+EV Bets) if a session is already restored at first
   // render. Supabase's getSession() usually resolves a tick LATER (see the
@@ -36,6 +44,9 @@ function App() {
   // billing enforcement is switched on server-side (BILLING_ENFORCE).
   const [subActive, setSubActive] = useState(true);
   const [subEnforce, setSubEnforce] = useState(false);
+  // Comped/grandfathered accounts have access but no Stripe customer, so the
+  // pricing page hides the "Manage subscription" button for them (it 400s).
+  const [subComped, setSubComped] = useState(false);
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
   // Load billing status on login and after returning from Stripe Checkout.
@@ -44,13 +55,14 @@ function App() {
   useEffect(() => {
     if (!loggedIn || !window.cpApi) return;
     let cancelled = false, tries = 0;
-    const justCheckedOut = /[?&]checkout=success/.test(window.location.search);
+    const justCheckedOut = CHECKOUT_SUCCESS;
     const poll = async () => {
       try {
         const s = await window.cpApi.billingStatus();
         if (cancelled) return;
         setSubActive(!!s.active);
         setSubEnforce(!!s.enforce);
+        setSubComped(!!s.comped);
         // Keep polling briefly after checkout until the subscription lands.
         if (justCheckedOut && s.enforce && !s.active && tries < 6) {
           tries++; setTimeout(poll, 1500);
@@ -175,7 +187,7 @@ function App() {
         variant={view === "landing" ? "landing" : "app"}
       />
       {view === "landing" && <Landing onLogin={onLogin} onStart={onStart} />}
-      {view === "pricing" && <PricingPage onStart={onNeedsAuth} onBack={() => setView(loggedIn && !locked ? "ev" : "landing")} loggedIn={loggedIn} locked={locked} />}
+      {view === "pricing" && <PricingPage onStart={onNeedsAuth} onBack={() => setView(loggedIn && !locked ? "ev" : "landing")} loggedIn={loggedIn} locked={locked} comped={subComped} />}
       {view === "ev" && !locked && (() => {
         // Keep-alive tab host: once a tab has been visited it stays mounted
         // and is hidden via display:none when inactive. This preserves each

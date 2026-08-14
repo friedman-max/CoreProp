@@ -59,7 +59,13 @@ function OddsCell({ value, best }) {
 function BoardEmptyRow({ cols, state, error, empty, onClear }) {
   let msg;
   if (state === "loading") msg = "Loading…";
-  else if (state === "error") msg = "Couldn't load lines" + (error ? ": " + error : ".");
+  else if (state === "error") {
+    // A locked account gets HTTP 402 from the gated endpoint, surfaced as
+    // `HTTP 402: {"detail":"Subscription required."}`. Show a clean sentence
+    // instead of the raw JSON; keep the verbose form for every other error.
+    if (/402|subscription required/i.test(error || "")) msg = "Subscription required to view lines.";
+    else msg = "Couldn't load lines" + (error ? ": " + error : ".");
+  }
   else msg = empty || "No lines match your filters.";
   return (
     <tr>
