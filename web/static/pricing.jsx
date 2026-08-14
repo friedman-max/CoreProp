@@ -90,7 +90,7 @@ function PricingPage({ onStart, onBack, loggedIn, locked, comped }) {
   return (
     <main className="pp">
       <div className="pp-back">
-        <button className="cp-link" onClick={onBack}>← Back to home</button>
+        <button className="cp-btn cp-btn-ghost cp-btn-sm" onClick={onBack}>← Back to home</button>
       </div>
 
       <header className="pp-hd">

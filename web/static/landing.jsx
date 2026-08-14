@@ -62,7 +62,6 @@ function Landing({ onLogin, onStart }) {
         * not the explainer, which is load-bearing layout. */}
       <HowItWorks cov={cov} />
       <Method />
-      <Limits />
       <FinalCTA onStart={onStart} onLogin={onLogin} cov={cov} />
       <Footer cov={cov} />
     </main>
@@ -247,6 +246,22 @@ function lpLoadDismissed(dayIndex, picks) {
     const played = lpLoadPlays(dayIndex, picks);
     return picks && picks.length > 0 && played.length >= picks.length;
   } catch (e) { return false; }
+}
+// The full receipt of the LAST graded pick, restored only when the game is
+// finished (every pick played) and not dismissed: a visitor who plays all
+// three, clicks "See pricing", then hits "Back to home" should land back on
+// that third card and its receipt — the screen they left — not a fresh
+// standalone CTA panel. Gated on the board in hand so a stale reveal from a
+// replaced board never shows.
+function lpLoadLastReveal(dayIndex, picks) {
+  try {
+    const s = JSON.parse(localStorage.getItem(LP_GAME_LS) || "null");
+    if (!s || s.day_index !== dayIndex || s.dismissed || !s.lastReveal) return null;
+    const played = lpLoadPlays(dayIndex, picks);
+    if (!picks || picks.length === 0 || played.length < picks.length) return null;
+    const ids = new Set(picks.map((p) => p.id));
+    return ids.has(s.lastReveal.id) ? s.lastReveal : null;
+  } catch (e) { return null; }
 }
 // Patch-style writer so plays and dismissed don't clobber each other; a
 // different stored day is discarded wholesale (same reset semantics as load).
@@ -633,7 +648,7 @@ function LineChallenge({ daily, cov, onStart, onReveal, onRefresh }) {
   const dayIndex = daily.day_index;
   const total = daily.picks.length;   // "3 free" when possible; fewer if the backfill ran dry
   const [plays, setPlays] = React.useState(() => lpLoadPlays(dayIndex, daily.picks));
-  const [reveal, setReveal] = React.useState(null);   // reveal payload + { side, correct }
+  const [reveal, setReveal] = React.useState(() => lpLoadLastReveal(dayIndex, daily.picks));  // restored on a finished game, else set on a live pick
   const [sel, setSel] = React.useState(null);         // side tapped on the current card
   const [busy, setBusy] = React.useState(false);      // reveal fetch in flight
   const [dismissed, setDismissed] = React.useState(() => lpLoadDismissed(dayIndex, daily.picks));
@@ -643,6 +658,9 @@ function LineChallenge({ daily, cov, onStart, onReveal, onRefresh }) {
   const stageRef = React.useRef(null);
   const actionRef = React.useRef(null);
   const btnsRef = React.useRef(null);
+  // True once a live tap has graded a card. Gates the focus/scroll effect OFF
+  // for a reveal restored at mount (returning visitor) — see that effect.
+  const userPickedRef = React.useRef(false);
 
   // "Next pick" and a failed grade both unmount the control that had focus,
   // dropping a keyboard user to <body> mid-game. Send focus back to the fresh
@@ -684,7 +702,10 @@ function LineChallenge({ daily, cov, onStart, onReveal, onRefresh }) {
   // nobody asked for. Keyed on the pick id so it fires once per reveal.
   const revealedId = reveal ? reveal.id : null;
   React.useEffect(() => {
-    if (!revealedId || !actionRef.current) return;
+    // Skip when the reveal was RESTORED at mount (returning visitor): grabbing
+    // focus and scrolling the book panel into view is right after a live tap,
+    // but on page load it would yank focus and scroll the page unbidden.
+    if (!revealedId || !userPickedRef.current || !actionRef.current) return;
     try { actionRef.current.focus({ preventScroll: true }); }
     catch (e) { actionRef.current.focus(); }
     // Single column (<1024px): the book panel is stacked BELOW the card, so
@@ -734,9 +755,13 @@ function LineChallenge({ daily, cov, onStart, onReveal, onRefresh }) {
     }
     const correct = side === r.favored;
     const nextPlays = [...plays, { id: card.id, side, correct }];
+    const gradedReveal = { ...r, side, correct };
     setPlays(nextPlays);
-    lpSaveState(dayIndex, { plays: nextPlays });
-    setReveal({ ...r, side, correct });
+    // Persist the full receipt too, not just {id,side,correct}: returning after
+    // "See pricing" restores this exact screen instead of a fresh CTA panel.
+    lpSaveState(dayIndex, { plays: nextPlays, lastReveal: gradedReveal });
+    userPickedRef.current = true;
+    setReveal(gradedReveal);
     lpEvent("revealed", dayIndex, card.id, { correct });
     if (stageRef.current) (correct ? lpWinFx : lpLossFx)(stageRef.current, btn);
     if (!muted) lpPlaySound(correct ? "win" : "loss");
@@ -1252,34 +1277,6 @@ function Method() {
   );
 }
 
-// ───────── Limits ─────────
-// A tool that sells probability estimates and publishes no track record should
-// say so where a buyer will read it. Two bullets, not three: the original also
-// explained at length that we'd rather show nothing than a number we can't
-// stand behind, which is the kind of line that undercuts itself. State the
-// limit and move on.
-function Limits() {
-  return (
-    <section className="lp-limits" aria-labelledby="limits-h">
-      <div className="lp-limits-inner">
-        <h2 className="lp-h2" id="limits-h">Worth knowing</h2>
-        <ul className="lp-limits-list">
-          <li>
-            <b>This reads the market, it doesn't predict games.</b> There are no
-            player projections behind these numbers, so CoreProp is only ever as
-            sharp as the books it prices against.
-          </li>
-          <li>
-            <b>We don't publish a hit rate.</b> Not enough logged bets have
-            settled to quote one. The Backtest and Analytics tabs measure your
-            results instead, including when there's no edge to find.
-          </li>
-        </ul>
-      </div>
-    </section>
-  );
-}
-
 // ───────── Final CTA ─────────
 function FinalCTA({ onStart, onLogin, cov }) {
   const days = cov?.trial_days;
@@ -1322,7 +1319,6 @@ function Footer({ cov }) {
         <nav className="lp-foot-nav" aria-label="Page sections">
           <a href="#how">How it works</a>
           <a href="#product">In the app</a>
-          <a href="#limits-h">Worth knowing</a>
         </nav>
       </div>
       <div className="lp-foot-base">
