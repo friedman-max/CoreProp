@@ -3415,18 +3415,35 @@ class PPAvailabilityRequest(BaseModel):
     legs: list[dict]
 
 
+# A PrizePicks slip is at most ~6 legs; cap generously. The endpoint runs an
+# O(legs x pp_catalogue) fuzzy match under _lock on the single-worker dyno, so
+# an unbounded list is a free compute-amplification lever.
+_PP_AVAILABILITY_MAX_LEGS = 12
+
+
 @app.post("/api/check-pp-availability")
-def check_pp_availability(req: PPAvailabilityRequest):
+def check_pp_availability(
+    req: PPAvailabilityRequest,
+    user: dict = Depends(get_current_user),
+):
     """
     Given a list of leg dicts [{player, prop, line, side}], check whether
     each leg is currently available on PrizePicks (matches live pp_lines).
     Returns {available: bool, legs: [{...leg, available: bool, matched_line: float|null}]}.
+
+    Authenticated: only the logged-in client (extension/frontend pre-flight)
+    ever calls this, and it must not be an open, unbounded compute path.
     """
     from rapidfuzz import fuzz
 
     legs = req.legs
     if not legs:
         return {"available": False, "legs": []}
+    if len(legs) > _PP_AVAILABILITY_MAX_LEGS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many legs (max {_PP_AVAILABILITY_MAX_LEGS}).",
+        )
 
     with _lock:
         pp_lines = list(_state.get("pp_lines") or [])
