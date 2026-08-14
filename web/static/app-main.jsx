@@ -257,3 +257,13 @@ document.head.appendChild(styleEl);
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App />);
+
+// Register the service worker: installable PWA shell + Web Push receiver. Kept
+// out of React — it's a one-time global side effect and pure progressive
+// enhancement (a failure just means no offline shell / no push, never a broken
+// app). See /sw.js (web/app.py::service_worker) and web/static/sw.js.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}

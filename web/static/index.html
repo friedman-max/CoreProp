@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <title>CoreProp — PrizePicks lines priced against the sportsbooks</title>
 <!-- The page had no description and no social card, so search results and any
      shared link rendered as a bare URL with whatever text the crawler scraped
@@ -32,6 +32,14 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
 <link rel="manifest" href="/static/site.webmanifest?v=1">
 <meta name="theme-color" content="#0a0a0d">
+<!-- iOS home-screen app: launch fullscreen (no Safari chrome) from the installed
+     icon. viewport-fit=cover + the safe-area padding on .cp-nav keep the header
+     clear of the notch. Web Push (iOS 16.4+) only works from this installed
+     icon, never a Safari tab — see web/static/sw.js. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CoreProp">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <!-- Start the TLS handshake to the script CDNs before the parser reaches the
@@ -162,10 +170,16 @@ a{color:inherit;text-decoration:none}
 /* ─────────── top nav ─────────── */
 .cp-nav{
   position:sticky;top:0;z-index:50;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;
-  padding:12px 22px;backdrop-filter:blur(18px);
+  /* env(safe-area-inset-*) is 0 in a normal browser tab and only non-zero in an
+   * installed/standalone PWA on a notched device, so this sticky header clears
+   * the status bar / notch instead of rendering underneath it. */
+  padding:calc(12px + env(safe-area-inset-top)) calc(22px + env(safe-area-inset-right)) 12px calc(22px + env(safe-area-inset-left));
+  backdrop-filter:blur(18px);
   background:rgba(10,10,13,.78);border-bottom:1px solid var(--hair);
 }
 .cp-nav.is-landing{background:rgba(10,10,13,.55)}
+/* Only in the installed app: keep content off the home indicator. */
+@media (display-mode: standalone){ body{ padding-bottom: env(safe-area-inset-bottom); } }
 .cp-logo-btn{background:transparent;border:0;cursor:pointer;padding:0}
 .cp-logo{display:flex;align-items:center;gap:9px}
 /* logo_full.png is now a transparent-background wordmark, so the artwork

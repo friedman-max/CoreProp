@@ -1976,6 +1976,21 @@ def root():
     return HTMLResponse(content=html)
 
 
+@app.get("/sw.js")
+def service_worker():
+    # Served from the ROOT path (not /static) on purpose: a service worker can
+    # only control URLs at or below its own, so /static/sw.js would be scoped to
+    # /static and miss every navigation. Service-Worker-Allowed widens the scope
+    # to "/", and no-cache lets a new worker be picked up on the next visit
+    # rather than sitting behind a stale HTTP cache. See web/static/sw.js.
+    js = (STATIC_DIR / "sw.js").read_text(encoding="utf-8")
+    return Response(
+        content=js,
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # API routes
 # ---------------------------------------------------------------------------
