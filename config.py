@@ -194,6 +194,25 @@ NOVIG_MAX_SPREAD = float(os.getenv("NOVIG_MAX_SPREAD", "0.12"))
 # it off must not require a code change.
 HEADSHOTS_ENABLED = os.getenv("HEADSHOTS_ENABLED", "true").lower() in ("true", "1", "yes")
 
+# ── Web Push (iOS 16.4+ PWA notifications) ──────────────────────────────────
+# VAPID keypair for Web Push. The whole feature is a NO-OP unless BOTH keys are
+# set (see engine/push.is_configured), so shipping it changes nothing in
+# production until you configure it — same env-gating discipline as SIDE_BIAS /
+# billing. The public key is safe to expose (browsers need it to subscribe); the
+# private key signs push messages and must stay server-side. Generate a keypair
+# (base64url forms — verified to load in pywebpush and as the browser's
+# applicationServerKey):
+#   pip install py-vapid
+#   python -c "import base64;from py_vapid import Vapid01;\
+#     from cryptography.hazmat.primitives import serialization as s;\
+#     v=Vapid01();v.generate_keys();b=lambda x:base64.urlsafe_b64encode(x).rstrip(b'=').decode();\
+#     print('VAPID_PUBLIC_KEY =',b(v.public_key.public_bytes(s.Encoding.X962,s.PublicFormat.UncompressedPoint)));\
+#     print('VAPID_PRIVATE_KEY =',b(v.private_key.private_numbers().private_value.to_bytes(32,'big')))"
+# then set VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT in Render.
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:notifications@coreprop.app")
+
 # Server
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))

@@ -29,6 +29,64 @@ function Logo({ size = 32, animated = true }) {
 // ───────── Top Nav ─────────
 const NAV_TABS = ["+EV Bets", "Combined Lines", "PrizePicks Lines", "Sportsbooks", "Backtest", "Analytics"];
 
+// Slip-alert toggle for the installed PWA. Web Push on iOS (16.4+) only works
+// from the home-screen icon, so in a normal browser tab we show an
+// Add-to-Home-Screen hint instead of a dead toggle. Renders nothing at all when
+// the browser can't do push or the server has no VAPID keys configured.
+function PushToggle() {
+  const api = window.cpApi || {};
+  const configured = api.pushConfigured && api.pushConfigured();
+  const supported = api.pushSupported && api.pushSupported();
+  const standalone = api.isStandalone && api.isStandalone();
+  const [on, setOn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    if (configured && supported && api.pushSubscription) {
+      api.pushSubscription().then((sub) => { if (alive) setOn(!!sub); }).catch(() => {});
+    }
+    return () => { alive = false; };
+  }, []);
+
+  if (!configured || !supported) return null;
+
+  if (!standalone) {
+    return (
+      <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--text-3)", lineHeight: 1.45 }}>
+        Add CoreProp to your Home Screen to get slip alerts.
+      </div>
+    );
+  }
+
+  const toggle = async () => {
+    if (busy) return;
+    setBusy(true); setErr("");
+    try {
+      if (on) { await api.disablePush(); setOn(false); }
+      else { await api.enablePush(); setOn(true); }
+    } catch (e) {
+      setErr(e.message || "Couldn't update notifications.");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <>
+      <button
+        className="cp-menu-item"
+        role="menuitemcheckbox"
+        aria-checked={on}
+        onClick={toggle}
+        disabled={busy}
+      >
+        {busy ? "…" : (on ? "Turn off slip alerts" : "Turn on slip alerts")}
+      </button>
+      {err && <div style={{ padding: "0 12px 8px", fontSize: 12, color: "#FCA5A5" }}>{err}</div>}
+    </>
+  );
+}
+
 function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" }) {
   // Signed-out visitors on the landing page get no app tabs. All six used to
   // render for everyone: they look like navigation, but every click just
@@ -104,6 +162,7 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
                   </div>
                 </div>
                 <div className="cp-menu-sep" />
+                <PushToggle />
                 <button className="cp-menu-item" role="menuitem" onClick={handleLogout} disabled={busy}>
                   {busy ? "Logging out…" : "Log out"}
                 </button>

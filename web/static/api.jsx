@@ -308,11 +308,71 @@
     throw new Error("Portal did not return a URL.");
   }
 
+  // ── Web Push (installable PWA notifications) ─────────────────────────────
+  function _vapidKey() {
+    return (window.__COREPROP_CONFIG && window.__COREPROP_CONFIG.vapid_public_key) || "";
+  }
+  function pushConfigured() { return !!_vapidKey(); }         // server has VAPID keys
+  function pushSupported() {
+    return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  }
+  function isStandalone() {
+    return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+           window.navigator.standalone === true;
+  }
+  // applicationServerKey wants a Uint8Array, not the base64url string.
+  function _urlB64ToUint8(base64) {
+    const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+    const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(b64);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  async function pushSubscription() {
+    if (!pushSupported()) return null;
+    try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); }
+    catch (e) { return null; }
+  }
+  // Request permission, subscribe, and register it server-side. MUST be called
+  // from a user gesture — iOS/Safari refuse Notification.requestPermission()
+  // outside one, and iOS only allows this at all from the installed PWA.
+  async function enablePush() {
+    if (!pushSupported()) throw new Error("This device can't show notifications.");
+    if (!pushConfigured()) throw new Error("Notifications aren't set up yet.");
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") throw new Error("Notifications weren't allowed.");
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _urlB64ToUint8(_vapidKey()),
+      });
+    }
+    const j = sub.toJSON();   // { endpoint, keys: { p256dh, auth } }
+    await apiFetch("/api/push/subscribe", {
+      method: "POST",
+      body: { endpoint: j.endpoint, keys: { p256dh: j.keys.p256dh, auth: j.keys.auth } },
+    });
+    return true;
+  }
+  async function disablePush() {
+    const sub = await pushSubscription();
+    if (sub) {
+      const endpoint = sub.endpoint;
+      try { await sub.unsubscribe(); } catch (e) {}
+      try { await apiFetch("/api/push/unsubscribe", { method: "POST", body: { endpoint } }); } catch (e) {}
+    }
+    return true;
+  }
+
   window.cpApi = {
     init, getSession, getUser, isLoggedIn, subscribe,
     signIn, signUp, signOut,
     apiFetch, betToUi, lineToUi, useBoardLines,
     cachedFetch, getCached, subscribeCache, prefetch,
     billingConfig, billingStatus, startCheckout, openBillingPortal,
+    pushConfigured, pushSupported, isStandalone, pushSubscription, enablePush, disablePush,
   };
 })();

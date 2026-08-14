@@ -456,10 +456,32 @@ begin
 end $$;
 
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- migration_022 — push_subscriptions (Web Push for the installable PWA)
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists push_subscriptions (
+  id         uuid        primary key default gen_random_uuid(),
+  user_id    uuid        not null,
+  endpoint   text        not null unique,
+  p256dh     text        not null,
+  auth       text        not null,
+  user_agent text,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_push_subscriptions_user on push_subscriptions(user_id);
+
+alter table push_subscriptions enable row level security;
+
+drop policy if exists "push_subscriptions_owner" on push_subscriptions;
+create policy "push_subscriptions_owner" on push_subscriptions
+  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+
 -- migrations 011 (default bump — folded into 004 above) and 014 (one-time
 -- backfill repair) have no residual schema in a fresh project and are omitted
 -- here intentionally. 019/020 (odds_type on market_observatory; auto-placement
 -- columns + auto_place_log) predate this note but are applied via their own
 -- files — fold them in here when next touched.
 
-do $$ begin raise notice 'CoreProp schema.sql applied: base tables + migrations 001-018, 021'; end $$;
+do $$ begin raise notice 'CoreProp schema.sql applied: base tables + migrations 001-018, 021, 022'; end $$;

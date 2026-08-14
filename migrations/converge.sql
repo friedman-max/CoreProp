@@ -411,6 +411,31 @@ begin
     raise warning 'converge: could not create public.landing_events: %', sqlerrm;
   end;
 
+  -- push_subscriptions — migration_022. Web Push endpoints for the installable
+  -- PWA. Owner-scoped user data; RLS + owner policy are converged in sections
+  -- 6 and 7 below, the index in the index section.
+  begin
+    if to_regclass('public.push_subscriptions') is null then
+      execute $ddl$
+        create table if not exists public.push_subscriptions (
+          id         uuid        primary key default gen_random_uuid(),
+          user_id    uuid        not null,
+          endpoint   text        not null unique,
+          p256dh     text        not null,
+          auth       text        not null,
+          user_agent text,
+          created_at timestamptz default now()
+        )
+      $ddl$;
+      raise notice 'converge: created public.push_subscriptions';
+      n_created := n_created + 1;
+    else
+      n_present := n_present + 1;
+    end if;
+  exception when others then
+    raise warning 'converge: could not create public.push_subscriptions: %', sqlerrm;
+  end;
+
   raise notice 'converge tables: % created, % already present', n_created, n_present;
 end $converge$;
 
@@ -638,7 +663,9 @@ begin
         ('idx_strategy_perf_scoped_at',     'strategy_performance_compare', '(scoped_at desc)', false),
         ('idx_strategy_perf_branch_scoped', 'strategy_performance_compare', '(branch, scoped_at desc)', false),
         -- migration_021
-        ('idx_landing_events_day_event',    'landing_events',     '(day_index, event)', false)
+        ('idx_landing_events_day_event',    'landing_events',     '(day_index, event)', false),
+        -- migration_022
+        ('idx_push_subscriptions_user',     'push_subscriptions', '(user_id)', false)
       ) as v(idx, tbl, cols, uniq)
   loop
     if to_regclass('public.' || r.tbl) is null then
@@ -689,7 +716,8 @@ begin
     'calibration_cells',
     'calibration_history',
     'strategy_performance_compare',
-    'landing_events'
+    'landing_events',
+    'push_subscriptions'
   ] loop
     -- Schema-qualified on purpose: an unqualified to_regclass() resolves via
     -- search_path, and a missing `public` would make every table look absent.
@@ -746,7 +774,10 @@ begin
         -- market_observatory is DELIBERATELY public-read (the Transparent
         -- Observatory) and has no write policy.
         ('market_observatory', 'Allow public read-only access',
-         'for select using (true)')
+         'for select using (true)'),
+        -- migration_022 — owner policy, same tenant boundary as slips/legs.
+        ('push_subscriptions',  'push_subscriptions_owner',
+         'for all using (user_id = auth.uid()) with check (user_id = auth.uid())')
       ) as v(tbl, pol, body)
   loop
     if to_regclass('public.' || r.tbl) is null then
@@ -901,7 +932,7 @@ declare
   expected       text[] := array[
     'slips', 'legs', 'app_state_cache', 'user_config', 'market_observatory',
     'calibration_cells', 'calibration_history', 'strategy_performance_compare',
-    'landing_events'
+    'landing_events', 'push_subscriptions'
   ];
   missing_tables text[] := '{}';
   no_rls         text[] := '{}';
@@ -1055,7 +1086,7 @@ begin
     'idx_observatory_last_seen_at', 'idx_user_config_stripe_customer',
     'idx_cal_cells_w_cell', 'idx_cal_history_recent', 'idx_legs_closing_captured',
     'idx_strategy_perf_scoped_at', 'idx_strategy_perf_branch_scoped',
-    'idx_landing_events_day_event'
+    'idx_landing_events_day_event', 'idx_push_subscriptions_user'
   ] loop
     if not exists (
       select 1 from pg_indexes where schemaname = 'public' and indexname = t
@@ -1070,7 +1101,7 @@ begin
       array_to_string(missing_idx, ', ');
     problems := problems + array_length(missing_idx, 1);
   else
-    raise notice 'indexes: all 20 expected indexes present';
+    raise notice 'indexes: all 21 expected indexes present';
   end if;
 
   -- ── constraints ────────────────────────────────────────────────────────────

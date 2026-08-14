@@ -1302,7 +1302,7 @@ def _run_pipeline_body():
                         ("set" if user_min is not None else "default"),
                         cfg.CELL_DROPS_ENABLED,
                     )
-                    _log_pool(std_pool)
+                    _n_logged = _log_pool(std_pool)
 
                     # Green devils (PrizePicks goblins): opt-in only, ranked by
                     # hit probability (the "best bet" / bonus-max use case).
@@ -1316,7 +1316,27 @@ def _run_pipeline_body():
                             "auto_backtest    user=%s green_devil_pool=%d (floor=%.3f, %s-%d)",
                             uid, len(gd_pool), min_prob, slip_type, n_legs,
                         )
-                        _log_pool(gd_pool, "green_devil")
+                        _n_logged += _log_pool(gd_pool, "green_devil")
+
+                    # Web Push: one notification per user per cycle, only when
+                    # slips were actually logged. Env-gated (no-op unless VAPID
+                    # is set) and fired on its own daemon thread so a slow push
+                    # service can't stall the per-user loop.
+                    if _n_logged > 0:
+                        try:
+                            from engine import push as _push
+                            if _push.is_configured():
+                                _msg = (
+                                    f"{_n_logged} new +EV slip"
+                                    f"{'s' if _n_logged != 1 else ''} logged"
+                                )
+                                threading.Thread(
+                                    target=_push.send_to_user,
+                                    args=(uid, "CoreProp", _msg, "/"),
+                                    daemon=True,
+                                ).start()
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.error("Auto-backtest background worker error: %s", e)
 
@@ -1963,7 +1983,8 @@ def root():
     # (the origin isn't known at static-build time, so it's injected here).
     head_inject = (
         f'<script>window.__COREPROP_CONFIG='
-        f'{{"supabase_url":"{SUPABASE_URL}","supabase_anon_key":"{SUPABASE_ANON_KEY}"}}'
+        f'{{"supabase_url":"{SUPABASE_URL}","supabase_anon_key":"{SUPABASE_ANON_KEY}",'
+        f'"vapid_public_key":"{cfg.VAPID_PUBLIC_KEY}"}}'
         f'</script>'
     )
     if SUPABASE_URL:
@@ -2121,7 +2142,8 @@ def get_ui_config():
     from engine.database import SUPABASE_URL, SUPABASE_ANON_KEY
     return {
         "supabase_url": SUPABASE_URL,
-        "supabase_anon_key": SUPABASE_ANON_KEY
+        "supabase_anon_key": SUPABASE_ANON_KEY,
+        "vapid_public_key": cfg.VAPID_PUBLIC_KEY,
     }
 
 
@@ -4495,6 +4517,8 @@ async def billing_webhook(request: Request):
 # ---------------------------------------------------------------------------
 from web.routers import admin as _r_admin
 from web.routers import public as _r_public
+from web.routers import push as _r_push
 
 app.include_router(_r_admin.router)
 app.include_router(_r_public.router)
+app.include_router(_r_push.router)
