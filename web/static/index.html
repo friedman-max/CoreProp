@@ -322,7 +322,12 @@ a{color:inherit;text-decoration:none}
 .lp-why-steps li{display:grid;grid-template-columns:24px minmax(0,1fr);gap:11px;align-items:start}
 .lp-why-n{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--primary-hi);color:var(--primary-2);font-size:11.5px;font-weight:600}
 .lp-why-steps b{display:block;font-size:14px;font-weight:600;letter-spacing:-.01em}
-.lp-why-steps span{display:block;margin-top:3px;font-size:12.5px;line-height:1.55;color:var(--text-2)}
+/* `div span` scopes this to the step DESCRIPTION only. The step NUMBER is also
+ * a <span> (.lp-why-n) but a direct child of the <li>; a bare `.lp-why-steps
+ * span` matched it too and, at (0,1,1) vs .lp-why-n's (0,1,0), WON — forcing the
+ * digit to display:block (killing place-items:center), nudging it down 3px and
+ * recoloring it, so the numbers rendered outside their circles. */
+.lp-why-steps div span{display:block;margin-top:3px;font-size:12.5px;line-height:1.55;color:var(--text-2)}
 /* The vig visual. --primary as a FILL (never as text — see the token note at
  * the top of this file) and the game's loss red for the overround, so "the
  * red part is theirs" reads the same here as it does on the card. */
