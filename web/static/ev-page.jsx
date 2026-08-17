@@ -623,6 +623,19 @@ function EVPage() {
             )}
             {loadState === "error" && <span style={{color:"#FCA5A5"}}>Error: {errMsg}</span>}
           </span>
+          {/* Red-row legend. Only rendered when at least one visible row is
+              actually logged, so it explains the highlight exactly when the
+              highlight is on screen. This replaces the per-row LOGGED badge,
+              which didn't fit the PLAYER column on phones. */}
+          {bets.some(b => b.inBacktest) && (
+            <>
+              <span className="ev-meta-dot">·</span>
+              <span className="ev-legend" title="Already in your backtest — the slip builder won't pick these again.">
+                <i className="ev-legend-swatch" aria-hidden="true" />
+                logged to backtest
+              </span>
+            </>
+          )}
           <span className="ev-meta-pag">{bets.length} of {allBets.length}</span>
         </div>
 
@@ -656,8 +669,15 @@ function EVPage() {
                 title={b.inBacktest ? "Already logged — won't be picked for new slips" : undefined}
               >
                 <span className="ev-player">
-                  {b.inBacktest && <span className="ev-logged">LOGGED</span>}
-                  <span className="ev-player-n">{b.player}</span>
+                  {/* No LOGGED badge here: it was `flex-shrink:0` inside the
+                      PLAYER cell, so on a phone it ate most of a ~100px track
+                      and pushed the player name out over the LEAGUE column.
+                      The red row treatment carries the status instead, and
+                      .ev-legend below the meta row explains what red means. */}
+                  {/* title = the desktop escape hatch for the ellipsis; on
+                      phones the name wraps instead (see the 560px block in
+                      index.html) because touch devices have no hover. */}
+                  <span className="ev-player-n" title={b.player}>{b.player}</span>
                   {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>GD</span>}
                 </span>
                 <span><LeaguePill league={b.league} /></span>
