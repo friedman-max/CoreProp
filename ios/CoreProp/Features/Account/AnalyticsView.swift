@@ -101,7 +101,7 @@ struct AnalyticsView: View {
             }
             .chartYAxis { AxisMarks(position: .leading) }
             .frame(height: 180)
-            Text("1-unit stake per slip · \(points.count) settled")
+            Text("\(points.count) settled")
                 .font(Theme.ui(11)).foregroundColor(Theme.text3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -21,7 +21,6 @@ function AnalyticsPage() {
   // Empty until the user first opens Custom, at which point they default to the
   // full data span (first slip → today) so the chart isn't blank.
   const [custom, setCustom] = useState({ start: "", end: "" });
-  const [hover, setHover] = useState(null);
   const [data, setData] = useState(null);
   const [loadState, setLoadState] = useState("loading");
   const [errMsg, setErrMsg] = useState("");
@@ -45,8 +44,7 @@ function AnalyticsPage() {
 
   // Full P&L series mapped from pnl_timeline (already cumulative).
   // Each point also carries `delta` = this slip's own profit (payout - stake)
-  // so the chart can colour the dot by win/loss and the hover summary can
-  // attribute the change to a specific resolved slip.
+  // so the chart can colour each dot green/red/yellow by win/loss/push.
   const fullSeries = useMemo(() => {
     if (!data?.pnl_timeline) return [];
     return data.pnl_timeline.map(p => ({
@@ -115,12 +113,11 @@ function AnalyticsPage() {
     }));
 
     // Endpoint points so the drawn axis spans the FULL window and there's a
-    // visible, hoverable marker at the first and last date shown. `endpoint:
-    // true` marks these synthetic points — they render a neutral dot and are
-    // hoverable (showing window start / current cumulative), but carry no
-    // per-slip delta since they aren't slips. For MAX the domain naturally
-    // starts at the first slip (already a real dot), so only the trailing
-    // "now" endpoint is added.
+    // visible marker at the first and last date shown. `endpoint: true` marks
+    // these synthetic points — they render a neutral dot but carry no per-slip
+    // delta since they aren't slips. For MAX the domain naturally starts at the
+    // first slip (already a real dot), so only the trailing "now" endpoint is
+    // added.
     const out = [];
     if (range !== "MAX" && isFinite(startMs)) {
       // Leading flat segment: 0u from the window start until the first real
@@ -242,8 +239,6 @@ function AnalyticsPage() {
   // so the section subtitle can be honest about it.
   const clvIsAllTime = !haveWindowClv && clvCount > 0;
 
-  const hovered = hover ?? filtered[filtered.length - 1];
-
   // Switch to the custom range. On first open, seed the inputs with the full
   // data span (first slip → today) so the chart shows something immediately
   // rather than an empty window the user has to fill in by hand.
@@ -272,22 +267,16 @@ function AnalyticsPage() {
     );
   }
 
-  // When the user is hovering the chart, the big number on top shows the
-  // cumulative P&L (in units) AT that timestamp. When not hovering, it shows
-  // the window delta (end − start). The right-side caption shows either the
-  // hovered date plus that slip's individual win/loss (e.g. "+5.00u this
-  // slip") or the full window range.
-  const headerNumber = hover ? hover.pnl : totalPnL;
-  const headerLabel  = hover
-    ? hover.date.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
-    : (filtered.length
-        ? `${filtered[0].date.toLocaleDateString(undefined,{month:"short",day:"numeric"})} → ${filtered[filtered.length-1].date.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}`
-        : "");
-  const hoverDeltaText = hover && hover.endpoint
-    ? (hover.endpointKind === "start" ? "window start" : "now")
-    : (hover && typeof hover.delta === "number"
-        ? `${hover.delta >= 0 ? "+" : ""}${hover.delta.toFixed(2)}u this slip`
-        : null);
+  // The header is static: it always shows the window's cumulative P&L total and
+  // the window's date range. It deliberately does NOT react to dragging the
+  // chart — no per-slip "…u this slip" popup, no "P&L at hover" title flip — so
+  // the label always reads "Cumulative P&L" and the number holds steady while a
+  // drag scrolls past it. The chart itself is a static, non-interactive display,
+  // matching the iOS Performance tab.
+  const headerNumber = totalPnL;
+  const headerLabel  = filtered.length
+    ? `${filtered[0].date.toLocaleDateString(undefined,{month:"short",day:"numeric"})} → ${filtered[filtered.length-1].date.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}`
+    : "";
 
   // By this point the loading/error/empty states have already returned early
   // above, so stat cards only render with real data — but keep an explicit
@@ -299,31 +288,17 @@ function AnalyticsPage() {
       <div className="an-panel">
         <div className="pnl-header">
           <div>
-            <div className="pnl-title">
-              {hover ? "P&L at hover" : "Cumulative P&L"}
-              <span className="pnl-title-sub">{hover ? "units at this point in time" : "Unit Stake / Slip · window delta"}</span>
-            </div>
+            <div className="pnl-title">Cumulative P&L</div>
             <div className={"pnl-total " + (headerNumber >= 0 ? "tone-good" : "tone-bad")}>
               {headerNumber >= 0 ? "+" : ""}{headerNumber.toFixed(2)}u
             </div>
           </div>
           <div className="pnl-hover">
             <div>{headerLabel}</div>
-            {hoverDeltaText && (
-              <div style={{
-                marginTop: 4,
-                fontSize: 13,
-                fontFamily: "JetBrains Mono,ui-monospace,monospace",
-                fontWeight: 700,
-                color: hover.endpoint ? "#9CA3AF"
-                     : hover.delta > 0 ? "#22C55E"
-                     : hover.delta < 0 ? "#EF4444" : "#FBBF24",
-              }}>{hoverDeltaText}</div>
-            )}
           </div>
         </div>
 
-        <PnLChart series={filtered} onHover={setHover} hover={hover} />
+        <PnLChart series={filtered} />
 
         <div className="pnl-range">
           {RANGES.map(r => (
@@ -375,7 +350,7 @@ function AnalyticsPage() {
   );
 }
 
-function PnLChart({ series, onHover, hover }) {
+function PnLChart({ series }) {
   const ref = useRef(null);
   const [size, setSize] = useState({ w: 800, h: 320 });
   useEffect(() => {
@@ -436,38 +411,12 @@ function PnLChart({ series, onHover, hover }) {
     xTicks.push({ x, label: new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) });
   }
 
-  // Find the REAL slip (not a synthetic axis anchor) the cursor is nearest to.
-  // Resolve a clientX (from a mouse or touch point) to the nearest real slip
-  // and set it as the hovered point. Shared by pointer + touch handlers.
-  const hoverAtClientX = (clientX, rect) => {
-    const x = (clientX - rect.left) * (W / rect.width); // normalize to viewBox
-    const ratio = Math.min(1, Math.max(0, (x - padL) / (W - padL - padR)));
-    const tHover = tMin + ratio * tSpan;
-    let best = -1, bestDt = Infinity;
-    for (let i = 0; i < series.length; i++) {
-      // Endpoints (window start / "now") ARE hoverable; only skip legacy
-      // hidden anchors if any remain.
-      if (series[i].anchor) continue;
-      const dt = Math.abs(series[i].date.getTime() - tHover);
-      if (dt < bestDt) { bestDt = dt; best = i; }
-    }
-    onHover(best >= 0 ? series[best] : null);
-  };
-
-  const onMove = (e) => hoverAtClientX(e.clientX, e.currentTarget.getBoundingClientRect());
-
-  // Touch: drag a finger along the chart to scrub P&L over time. We do NOT call
-  // preventDefault here (React attaches touch listeners as passive, so it would
-  // throw); instead `touch-action:none` on the SVG stops the browser from
-  // treating the drag as a page scroll, which is what lets the scrub work.
-  const onTouch = (e) => {
-    const pt = e.touches && e.touches.length ? e.touches[0]
-             : (e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : null);
-    if (!pt) return;
-    hoverAtClientX(pt.clientX, e.currentTarget.getBoundingClientRect());
-  };
-
-  const hoverIdx = hover ? series.findIndex(p => p.date.getTime() === hover.date.getTime() && p.pnl === hover.pnl) : -1;
+  // This chart is a static, non-interactive display: no hover/scrub, no
+  // crosshair, no touch handlers. Dragging over it scrolls the page like any
+  // other content (`.pnl-chart { touch-action: pan-y }`), which is what keeps a
+  // horizontal drag from "slipping" into an accidental page scroll, stops the
+  // SVG from being selected/highlighted on a touch-drag, and keeps the header
+  // reading a steady "Cumulative P&L". Matches the iOS Performance chart.
 
   // Per-slip dot color: green if this slip won, red if it lost, yellow if push.
   // Endpoint markers (window start / "now") are neutral so they read as axis
@@ -480,10 +429,7 @@ function PnLChart({ series, onHover, hover }) {
 
   return (
     <div ref={ref} className="pnl-chart">
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
-           onMouseMove={onMove} onMouseLeave={() => onHover(null)}
-           onTouchStart={onTouch} onTouchMove={onTouch} onTouchEnd={() => onHover(null)}
-           style={{ touchAction: "none" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}>
         <defs>
           <linearGradient id="pnl-fill" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor={lineColor} stopOpacity="0.24" />
@@ -517,25 +463,13 @@ function PnLChart({ series, onHover, hover }) {
               key={i}
               cx={xs(i)}
               cy={ys(p.pnl)}
-              r={hoverIdx === i ? 5 : (p.endpoint ? 3.5 : 3)}
+              r={p.endpoint ? 3.5 : 3}
               fill={dotColor(p)}
               stroke="#0a0a0d"
               strokeWidth="1.25"
             />
           )
         ))}
-
-        {/* Hover crosshair */}
-        {hoverIdx >= 0 && (
-          <g>
-            <line x1={xs(hoverIdx)} x2={xs(hoverIdx)} y1={padT} y2={H - padB}
-                  stroke="rgba(255,255,255,.45)" strokeWidth="1.25" strokeDasharray="4,4" />
-            <circle cx={xs(hoverIdx)} cy={ys(series[hoverIdx].pnl)} r="10"
-                    fill={dotColor(series[hoverIdx])} fillOpacity="0.22" />
-            <circle cx={xs(hoverIdx)} cy={ys(series[hoverIdx].pnl)} r="5.5"
-                    fill={dotColor(series[hoverIdx])} stroke="#0a0a0d" strokeWidth="2" />
-          </g>
-        )}
 
         {/* X tick labels */}
         {xTicks.map((t, i) => (
