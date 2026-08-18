@@ -1981,8 +1981,10 @@ def extension_page():
     return HTMLResponse(content=(STATIC_DIR / "extension.html").read_text(encoding="utf-8"))
 
 
-@app.get("/")
-def root():
+def _render_index():
+    """Render index.html with runtime config injected. Shared by `/` and the
+    SPA fallback so the app boots identically no matter which path it's opened
+    at (Web Push / PWA relaunch, a shared deep link, a manual refresh)."""
     from engine.database import SUPABASE_URL, SUPABASE_ANON_KEY
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     # Inject runtime config so the frontend doesn't need to fetch /api/ui-config.
@@ -2003,6 +2005,11 @@ def root():
     html = html.replace("</head>", head_inject + "\n</head>", 1)
     from fastapi.responses import HTMLResponse
     return HTMLResponse(content=html)
+
+
+@app.get("/")
+def root():
+    return _render_index()
 
 
 @app.get("/sw.js")
@@ -4800,3 +4807,25 @@ from web.routers import push as _r_push
 app.include_router(_r_admin.router)
 app.include_router(_r_public.router)
 app.include_router(_r_push.router)
+
+
+# ── SPA fallback (MUST be last: matches only what no explicit route/mount did) ─
+# The frontend is a single page served at "/", but it gets opened at arbitrary
+# same-origin paths too: a tapped Web Push / PWA relaunch, a shared deep link,
+# the /privacy & /terms links, or a manual refresh while on a deep link. Without
+# this, FastAPI answers every path other than the handful of explicit routes
+# with {"detail":"Not Found"} — the JSON "Not Found" page users were landing on
+# after tapping a notification. Serve the same injected index.html so the app
+# boots and its client-side router takes over. `/api/*` misses and missing
+# assets (anything with a file extension) still 404 honestly rather than being
+# masked by an HTML page. Registered after every router so specific routes win;
+# the /static mount is registered earlier and keeps priority for /static/*.
+@app.get("/{full_path:path}", include_in_schema=False)
+def spa_fallback(full_path: str):
+    if full_path == "api" or full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    # A trailing path segment with a "." is a file request (e.g. a missing
+    # image or script), not an app route — let it 404 instead of returning HTML.
+    if "." in full_path.rsplit("/", 1)[-1]:
+        raise HTTPException(status_code=404, detail="Not Found")
+    return _render_index()
