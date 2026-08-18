@@ -23,7 +23,7 @@ struct SettingsView: View {
     @State private var apMode = "off"
     @State private var apStake: Double = 5
     @State private var apDailyCap: Double = 25
-    @State private var apConsent = false
+    @State private var apConfirmLive = false      // drives the real-money popup
     @State private var apSaving = false
     @State private var apBanner: (text: String, error: Bool)?
 
@@ -99,13 +99,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var autoPlaceSection: some View {
-        if let s = apStatus, s.disabledServerSide {
-            Section("Auto-place") {
-                Text("Auto-placement isn't enabled on this server.")
-                    .font(Theme.ui(13)).foregroundColor(Theme.text3)
-                    .listRowBackground(Theme.card)
-            }
-        } else if apStatus != nil {
+        if apStatus != nil {
             Section("Auto-place (advanced)") {
                 Picker("Mode", selection: $apMode) {
                     Text("Off").tag("off")
@@ -131,24 +125,30 @@ struct SettingsView: View {
                     .listRowBackground(Theme.card)
 
                     if apMode == "live" {
-                        Label("Live arms placement for real money on your PrizePicks account.",
+                        Label("Live places REAL money automatically on your PrizePicks account — no confirmation per bet.",
                               systemImage: "exclamationmark.triangle.fill")
                             .font(Theme.ui(12)).foregroundColor(Theme.amber)
                             .listRowBackground(Theme.card)
                     }
-                    Toggle("I understand and consent", isOn: $apConsent)
-                        .listRowBackground(Theme.card)
                 }
 
                 Button {
-                    Task { await saveAutoPlace() }
+                    requestSaveAutoPlace()
                 } label: {
                     HStack { Spacer()
                         if apSaving { ProgressView() } else { Text("Save auto-place").fontWeight(.semibold) }
                         Spacer() }
                 }
-                .disabled(apSaving || (apMode != "off" && !apConsent))
+                .disabled(apSaving)
                 .listRowBackground(Theme.card)
+                // Real-money "know what you're doing" popup, shown ONLY when
+                // arming live. Confirming here is what records consent.
+                .alert("Arm real-money auto-placement?", isPresented: $apConfirmLive) {
+                    Button("Cancel", role: .cancel) {}
+                    Button("Arm live", role: .destructive) { Task { await performSaveAutoPlace() } }
+                } message: {
+                    Text("CoreProp will automatically enter \(Fmt.currency(apStake, maximumFractionDigits: 0)) and SUBMIT entries on your PrizePicks account with no per-bet confirmation, up to \(Fmt.currency(apDailyCap, maximumFractionDigits: 0)) per day. This places real money. You can switch it back to Off any time.")
+                }
 
                 if let b = apBanner {
                     Text(b.text).font(Theme.ui(13))
@@ -156,12 +156,18 @@ struct SettingsView: View {
                         .listRowBackground(Theme.card)
                 }
             } footer: {
-                Text("Placement runs in the CoreProp desktop browser extension, which stages the slip on PrizePicks for this stake — you review and submit each wager. Paper simulates without placing. The server caps every stake and disarms after repeated failures.")
+                Text("Off by default. Placement runs in the CoreProp desktop browser extension. Paper simulates without placing real money. Live auto-fills the stake and submits — the server caps every stake, enforces your daily cap, and disarms after repeated failures.")
             }
         }
     }
 
-    private func saveAutoPlace() async {
+    private func requestSaveAutoPlace() {
+        // Live requires the explicit real-money popup; paper/off save directly.
+        if apMode == "live" { apConfirmLive = true }
+        else { Task { await performSaveAutoPlace() } }
+    }
+
+    private func performSaveAutoPlace() async {
         apSaving = true
         apBanner = nil
         defer { apSaving = false }
@@ -169,7 +175,8 @@ struct SettingsView: View {
             mode: apMode,
             stake: apMode == "off" ? nil : apStake,
             dailyCap: apMode == "off" ? nil : apDailyCap,
-            consent: apConsent)
+            // Arming paper/live records consent; live's consent came from the popup.
+            consent: apMode != "off")
         do {
             try await model.client.setAutoPlacePrefs(prefs)
             apBanner = ("Auto-place settings saved.", false)

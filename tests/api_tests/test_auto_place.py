@@ -1,15 +1,15 @@
 """Auto-place: the arming endpoint + the on-failure reform helper.
 
 Arming (POST /api/user/auto-place-prefs) records the user's intent to auto-place
-for a set stake; it is gated by AUTO_PLACE_ENABLED and requires explicit consent.
-Reform (_reform_failed_slip) is the "if placement fails, drop the unstable legs
-and re-form the rest" behavior — verified here against a fake DB + stub pp_lines.
+for a set stake. It is enabled PER-USER by explicit consent (there is no operator
+env gate) and defaults off. Reform (_reform_failed_slip) is the "if placement
+fails, drop the unstable legs and re-form the rest" behavior — verified here
+against a fake DB + stub pp_lines.
 """
 from __future__ import annotations
 
 import pytest
 
-import config as cfg  # noqa: F401  (kept for parity with sibling tests)
 import web.app as app_mod
 
 
@@ -36,17 +36,8 @@ class _UpsertDB:
 
 # ── arming endpoint ───────────────────────────────────────────────────────────
 
-def test_arm_requires_server_flag(client, monkeypatch):
-    c, app, gcu = client
-    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", False)
-    _as_user(app, gcu)
-    r = c.post("/api/user/auto-place-prefs", json={"mode": "live", "consent": True})
-    assert r.status_code == 403
-
-
 def test_arm_rejects_bad_mode(client, monkeypatch):
     c, app, gcu = client
-    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
     _as_user(app, gcu)
     r = c.post("/api/user/auto-place-prefs", json={"mode": "wild"})
     assert r.status_code == 400
@@ -54,7 +45,6 @@ def test_arm_rejects_bad_mode(client, monkeypatch):
 
 def test_arm_requires_consent(client, monkeypatch):
     c, app, gcu = client
-    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
     _as_user(app, gcu)
     r = c.post("/api/user/auto-place-prefs", json={"mode": "live", "consent": False})
     assert r.status_code == 400
@@ -62,7 +52,6 @@ def test_arm_requires_consent(client, monkeypatch):
 
 def test_arm_rejects_out_of_range_stake(client, monkeypatch):
     c, app, gcu = client
-    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
     db = _UpsertDB()
     monkeypatch.setattr("engine.database.get_user_db", lambda jwt: db)
     _as_user(app, gcu)
@@ -73,7 +62,6 @@ def test_arm_rejects_out_of_range_stake(client, monkeypatch):
 
 def test_arm_live_persists_stake_cap_and_consent(client, monkeypatch):
     c, app, gcu = client
-    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
     db = _UpsertDB()
     monkeypatch.setattr("engine.database.get_user_db", lambda jwt: db)
     _as_user(app, gcu, "userZ")
@@ -93,7 +81,6 @@ def test_arm_live_persists_stake_cap_and_consent(client, monkeypatch):
 
 def test_disarm_off_needs_no_consent(client, monkeypatch):
     c, app, gcu = client
-    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
     db = _UpsertDB()
     monkeypatch.setattr("engine.database.get_user_db", lambda jwt: db)
     _as_user(app, gcu)
@@ -101,6 +88,64 @@ def test_disarm_off_needs_no_consent(client, monkeypatch):
     assert r.status_code == 200
     assert db.upserted["auto_place_mode"] == "off"
     assert "auto_place_consent_at" not in db.upserted   # disarm leaves prior consent intact
+
+
+# ── pending-slip auto-submit gating ───────────────────────────────────────────
+
+def _leg_no_start():
+    return {"player": "A", "league": "NBA", "prop": "Points", "line": 25.5, "side": "over"}
+
+
+def test_pending_slip_auto_submit_honored_and_clamped_when_live(client, monkeypatch):
+    c, app, gcu = client
+    monkeypatch.setattr(app_mod, "_auto_place_settings",
+                        lambda user: {"mode": "live", "stake": 5.0, "max_stake": 10.0,
+                                      "daily_cap": 25.0, "fail_streak": 0})
+    # The daily-cap check reads today's spend; stub a reachable DB + zero spend
+    # so the cap doesn't (correctly) refuse an unreadable ledger.
+    monkeypatch.setattr("engine.database.get_user_db", lambda jwt: object())
+    monkeypatch.setattr(app_mod, "_auto_place_spent_today", lambda db, uid: 0.0)
+    _as_user(app, gcu)
+    r = c.post("/api/pending-slip",
+               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
+                     "auto_submit": True, "stake": 50})
+    assert r.status_code == 200
+    token = r.json()["token"]
+    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
+    assert g["auto_submit"] is True
+    assert g["stake"] == 10.0   # requested 50, clamped to the user's max_stake
+
+
+def test_pending_slip_auto_submit_refused_over_daily_cap(client, monkeypatch):
+    c, app, gcu = client
+    monkeypatch.setattr(app_mod, "_auto_place_settings",
+                        lambda user: {"mode": "live", "stake": 10.0, "max_stake": 10.0,
+                                      "daily_cap": 25.0, "fail_streak": 0})
+    monkeypatch.setattr("engine.database.get_user_db", lambda jwt: object())
+    monkeypatch.setattr(app_mod, "_auto_place_spent_today", lambda db, uid: 20.0)  # 20 + 10 > 25
+    _as_user(app, gcu)
+    r = c.post("/api/pending-slip",
+               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
+                     "auto_submit": True, "stake": 10})
+    token = r.json()["token"]
+    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
+    assert g["auto_submit"] is False and g["stake"] == 0   # daily cap wins
+
+
+def test_pending_slip_auto_submit_ignored_when_not_armed_live(client, monkeypatch):
+    c, app, gcu = client
+    monkeypatch.setattr(app_mod, "_auto_place_settings",
+                        lambda user: {"mode": "off", "stake": 5.0, "max_stake": 10.0,
+                                      "daily_cap": 25.0, "fail_streak": 0})
+    _as_user(app, gcu)
+    r = c.post("/api/pending-slip",
+               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
+                     "auto_submit": True, "stake": 8})
+    token = r.json()["token"]
+    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
+    # Client asked for auto-submit but the user isn't armed live → refused.
+    assert g["auto_submit"] is False
+    assert g["stake"] == 0
 
 
 # ── reform on failure ─────────────────────────────────────────────────────────
@@ -145,7 +190,6 @@ def test_reform_drops_unstable_and_reforms(monkeypatch):
         _leg(2, "Nikola Jokic", "Rebounds", 12.5, "under"),
         _leg(3, "Luka Doncic", "Assists", 9.5, "over"),   # will be UNstable (no pp match)
     ]
-    # pp_lines cover legs 1 & 2 but NOT leg 3 (its line moved / was pulled).
     pp = [_pp("LeBron James", "Points", 25.5), _pp("Nikola Jokic", "Rebounds", 12.5)]
     monkeypatch.setitem(app_mod._state, "pp_lines", pp)
 
@@ -158,13 +202,10 @@ def test_reform_drops_unstable_and_reforms(monkeypatch):
 
     assert out and out["reformed"] is True
     assert out["dropped"] == 1 and out["kept"] == 2
-    # The failed slip's legs + header were deleted.
     assert ("delete", "legs") in db.ops and ("delete", "slips") in db.ops
-    # A new slip header was inserted with only the 2 stable legs.
     slip_inserts = [o for o in db.ops if o[0] == "insert" and o[1] == "slips"]
     assert slip_inserts and slip_inserts[0][2]["n_legs"] == 2
     assert slip_inserts[0][2]["slip_type"] == "Flex"
-    # The 2 stable legs were re-logged via the idempotent inserter.
     assert captured["legs"] and len(captured["legs"]) == 2
     kept_players = {l["player"] for l in captured["legs"]}
     assert kept_players == {"LeBron James", "Nikola Jokic"}   # Luka (unstable) dropped
@@ -179,83 +220,8 @@ def test_reform_noop_when_all_legs_available(monkeypatch):
     monkeypatch.setitem(app_mod._state, "pp_lines", pp)
     db = _ReformDB(legs)
     out = app_mod._reform_failed_slip(db, "userA", "SLIP")
-    # Transient failure (nothing unstable) — must NOT delete/reform (would loop).
     assert out is None
     assert not any(o[0] in ("delete", "insert") for o in db.ops)
-
-
-def _leg_no_start():
-    return {"player": "A", "league": "NBA", "prop": "Points", "line": 25.5, "side": "over"}
-
-
-def test_pending_slip_auto_submit_honored_and_clamped_when_live(client, monkeypatch):
-    c, app, gcu = client
-    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
-    monkeypatch.setattr(app_mod, "_auto_place_settings",
-                        lambda user: {"mode": "live", "stake": 5.0, "max_stake": 10.0,
-                                      "daily_cap": 25.0, "fail_streak": 0})
-    # The daily-cap check reads today's spend; stub a reachable DB + zero spend
-    # so the cap doesn't (correctly) refuse an unreadable ledger.
-    monkeypatch.setattr("engine.database.get_user_db", lambda jwt: object())
-    monkeypatch.setattr(app_mod, "_auto_place_spent_today", lambda db, uid: 0.0)
-    _as_user(app, gcu)
-    r = c.post("/api/pending-slip",
-               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
-                     "auto_submit": True, "stake": 50})
-    assert r.status_code == 200
-    token = r.json()["token"]
-    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
-    assert g["auto_submit"] is True
-    assert g["stake"] == 10.0   # requested 50, clamped to the user's max_stake
-
-
-def test_pending_slip_auto_submit_refused_over_daily_cap(client, monkeypatch):
-    c, app, gcu = client
-    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
-    monkeypatch.setattr(app_mod, "_auto_place_settings",
-                        lambda user: {"mode": "live", "stake": 10.0, "max_stake": 10.0,
-                                      "daily_cap": 25.0, "fail_streak": 0})
-    monkeypatch.setattr("engine.database.get_user_db", lambda jwt: object())
-    monkeypatch.setattr(app_mod, "_auto_place_spent_today", lambda db, uid: 20.0)  # 20 + 10 > 25
-    _as_user(app, gcu)
-    r = c.post("/api/pending-slip",
-               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
-                     "auto_submit": True, "stake": 10})
-    token = r.json()["token"]
-    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
-    assert g["auto_submit"] is False and g["stake"] == 0   # daily cap wins
-
-
-def test_pending_slip_auto_submit_ignored_when_not_armed_live(client, monkeypatch):
-    c, app, gcu = client
-    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
-    monkeypatch.setattr(app_mod, "_auto_place_settings",
-                        lambda user: {"mode": "off", "stake": 5.0, "max_stake": 10.0,
-                                      "daily_cap": 25.0, "fail_streak": 0})
-    _as_user(app, gcu)
-    r = c.post("/api/pending-slip",
-               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
-                     "auto_submit": True, "stake": 8})
-    token = r.json()["token"]
-    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
-    # Client asked for auto-submit but the user isn't armed live → refused.
-    assert g["auto_submit"] is False
-    assert g["stake"] == 0
-
-
-def test_pending_slip_auto_submit_ignored_when_flag_off(client, monkeypatch):
-    c, app, gcu = client
-    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", False)
-    monkeypatch.setattr(app_mod, "_auto_place_settings",
-                        lambda user: {"mode": "live", "stake": 5.0, "max_stake": 10.0,
-                                      "daily_cap": 25.0, "fail_streak": 0})
-    _as_user(app, gcu)
-    r = c.post("/api/pending-slip",
-               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
-                     "auto_submit": True, "stake": 8})
-    token = r.json()["token"]
-    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
-    assert g["auto_submit"] is False   # global kill switch wins
 
 
 def test_reform_drops_slip_when_too_few_stable(monkeypatch):
@@ -267,7 +233,6 @@ def test_reform_drops_slip_when_too_few_stable(monkeypatch):
     monkeypatch.setitem(app_mod._state, "pp_lines", pp)
     db = _ReformDB(legs)
     out = app_mod._reform_failed_slip(db, "userA", "SLIP")
-    # 1 stable leg < 2 → delete the failed slip, don't reform (can't make a slip).
     assert out and out["reformed"] is False and out["kept"] == 1
     assert ("delete", "legs") in db.ops and ("delete", "slips") in db.ops
     assert not any(o[0] == "insert" for o in db.ops)

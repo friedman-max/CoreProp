@@ -2702,14 +2702,11 @@ class AutoPlacePrefs(BaseModel):
 def update_auto_place_prefs(update: AutoPlacePrefs, user: dict = Depends(get_current_user)):
     """Arm/disarm auto-placement and set the per-slip stake + daily cap.
 
-    This only records the user's INTENT. Placement itself runs in the companion
-    desktop browser extension, which stages the slip on PrizePicks; the whole
-    path is a no-op unless the operator enabled it server-side
-    (AUTO_PLACE_ENABLED). Arming (paper/live) REQUIRES explicit consent, stored
-    as a timestamp — _auto_place_settings treats a missing consent as 'off'
-    regardless of mode, so this is the only place a user can truly arm."""
-    if not AUTO_PLACE_ENABLED:
-        raise HTTPException(status_code=403, detail="Auto-placement is disabled on this server.")
+    The user enables this themselves — there is no operator gate. It defaults
+    OFF and arming (paper/live) REQUIRES explicit consent, stored as a timestamp;
+    _auto_place_settings treats a missing consent as 'off' regardless of mode, so
+    this is the only place a user can truly arm. Placement itself runs in the
+    companion desktop browser extension, which stages the slip on PrizePicks."""
     mode = (update.mode or "off").lower()
     if mode not in ("off", "paper", "live"):
         raise HTTPException(status_code=400, detail="mode must be 'off', 'paper', or 'live'.")
@@ -3183,7 +3180,7 @@ def set_pending_slip(req: PendingSlipRequest, user: dict = Depends(get_current_u
     # stake to the user's configured ceiling. The client can never turn on
     # real-money submission or raise the stake by itself.
     aps = _auto_place_settings(user)
-    auto_submit = bool(req.auto_submit) and AUTO_PLACE_ENABLED and aps["mode"] == "live"
+    auto_submit = bool(req.auto_submit) and aps["mode"] == "live"
     stake = 0.0
     if auto_submit:
         req_stake = float(req.stake if req.stake is not None else aps["stake"] or 0)
@@ -3358,11 +3355,12 @@ def report_slip_status(req: SlipStatusRequest, token: str = Query("", alias="cp_
 # open devtools on the extension; they cannot talk this endpoint into a larger
 # stake than their row allows.
 #
-# AUTO_PLACE_ENABLED is the global kill switch — set it false on Render to
-# disarm every user at once without a deploy.
+# There is deliberately NO operator env gate: the feature is enabled by the USER
+# alone, per-account, defaulting OFF. It is armed only by an explicit opt-in that
+# records consent (see _auto_place_settings: no consent → mode is off), and the
+# UI shows a real-money confirmation popup before arming live. Per-user caps,
+# stake clamps and auto-disarm on repeated failures are the safety rails.
 # ---------------------------------------------------------------------------
-
-AUTO_PLACE_ENABLED = os.getenv("AUTO_PLACE_ENABLED", "false").lower() == "true"
 
 # How long after a slip is logged it stays eligible. Past this the priced line
 # is stale enough that placing is guesswork, and the point of the feature is to
@@ -3380,9 +3378,8 @@ def _auto_place_settings(user: dict) -> dict:
 
     # Consent is mandatory and tracked separately from the mode: a row that
     # somehow has mode='live' with no recorded disclaimer acceptance is off.
+    # This consent gate is the whole enable switch — there is no operator env.
     if not cfg.get("auto_place_consent_at"):
-        mode = "off"
-    if not AUTO_PLACE_ENABLED:
         mode = "off"
 
     stake = float(cfg.get("auto_place_stake") or 1)
@@ -3424,9 +3421,7 @@ def auto_place_status(user: dict = Depends(get_current_user)):
     remaining = max(0.0, s["daily_cap"] - spent)
 
     blocked = None
-    if not AUTO_PLACE_ENABLED:
-        blocked = "auto-placement is disabled server-side"
-    elif s["mode"] == "off":
+    if s["mode"] == "off":
         blocked = "not armed"
     elif s["fail_streak"] >= _AUTO_PLACE_FAIL_LIMIT:
         blocked = f"disarmed after {s['fail_streak']} consecutive failures"
