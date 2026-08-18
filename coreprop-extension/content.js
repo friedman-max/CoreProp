@@ -1,9 +1,16 @@
 /**
  * CoreProp — PrizePicks Slip Builder (content script)
  *
- * Stages the legs of a CoreProp slip on the PrizePicks board so the user only
- * has to enter a stake and submit. It NEVER submits a wager and never touches
- * the entry amount — that is deliberate and should stay that way.
+ * Stages the legs of a CoreProp slip on the PrizePicks board. By default it
+ * stops there — the user enters the stake and submits.
+ *
+ * AUTO-SUBMIT (opt-in, real money): when the CoreProp server marks a pending
+ * slip `auto_submit` (only for a user who armed LIVE auto-place, with consent,
+ * within their daily cap — see web/app.py::set_pending_slip; the client cannot
+ * turn this on), the flow also fills the entry amount and submits. This removes
+ * the human-in-the-loop on purpose, at the product owner's explicit request. It
+ * is attempted at most once per staged slip, never when a line drifted, and the
+ * watcher is stopped afterwards so a failure can never retry a real-money bet.
  *
  * Design rule, learned the hard way: a leg counts as staged only when PP's own
  * UI says it is staged. Every "success" here is read back off the board, never
@@ -963,24 +970,40 @@ async function runInner() {
     }
   }
 
-  // Only clear the server-side slip on a FULL success. A partial run must stay
-  // retryable — the old build deleted it whenever a single leg "succeeded",
-  // which combined with the always-true success path meant a totally failed
-  // run destroyed the slip and the user had to re-place it from scratch.
-  if (staged === legs.length) {
+  // Auto-submit (real money) ONLY when the server armed it. Attempt at most
+  // once, never on a drifted line, and stop the watcher afterwards so a failure
+  // can never trigger a repeated real-money attempt.
+  let autoPlaced = false;
+  const canAutoSubmit = staged === legs.length && slip.auto_submit && Number(slip.stake) > 0;
+  if (canAutoSubmit && betterLineSwaps.length === 0) {
+    completed = true;   // one-shot — never let watchForBoard re-submit
+    autoPlaced = (await autoSubmit(slip, Number(slip.stake))) === 'placed';
+  } else if (canAutoSubmit && betterLineSwaps.length) {
+    completed = true;   // staged but the line changed — do NOT auto-submit it
+    setBanner('Auto-submit skipped — a leg staged at a different line. Review and submit by hand.');
+  } else if (staged === legs.length) {
     completed = true;
-    await sendToBackground({ type: 'coreprop:clear-pending-slip', token });
-    await forgetToken();
   }
 
+  // Report FIRST — the server records a placed auto-submit to the daily-cap
+  // ledger while the pending slip still exists — THEN clear.
   await sendToBackground({
     type: 'coreprop:report-status',
     token,
     body: {
       version: VERSION, legs_total: legs.length, legs_staged: staged, failures,
       line_changes: betterLineSwaps.map(b => ({ player: b.player, prop: b.prop, want: b.line, took: b.took })),
+      placed: autoPlaced, stake: Number(slip.stake) || 0,
     },
   });
+
+  // Clear only when truly done: a full manual stage, or a successful
+  // auto-submit. A failed auto-submit keeps the slip so the user can finish by
+  // hand — but we never auto-retry.
+  if (staged === legs.length && (!slip.auto_submit || autoPlaced)) {
+    await sendToBackground({ type: 'coreprop:clear-pending-slip', token });
+    await forgetToken();
+  }
 
   // A swapped line means the slip on screen is NOT the slip that was
   // backtested, so this outranks the Power/Flex reminder in the banner.
@@ -989,15 +1012,64 @@ async function runInner() {
   }
 
   if (staged === legs.length) {
-    setStatus(`✅ All ${legs.length} legs staged.`, '#22c55e');
-    setFooter(slip.slip_type
-      ? `Set the entry to <b>${escapeHtml(slip.slip_type)}</b>, enter your stake, and submit.`
-      : 'Enter your stake and submit.', '#22c55e');
+    if (autoPlaced) {
+      setStatus(`✅ Auto-submitted $${Number(slip.stake)}.`, '#22c55e');
+      setFooter('CoreProp placed this entry for you.', '#22c55e');
+    } else if (slip.auto_submit) {
+      setStatus(`⚠️ Staged ${legs.length} legs — auto-submit didn't complete.`, '#f59e0b');
+      setFooter('Review the entry and submit by hand.', '#f59e0b');
+    } else {
+      setStatus(`✅ All ${legs.length} legs staged.`, '#22c55e');
+      setFooter(slip.slip_type
+        ? `Set the entry to <b>${escapeHtml(slip.slip_type)}</b>, enter your stake, and submit.`
+        : 'Enter your stake and submit.', '#22c55e');
+    }
   } else {
     setStatus(`⚠️ Staged ${staged} of ${legs.length}.`, '#f59e0b');
     setFooter(`${legs.length - staged} leg(s) need adding by hand — see the notes above.`, '#f59e0b');
     showRetry(() => run());
   }
+}
+
+/**
+ * Fill the entry amount and submit — ONLY reached when the server armed
+ * auto_submit (real money; see the file header). Reads back PrizePicks' own UI
+ * at each step and REFUSES to submit if it can't set the stake reliably or find
+ * the controls, so it never fires a wrong-sized or blind wager. Returns
+ * 'placed' | 'failed'.
+ *
+ * If auto-submit consistently reports "could not find the entry field / submit
+ * button", the pp-dom.js ENTRY_AMOUNT / SUBMIT_BTN selectors need correcting
+ * against the live PrizePicks entry rail (they were not bundle-verified).
+ */
+async function autoSubmit(slip, stake) {
+  setStatus('⏳ Auto-submitting…', '#f59e0b');
+
+  // 1. Entry type (Power/Flex), if the toggle is present.
+  if (slip.slip_type) {
+    const tab = ppEntryTypeButton(slip.slip_type);
+    if (tab) { nativeClick(tab); await sleep(300); }
+  }
+
+  // 2. Stake — set it and VERIFY it stuck before going near submit.
+  const input = await until(() => ppStakeInput(), 5000, 200);
+  if (!input) { log('auto-submit: no entry field'); return 'failed'; }
+  setReactInputValue(input, String(stake));
+  await sleep(200);
+  const got = String(input.value).replace(/[^0-9.]/g, '');
+  if (got !== String(stake)) {
+    log('auto-submit: stake did not stick (wanted', stake, 'got', input.value, ') — refusing to submit');
+    return 'failed';
+  }
+
+  // 3. Submit.
+  const btn = await until(() => ppSubmitButton(), 5000, 200);
+  if (!btn) { log('auto-submit: no submit button'); return 'failed'; }
+  nativeClick(btn);
+
+  // 4. Confirm (best-effort success signal).
+  const ok = await until(() => ppSubmitConfirmed(), 12000, 400);
+  return ok ? 'placed' : 'failed';
 }
 
 /**

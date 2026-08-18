@@ -586,6 +586,11 @@ function SlipCard({ slip, onDelete }) {
           legs,
           slip_type: slip.type || "Power",
           n_legs:    legs.length,
+          // Request unattended submission. The server HONORS this only for a
+          // user who armed LIVE auto-place (with consent, within their daily
+          // cap) and picks/clamps the stake itself — for everyone else it is
+          // ignored and the extension just stages the slip as before.
+          auto_submit: true,
         },
       });
       // Pass the single-use token so the extension fetches back exactly this

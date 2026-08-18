@@ -184,6 +184,80 @@ def test_reform_noop_when_all_legs_available(monkeypatch):
     assert not any(o[0] in ("delete", "insert") for o in db.ops)
 
 
+def _leg_no_start():
+    return {"player": "A", "league": "NBA", "prop": "Points", "line": 25.5, "side": "over"}
+
+
+def test_pending_slip_auto_submit_honored_and_clamped_when_live(client, monkeypatch):
+    c, app, gcu = client
+    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
+    monkeypatch.setattr(app_mod, "_auto_place_settings",
+                        lambda user: {"mode": "live", "stake": 5.0, "max_stake": 10.0,
+                                      "daily_cap": 25.0, "fail_streak": 0})
+    # The daily-cap check reads today's spend; stub a reachable DB + zero spend
+    # so the cap doesn't (correctly) refuse an unreadable ledger.
+    monkeypatch.setattr("engine.database.get_user_db", lambda jwt: object())
+    monkeypatch.setattr(app_mod, "_auto_place_spent_today", lambda db, uid: 0.0)
+    _as_user(app, gcu)
+    r = c.post("/api/pending-slip",
+               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
+                     "auto_submit": True, "stake": 50})
+    assert r.status_code == 200
+    token = r.json()["token"]
+    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
+    assert g["auto_submit"] is True
+    assert g["stake"] == 10.0   # requested 50, clamped to the user's max_stake
+
+
+def test_pending_slip_auto_submit_refused_over_daily_cap(client, monkeypatch):
+    c, app, gcu = client
+    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
+    monkeypatch.setattr(app_mod, "_auto_place_settings",
+                        lambda user: {"mode": "live", "stake": 10.0, "max_stake": 10.0,
+                                      "daily_cap": 25.0, "fail_streak": 0})
+    monkeypatch.setattr("engine.database.get_user_db", lambda jwt: object())
+    monkeypatch.setattr(app_mod, "_auto_place_spent_today", lambda db, uid: 20.0)  # 20 + 10 > 25
+    _as_user(app, gcu)
+    r = c.post("/api/pending-slip",
+               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
+                     "auto_submit": True, "stake": 10})
+    token = r.json()["token"]
+    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
+    assert g["auto_submit"] is False and g["stake"] == 0   # daily cap wins
+
+
+def test_pending_slip_auto_submit_ignored_when_not_armed_live(client, monkeypatch):
+    c, app, gcu = client
+    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", True)
+    monkeypatch.setattr(app_mod, "_auto_place_settings",
+                        lambda user: {"mode": "off", "stake": 5.0, "max_stake": 10.0,
+                                      "daily_cap": 25.0, "fail_streak": 0})
+    _as_user(app, gcu)
+    r = c.post("/api/pending-slip",
+               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
+                     "auto_submit": True, "stake": 8})
+    token = r.json()["token"]
+    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
+    # Client asked for auto-submit but the user isn't armed live → refused.
+    assert g["auto_submit"] is False
+    assert g["stake"] == 0
+
+
+def test_pending_slip_auto_submit_ignored_when_flag_off(client, monkeypatch):
+    c, app, gcu = client
+    monkeypatch.setattr(app_mod, "AUTO_PLACE_ENABLED", False)
+    monkeypatch.setattr(app_mod, "_auto_place_settings",
+                        lambda user: {"mode": "live", "stake": 5.0, "max_stake": 10.0,
+                                      "daily_cap": 25.0, "fail_streak": 0})
+    _as_user(app, gcu)
+    r = c.post("/api/pending-slip",
+               json={"legs": [_leg_no_start()], "slip_type": "Power", "n_legs": 1,
+                     "auto_submit": True, "stake": 8})
+    token = r.json()["token"]
+    g = c.get(f"/api/pending-slip?cp_slip={token}").json()
+    assert g["auto_submit"] is False   # global kill switch wins
+
+
 def test_reform_drops_slip_when_too_few_stable(monkeypatch):
     legs = [
         _leg(1, "LeBron James", "Points", 25.5, "over"),   # stable

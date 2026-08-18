@@ -31,6 +31,19 @@ const PP = {
   SEARCH_TOGGLE_BOX: '.pp-search-filter-desktop, .pp-search-filter',
   // PP marks a staged pick by swapping the button's background utility class.
   SELECTED_CLASS: 'bg-atlien-100',
+
+  // ── Entry form (stake + submit) — AUTO-SUBMIT ONLY ────────────────────────
+  // ⚠️ Unlike the selectors above, these were NOT verified against the PP
+  // production bundle (auto-submit is new). They are best-effort id guesses
+  // with generic fallbacks in the pp*() helpers below. If auto-submit silently
+  // fails ("could not find the entry field / submit button"), inspect the live
+  // entry rail on app.prizepicks.com and correct THESE strings — that is the
+  // one-file fix.
+  ENTRY_AMOUNT: '[id="test-entry-input"], [id="test-entry-amount"], input[name="entryAmount"], ' +
+                'input[inputmode="decimal"], input[inputmode="numeric"], input[type="number"]',
+  SUBMIT_BTN:   '[id="test-submit"], [id="test-entry-submit"], [id="test-place-entry"]',
+  POWER_TAB:    '[id="test-power-play"], [id="test-power"]',
+  FLEX_TAB:     '[id="test-flex-play"], [id="test-flex"]',
 };
 
 // DataDome interstitial markers. When PP challenges the tab there is no board
@@ -364,10 +377,55 @@ function isSideSelected(info, side) {
          btn.getAttribute('aria-selected') === 'true';
 }
 
+// ── Entry-form finders (auto-submit) ─────────────────────────────────────────
+// Each tries the (unverified) id selectors first, then a generic fallback, so a
+// PP id change degrades to the fallback instead of failing outright. Auto-submit
+// refuses to proceed if any of these return null (it never submits blind).
+
+function ppStakeInput() {
+  for (const sel of PP.ENTRY_AMOUNT.split(',')) {
+    const el = document.querySelector(sel.trim());
+    if (el && ppVisible(el)) return el;
+  }
+  const inputs = [...document.querySelectorAll('input')].filter(ppVisible);
+  return inputs.find(i => /amount|entry|wager|stake/i.test(
+    (i.getAttribute('aria-label') || '') + (i.getAttribute('placeholder') || '') + (i.name || ''))) || null;
+}
+
+function ppSubmitButton() {
+  for (const sel of PP.SUBMIT_BTN.split(',')) {
+    const el = document.querySelector(sel.trim());
+    if (el && ppVisible(el) && !el.disabled) return el;
+  }
+  const btns = [...document.querySelectorAll('button')].filter(b => ppVisible(b) && !b.disabled);
+  return btns.find(b => /^(submit|place entry|place|enter)\b/i.test((b.innerText || '').trim())) || null;
+}
+
+function ppEntryTypeButton(type) {
+  const t = String(type || '').toLowerCase();
+  const sel = t === 'flex' ? PP.FLEX_TAB : PP.POWER_TAB;
+  for (const s of sel.split(',')) {
+    const el = document.querySelector(s.trim());
+    if (el && ppVisible(el)) return el;
+  }
+  const rx = t === 'flex' ? /flex/i : /power/i;
+  const btns = [...document.querySelectorAll('button, [role="tab"], [role="button"]')].filter(ppVisible);
+  return btns.find(b => rx.test((b.innerText || '').trim())) || null;
+}
+
+function ppSubmitConfirmed() {
+  // Best-effort success signal: a confirmation toast/modal, or the entry field
+  // clearing back to empty after a successful submit.
+  if (/entry submitted|good luck|success|your entry is in/i.test(document.body.innerText || '')) return true;
+  const inp = ppStakeInput();
+  return !!(inp && (inp.value === '' || inp.value === '0'));
+}
+
 Object.assign(self, {
   PP, ppIsChallenged, ppLooksSignedOut,
   ppVisible, ppSearchInput, ppFindSearchToggle,
   canonStat, canonName, isStruckThrough,
   cardLineCandidates, cardStatLabel, readCard, findCards, isSideSelected,
   cardMultiplier, cardIsStandard, cardKey, swapCardLine,
+  ppStakeInput, ppSubmitButton, ppEntryTypeButton, ppSubmitConfirmed,
 });

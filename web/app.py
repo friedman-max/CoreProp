@@ -3130,6 +3130,11 @@ class PendingSlipRequest(BaseModel):
     legs: list[dict]   # [{player, league, prop, line, side}, ...]
     slip_type: str = "Power"
     n_legs: int = 6
+    # Auto-submit: the client REQUESTS unattended stake-entry + submit. Whether
+    # it is honored is decided SERVER-SIDE below (armed live + consent + global
+    # flag), never by the client alone — this is real money.
+    auto_submit: bool = False
+    stake: Optional[float] = None
 
 
 @app.post("/api/pending-slip")
@@ -3172,6 +3177,33 @@ def set_pending_slip(req: PendingSlipRequest, user: dict = Depends(get_current_u
             detail=f"{started} leg(s) have already started — this slip can no longer be placed.",
         )
 
+    # Auto-submit is SERVER-gated: honor the client's request ONLY if this user
+    # has armed LIVE auto-place (mode=='live' implies recorded consent, see
+    # _auto_place_settings) and the operator's global flag is on — and clamp the
+    # stake to the user's configured ceiling. The client can never turn on
+    # real-money submission or raise the stake by itself.
+    aps = _auto_place_settings(user)
+    auto_submit = bool(req.auto_submit) and AUTO_PLACE_ENABLED and aps["mode"] == "live"
+    stake = 0.0
+    if auto_submit:
+        req_stake = float(req.stake if req.stake is not None else aps["stake"] or 0)
+        stake = max(0.0, min(req_stake, aps["max_stake"]))
+        if stake <= 0:
+            auto_submit = False
+        else:
+            # Enforce the daily cap BEFORE queueing so an auto-submit slip can
+            # never be placed past the user's ceiling. (The extension can't
+            # reach the JWT-gated /auto-place/queue cap check, so we gate here.)
+            try:
+                from engine.database import get_user_db
+                _udb = get_user_db(user["jwt"])
+                spent = _auto_place_spent_today(_udb, user["id"]) if _udb else float("inf")
+            except Exception:
+                spent = float("inf")
+            if spent + stake > aps["daily_cap"]:
+                auto_submit = False
+                stake = 0.0
+
     token = secrets.token_urlsafe(16)
     expires_at = time.monotonic() + _PENDING_SLIP_TTL_SEC
     payload = {
@@ -3179,6 +3211,8 @@ def set_pending_slip(req: PendingSlipRequest, user: dict = Depends(get_current_u
         "slip_type": req.slip_type,
         "n_legs": req.n_legs,
         "legs": req.legs,
+        "auto_submit": auto_submit,
+        "stake": stake,
     }
     with _pending_slips_lock:
         _evict_expired_pending(time.monotonic())
@@ -3216,6 +3250,10 @@ def get_pending_slip(token: str = Query("", alias="cp_slip")):
             "legs": slip_data["legs"],
             "slip_type": slip_data.get("slip_type"),
             "n_legs": slip_data.get("n_legs"),
+            # Only ever true when the server armed it (armed live + consent +
+            # global flag); the extension auto-fills `stake` and submits.
+            "auto_submit": bool(slip_data.get("auto_submit")),
+            "stake": float(slip_data.get("stake") or 0),
         }
 
 
@@ -3237,6 +3275,10 @@ class SlipStatusRequest(BaseModel):
     # Legs staged at a different (strictly better) line than the slip asked for.
     # Worth logging loudly: the placed slip no longer matches the backtested one.
     line_changes: list[dict] = []
+    # Auto-submit outcome (only meaningful when the slip was armed auto_submit):
+    # `placed` true means the extension actually entered the stake and submitted.
+    placed: bool = False
+    stake: float = 0
 
 
 @app.post("/api/pending-slip/status")
@@ -3253,6 +3295,12 @@ def report_slip_status(req: SlipStatusRequest, token: str = Query("", alias="cp_
     if not token:
         return {"ok": False, "reason": "blank_token"}
 
+    # Recover the pending slip (still present — the extension reports BEFORE it
+    # clears) to learn the user + whether this was an armed auto-submit.
+    with _pending_slips_lock:
+        entry = _pending_slips.get(token)
+    payload = entry[0] if entry else None
+
     if req.legs_staged < req.legs_total:
         logger.warning(
             "PP slip staging incomplete: %d/%d legs (ext v%s). Failures: %s",
@@ -3266,6 +3314,27 @@ def report_slip_status(req: SlipStatusRequest, token: str = Query("", alias="cp_
         logger.info(
             "PP slip staged in full: %d legs (ext v%s)", req.legs_total, req.version or "?"
         )
+
+    # When the extension actually SUBMITTED an armed auto-submit slip, record it
+    # to the daily-cap ledger (service-role client, user_id from the stored
+    # payload — the extension has no JWT). Best-effort; never raises. This is
+    # what keeps the daily cap honest across placements.
+    if payload and payload.get("auto_submit") and req.placed:
+        try:
+            uid = payload.get("user_id")
+            stake = max(0.0, min(float(req.stake or payload.get("stake") or 0), 1000.0))
+            from engine.database import get_db
+            sdb = get_db()
+            if sdb and uid and stake > 0:
+                sdb.table("auto_place_log").insert({
+                    "user_id": uid, "slip_id": token[:32], "mode": "live",
+                    "status": "placed", "reason": "auto-submit (extension)",
+                    "stake": stake, "legs_total": req.legs_total,
+                    "legs_staged": req.legs_staged, "extension_ver": (req.version or "")[:32],
+                }).execute()
+                logger.info("auto_place: recorded auto-submit placement user=%s stake=%.2f", uid, stake)
+        except Exception as exc:
+            logger.warning("pending-slip: auto_place_log write failed: %s", exc)
 
     if req.line_changes:
         logger.warning(

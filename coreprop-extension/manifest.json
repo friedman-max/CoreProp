@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CoreProp — PrizePicks Slip Builder",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Stages your CoreProp slip on the PrizePicks board. Never submits a wager.",
   "permissions": ["storage"],
   "host_permissions": [
