@@ -173,6 +173,7 @@ struct AuthView: View {
                 if needsConfirm { mode = .signIn }
             }
             await model.refreshBilling()
+            await model.registerPushTokenIfNeeded()
         } catch let e as APIError {
             errorMessage = e.errorDescription
         } catch {

@@ -89,17 +89,35 @@ struct BetsView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     FilterChip(title: "All", selected: vm.selectedLeagues.isEmpty) {
-                        vm.selectedLeagues.removeAll()
+                        vm.selectedLeagues.removeAll(); vm.pruneProps()
                     }
                     ForEach(vm.availableLeagues, id: \.self) { lg in
                         FilterChip(title: lg, selected: vm.selectedLeagues.contains(lg),
                                    accent: Theme.leagueColor(lg)) {
                             if vm.selectedLeagues.contains(lg) { vm.selectedLeagues.remove(lg) }
                             else { vm.selectedLeagues.insert(lg) }
+                            vm.pruneProps()
                         }
                     }
                 }
                 .padding(.horizontal, 14)
+            }
+
+            if vm.availableProps.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        FilterChip(title: "All props", selected: vm.selectedProps.isEmpty) {
+                            vm.selectedProps.removeAll()
+                        }
+                        ForEach(vm.availableProps, id: \.self) { p in
+                            FilterChip(title: p, selected: vm.selectedProps.contains(p)) {
+                                if vm.selectedProps.contains(p) { vm.selectedProps.remove(p) }
+                                else { vm.selectedProps.insert(p) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                }
             }
 
             HStack(spacing: 10) {
@@ -134,6 +152,7 @@ struct BetsView: View {
                         .frame(width: 34, height: 34)
                         .background(Theme.controlBg)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.radiusXs, style: .continuous))
+                        .accessibilityLabel("Filters and sorting")
                 }
             }
             .padding(.horizontal, 14)

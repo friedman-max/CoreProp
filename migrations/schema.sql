@@ -478,10 +478,32 @@ create policy "push_subscriptions_owner" on push_subscriptions
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- migration_023 — apns_tokens (Apple Push for the native iOS app)
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists apns_tokens (
+  id           uuid        primary key default gen_random_uuid(),
+  user_id      uuid        not null,
+  device_token text        not null unique,
+  environment  text        not null default 'production',
+  bundle_id    text,
+  created_at   timestamptz default now(),
+  updated_at   timestamptz default now()
+);
+
+create index if not exists idx_apns_tokens_user on apns_tokens(user_id);
+
+alter table apns_tokens enable row level security;
+
+drop policy if exists "apns_tokens_owner" on apns_tokens;
+create policy "apns_tokens_owner" on apns_tokens
+  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+
 -- migrations 011 (default bump — folded into 004 above) and 014 (one-time
 -- backfill repair) have no residual schema in a fresh project and are omitted
 -- here intentionally. 019/020 (odds_type on market_observatory; auto-placement
 -- columns + auto_place_log) predate this note but are applied via their own
 -- files — fold them in here when next touched.
 
-do $$ begin raise notice 'CoreProp schema.sql applied: base tables + migrations 001-018, 021, 022'; end $$;
+do $$ begin raise notice 'CoreProp schema.sql applied: base tables + migrations 001-018, 021, 022, 023'; end $$;

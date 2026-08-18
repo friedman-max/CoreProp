@@ -33,15 +33,20 @@ public struct CoreClient: Sendable {
     public let environment: CoreEnvironment
     private let http: HTTPClient
     private let tokenProvider: @Sendable () async -> String?
+    /// Called once on a 401: should force a token refresh and return whether it
+    /// succeeded. If it does, the request is retried once with the new token.
+    private let onUnauthorized: (@Sendable () async -> Bool)?
 
     public init(
         environment: CoreEnvironment,
         http: HTTPClient = HTTPClient(),
-        tokenProvider: @escaping @Sendable () async -> String? = { nil }
+        tokenProvider: @escaping @Sendable () async -> String? = { nil },
+        onUnauthorized: (@Sendable () async -> Bool)? = nil
     ) {
         self.environment = environment
         self.http = http
         self.tokenProvider = tokenProvider
+        self.onUnauthorized = onUnauthorized
     }
 
     private static let encoder = JSONEncoder()  // plain: bodies use explicit snake_case keys
@@ -54,23 +59,43 @@ public struct CoreClient: Sendable {
         return h
     }
 
+    /// Build + send with a single refresh-and-retry on 401. The request is
+    /// rebuilt after the refresh so it picks up the new token from `headers()`.
+    private func execute(method: String, path: String,
+                         query: [URLQueryItem] = [], body: Data? = nil) async throws -> Data {
+        func build() async throws -> URLRequest {
+            try URLRequest.build(base: environment.baseURL, path: path, method: method,
+                                 query: query, headers: await headers(), body: body)
+        }
+        do {
+            return try await http.perform(try await build()).0
+        } catch let error as APIError {
+            if error.isUnauthorized, let onUnauthorized, await onUnauthorized() {
+                return try await http.perform(try await build()).0
+            }
+            throw error
+        }
+    }
+
+    private func decode<T: Decodable>(_ data: Data, as type: T.Type) throws -> T {
+        if data.isEmpty { throw APIError.decoding("Empty response body.") }
+        do { return try JSONDecoder.coreProp().decode(T.self, from: data) }
+        catch { throw APIError.decoding(String(describing: error)) }
+    }
+
     private func get<T: Decodable>(_ path: String, as type: T.Type,
                                    query: [URLQueryItem] = []) async throws -> T {
-        let req = try URLRequest.build(base: environment.baseURL, path: path,
-                                       method: "GET", query: query, headers: await headers())
-        return try await http.send(req, as: T.self)
+        let data = try await execute(method: "GET", path: path, query: query)
+        return try decode(data, as: T.self)
     }
 
     private func post<T: Decodable>(_ path: String, body: Encodable, as type: T.Type) async throws -> T {
-        let req = try URLRequest.build(base: environment.baseURL, path: path, method: "POST",
-                                       headers: await headers(), body: try Self.encoder.encode(body))
-        return try await http.send(req, as: T.self)
+        let data = try await execute(method: "POST", path: path, body: try Self.encoder.encode(body))
+        return try decode(data, as: T.self)
     }
 
     private func postVoid(_ path: String, body: Encodable) async throws {
-        let req = try URLRequest.build(base: environment.baseURL, path: path, method: "POST",
-                                       headers: await headers(), body: try Self.encoder.encode(body))
-        try await http.sendVoid(req)
+        _ = try await execute(method: "POST", path: path, body: try Self.encoder.encode(body))
     }
 
     // MARK: Config / coverage / status
@@ -103,6 +128,12 @@ public struct CoreClient: Sendable {
         try await get("/api/backtest/slips", as: BacktestSlipsEnvelope.self).slips
     }
 
+    /// `GET /api/analytics` — calibration + P&L timeline + CLV for the
+    /// Performance screen's charts.
+    public func analytics() async throws -> AnalyticsData {
+        try await get("/api/analytics", as: AnalyticsData.self)
+    }
+
     /// Logs a manual slip. The server responds with `{"slip": {...}}`, but the
     /// app reloads `/api/backtest/slips` afterwards, so the body is not decoded
     /// here — a non-throwing return means success.
@@ -115,10 +146,29 @@ public struct CoreClient: Sendable {
     }
 
     public func deleteSlip(id: String) async throws {
-        let req = try URLRequest.build(base: environment.baseURL,
-                                       path: "/api/backtest/slip/\(id)", method: "DELETE",
-                                       headers: await headers())
-        try await http.sendVoid(req)
+        _ = try await execute(method: "DELETE", path: "/api/backtest/slip/\(id)")
+    }
+
+    // MARK: Push (APNs) registration
+
+    /// Register this device's APNs token so the backend can send native push.
+    public func registerAPNsToken(deviceToken: String, environment: String, bundleId: String) async throws {
+        struct Body: Encodable {
+            let deviceToken: String; let environment: String; let bundleId: String
+            enum CodingKeys: String, CodingKey {
+                case deviceToken = "device_token", environment, bundleId = "bundle_id"
+            }
+        }
+        try await postVoid("/api/push/apns/register",
+                           body: Body(deviceToken: deviceToken, environment: environment, bundleId: bundleId))
+    }
+
+    public func unregisterAPNsToken(deviceToken: String) async throws {
+        struct Body: Encodable {
+            let deviceToken: String
+            enum CodingKeys: String, CodingKey { case deviceToken = "device_token" }
+        }
+        try await postVoid("/api/push/apns/unregister", body: Body(deviceToken: deviceToken))
     }
 
     // MARK: User config

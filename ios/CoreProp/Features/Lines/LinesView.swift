@@ -44,6 +44,18 @@ struct LinesView: View {
             .background(Theme.bg.ignoresSafeArea())
             .navigationTitle("Lines")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Picker("Sort", selection: $vm.sortField) {
+                            ForEach(LinesViewModel.SortField.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .accessibilityLabel("Sort lines")
+                    }
+                }
+            }
         }
         .searchable(text: $vm.searchText, prompt: "Player or prop")
         .task(id: source) { await vm.load(source: source, client: model.client, model: model) }

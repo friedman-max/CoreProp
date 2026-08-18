@@ -99,19 +99,39 @@ To ship a version that *sells* the subscription in-app, add StoreKit In-App
 Purchase and reconcile the entitlement with the backend server-side. That work
 is intentionally out of scope here.
 
-## Notifications (follow-up work)
+## Notifications (APNs) — implemented; how to turn it on
 
-The app requests notification permission and captures the APNs device token, but
-**does not** claim to deliver anything: the existing server push is Web Push
-(VAPID / `pywebpush`), which only reaches the installed *web* PWA. Native
-delivery needs APNs. To finish it:
+Native push is implemented end-to-end (client **and** server): the app uploads
+its APNs token to `POST /api/push/apns/register`, and the auto-backtest worker
+sends an Apple Push (via `engine/push.py::send_apns_to_user`) each time it logs
++EV slips for you, next to the existing Web Push. It is **env-gated** and off
+until you provide credentials — two operator steps, no code changes:
 
-1. Add the **Push Notifications** capability to the target (adds
-   `aps-environment` to entitlements) and enable it on your App ID.
-2. Add a server endpoint, e.g. `POST /api/push/apns/register`, storing
-   `{user_id, device_token, environment}` in an `apns_tokens` table (RLS: owner
-   policy, like `push_subscriptions` — see `migrations/migration_022.sql`).
-3. Send via APNs from the auto-backtest worker alongside the existing Web Push
-   send (`engine/push.py::send_to_user`), using an APNs auth key (`.p8`).
-4. Upload the captured token in `NotificationManager.setDeviceToken` once the
-   endpoint exists.
+1. **Server** — apply `migrations/migration_023.sql` (adds the owner-scoped
+   `apns_tokens` table), then set the `APNS_*` env vars documented in
+   `config.py`:
+   - `APNS_AUTH_KEY` — the full `.p8` contents (an APNs Auth Key from the Apple
+     Developer portal → Keys)
+   - `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID` (default `me.coreprop.app`)
+   `h2` (in `requirements.txt`) provides the HTTP/2 APNs needs.
+2. **App** — add the **Push Notifications** capability to the CoreProp target in
+   Xcode (Signing & Capabilities). That adds an `aps-environment` entitlement
+   and requires an APNs-enabled App ID. Debug builds register on the APNs
+   *sandbox*, release builds on *production* (`NotificationManager.pushEnvironment`).
+
+Until both are done, permission + token registration still work; delivery is a
+server-side no-op. Tapping a slip alert opens the Backtest tab.
+
+## Performance / Analytics
+
+The **Account → Performance** screen renders your logged-slip analytics with
+Swift Charts (cumulative P&L, a calibration reliability curve, CLV, and accuracy
+stats) from `GET /api/analytics`. The deeper observatory/per-prop breakdowns
+remain on the web app.
+
+## Continuous integration
+
+`.github/workflows/ios.yml` runs on macOS: it verifies `CorePropKit`
+(`swift run CorePropKitVerify`), regenerates the project with XcodeGen, and
+builds the app for the iOS Simulator (no signing) — so a broken build or a
+failed logic check is caught in CI.

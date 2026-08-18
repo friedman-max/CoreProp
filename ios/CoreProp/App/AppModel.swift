@@ -22,8 +22,13 @@ final class AppModel: ObservableObject {
         self.auth = auth
         self.client = CoreClient(
             environment: environment,
-            tokenProvider: { [weak auth] in await auth?.validAccessToken() }
+            tokenProvider: { [weak auth] in await auth?.validAccessToken() },
+            onUnauthorized: { [weak auth] in await auth?.forceRefresh() ?? false }
         )
+        // Upload a captured APNs token whenever one arrives (guarded on auth).
+        NotificationManager.shared.uploadHandler = { [weak self] token, env in
+            await self?.registerPushToken(token: token, environment: env)
+        }
     }
 
     /// Launch sequence: load Supabase config, restore the session, then fetch
@@ -43,7 +48,22 @@ final class AppModel: ObservableObject {
 
         await auth.restore()
         await refreshCoverage()
-        if auth.phase == .signedIn { await refreshBilling() }
+        if auth.phase == .signedIn {
+            await refreshBilling()
+            await registerPushTokenIfNeeded()
+        }
+    }
+
+    /// Register an already-captured APNs token with the backend (if signed in).
+    func registerPushTokenIfNeeded() async {
+        guard let token = NotificationManager.shared.deviceTokenHex else { return }
+        await registerPushToken(token: token, environment: NotificationManager.pushEnvironment)
+    }
+
+    func registerPushToken(token: String, environment: String) async {
+        guard auth.phase == .signedIn else { return }
+        let bundleId = Bundle.main.bundleIdentifier ?? "me.coreprop.app"
+        try? await client.registerAPNsToken(deviceToken: token, environment: environment, bundleId: bundleId)
     }
 
     func refreshCoverage() async {

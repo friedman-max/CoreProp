@@ -82,6 +82,8 @@ vapid_public_key}`), the native analogue of the web app's `window.__COREPROP_CON
 | `GET /api/prizepicks` \| `/api/fanduel` \| `/api/draftkings` \| `/api/pinnacle` | `{lines[], total, last_refresh}` |
 | `GET /api/backtest/keys` | `{keys[]}` — `"player|YYYY-MM-DD"` join keys (auth) |
 | `GET /api/backtest/slips` | `{slips[], total}` (auth) |
+| `GET /api/analytics` | calibration + P&L timeline + CLV + per-leg arrays (auth) — powers the Performance charts |
+| `POST /api/push/apns/register` / `unregister` | register/remove this device's APNs token (auth) |
 | `GET /api/config` | user config (auth) |
 | `POST /api/config` | `{interval_min?, min_ev_pct?, active_leagues?}` → mutates **global** state, not per-user (auth) |
 | `POST /api/user/auto-backtest` | `{auto_backtest}` → upsert user_config (auth) |
@@ -133,22 +135,27 @@ This app therefore ships as a **reader/companion**: it shows subscription
 in-app buy button. Adding StoreKit IAP (with server-side reconciliation) is a
 documented follow-up, not part of this build.
 
-## Notifications
+## Notifications (APNs) — implemented end-to-end
 
-The existing push feature is **Web Push (VAPID / pywebpush)**, tied to the
-auto-backtest worker and the `push_subscriptions` table (`{user_id, endpoint,
-p256dh, auth}`). That transport is browser-only and cannot deliver to a native
-app. Native iOS needs **APNs**, which requires an Apple Developer Program
-membership, an APNs auth key, a new server endpoint to register device tokens,
-and a server-side APNs sender — none of which exist yet.
+The web app's push is **Web Push (VAPID / pywebpush)** over the
+`push_subscriptions` table — browser-only. The native app uses **APNs**, added
+alongside it (both fire from the auto-backtest worker):
 
-This app therefore implements the **client half honestly**: it requests
-notification authorization, registers for remote notifications, captures the
-APNs device token, and surfaces the permission state in Account. Server-side
-APNs delivery is **not** wired; the token is not sent anywhere until a
-`POST /api/push/apns/register` endpoint + `apns_tokens` table exist. See
-README "Notifications" for the proposed server change. No notification is
-claimed to be delivered that cannot be.
+- **Client**: requests authorization, registers for remote notifications,
+  captures the APNs device token, and uploads it to
+  `POST /api/push/apns/register`. Tapping a slip alert opens the Backtest tab.
+- **Server** (this repo, `migration_023` + `engine/push.py` +
+  `web/routers/push.py`): an `apns_tokens` table (owner-scoped RLS, mirroring
+  `push_subscriptions`), token register/unregister endpoints, and an ES256
+  provider-JWT + HTTP/2 send path (`send_apns_to_user`) wired next to the Web
+  Push send. Dead tokens (410 Unregistered / 400 BadDeviceToken) are pruned.
+
+Like VAPID/billing, the whole path is **env-gated**
+(`engine.push.apns_is_configured` — `APNS_AUTH_KEY/KEY_ID/TEAM_ID/BUNDLE_ID`):
+a no-op until configured. Two operator prerequisites (not code): the app target
+needs the **Push Notifications** capability (an `aps-environment` entitlement +
+APNs-enabled App ID), and the server needs the `APNS_*` keys. Until then,
+permission + registration work and delivery is simply skipped.
 
 ## Screens (native mapping of the 6 web tabs + account)
 

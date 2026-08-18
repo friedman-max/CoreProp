@@ -35,6 +35,16 @@ class UnsubscribeIn(BaseModel):
     endpoint: str
 
 
+class ApnsRegisterIn(BaseModel):
+    device_token: str
+    environment: str = "production"   # "production" | "sandbox"
+    bundle_id: str | None = None
+
+
+class ApnsUnregisterIn(BaseModel):
+    device_token: str
+
+
 @router.get("/vapid-public-key")
 def vapid_public_key():
     """Public — the browser needs the applicationServerKey to subscribe. Also
@@ -68,4 +78,40 @@ def push_subscribe(sub: PushSubscriptionIn, user: dict = Depends(get_current_use
 def push_unsubscribe(body: UnsubscribeIn, user: dict = Depends(get_current_user)):
     writer("push.unsubscribe").table("push_subscriptions").delete() \
         .eq("endpoint", body.endpoint).eq("user_id", user["id"]).execute()
+    return {"ok": True}
+
+
+# ── APNs (native iOS app) ────────────────────────────────────────────────────
+# The native app registers its APNs device token here; the auto-backtest worker
+# then sends it Apple Push alongside the Web Push path. Owner-scoped exactly like
+# /subscribe: the row carries the authenticated user's id, unregister carries an
+# explicit .eq("user_id", …) (ownership check, not just visibility), and writes
+# go through engine/writer.py. No-op unless the APNS_* keys are configured.
+
+@router.post("/apns/register")
+def apns_register(body: ApnsRegisterIn, user: dict = Depends(get_current_user)):
+    if not push_svc.apns_is_configured():
+        raise HTTPException(status_code=503, detail="Apple Push is not configured.")
+    token = (body.device_token or "").strip()
+    # APNs device tokens are hex; 64 chars historically, longer for newer tokens.
+    # Bound the field so an authenticated but hostile client can't stuff blobs.
+    if not token or len(token) > 200 or not all(c in "0123456789abcdefABCDEF" for c in token):
+        raise HTTPException(status_code=400, detail="Malformed device token.")
+    environment = body.environment if body.environment in ("production", "sandbox") else "production"
+    writer("push.apns_register").table("apns_tokens").upsert(
+        {
+            "user_id": user["id"],
+            "device_token": token,
+            "environment": environment,
+            "bundle_id": body.bundle_id,
+        },
+        on_conflict="device_token",
+    ).execute()
+    return {"ok": True}
+
+
+@router.post("/apns/unregister")
+def apns_unregister(body: ApnsUnregisterIn, user: dict = Depends(get_current_user)):
+    writer("push.apns_unregister").table("apns_tokens").delete() \
+        .eq("device_token", body.device_token).eq("user_id", user["id"]).execute()
     return {"ok": True}

@@ -74,6 +74,14 @@ final class AuthManager: ObservableObject {
         return session.accessToken
     }
 
+    /// Force a refresh regardless of the local expiry clock — used by
+    /// `CoreClient` after a 401 (the server rejected a token our clock still
+    /// considered valid, e.g. clock skew or revocation). Returns whether a
+    /// fresh token was obtained.
+    func forceRefresh() async -> Bool {
+        await refreshIfNeeded() != nil
+    }
+
     // MARK: Sign in / up / out
 
     func signIn(email: String, password: String) async throws {

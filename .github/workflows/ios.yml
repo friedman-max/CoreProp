@@ -1,0 +1,51 @@
+name: ios
+
+on:
+  push:
+    branches: [main]
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version && swift --version
+
+      # 1. Verify the platform-agnostic core (models, API client, EV/payout
+      #    math, backtest scoring) with the assertion runner — the same check
+      #    that runs on a bare Command Line Tools machine.
+      - name: Verify CorePropKit
+        working-directory: ios/CorePropKit
+        run: |
+          swift build
+          swift run CorePropKitVerify
+
+      # 2. Regenerate the Xcode project from project.yml and build the app for
+      #    the iOS Simulator (no signing needed) — proves the whole SwiftUI app
+      #    compiles, which the offline machine can't fully type-check.
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build app (iOS Simulator)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project CoreProp.xcodeproj \
+            -scheme CoreProp \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tail -40

@@ -129,6 +129,7 @@ struct SlipView: View {
                             .background(Theme.controlBg).clipShape(Circle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Remove \(bet.playerName) from slip")
                 }
                 .padding(.vertical, 8)
                 if idx < slip.bets.count - 1 { Divider().overlay(Theme.hair) }

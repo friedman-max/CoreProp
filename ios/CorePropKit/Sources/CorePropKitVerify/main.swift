@@ -261,6 +261,47 @@ section("Decoding — MarketLine variants") {
     } else { check(false, "MarketLine single failed") }
 }
 
+section("Decoding — Analytics (calibration + P&L + CLV)") {
+    let json = """
+    {"brier_score":0.2412,"log_loss":0.66,"n_resolved":120,"n_won":70,"n_lost":50,
+     "hit_rate":0.5833,"avg_predicted_prob":0.5712,
+     "calibration_buckets":[
+       {"bucket":"54-56%","predicted_avg":0.55,"actual_avg":0.58,"count":40},
+       {"bucket":"56-58%","predicted_avg":null,"actual_avg":null,"count":0},
+       {"bucket":"58-60%","predicted_avg":0.59,"actual_avg":0.55,"count":22}],
+     "n_clv_tracked":80,"n_clv_moved":50,"n_clv_stale":30,"clv_plus_rate":0.61,
+     "avg_clv_pct":0.021,"avg_clv_pct_moved":0.034,"n_logged_legs":140,"clv_coverage_pct":0.57,
+     "pnl_timeline":[
+       {"slip_id":"S1","timestamp":"2026-08-10T12:00:00+00:00","pnl":-1.0,"cum_pnl":-1.0},
+       {"slip_id":"S2","timestamp":"2026-08-12T12:00:00+00:00","pnl":5.0,"cum_pnl":4.0}],
+     "resolved_slips":2,"won_slips":1,"roi_per_slip":2.0,
+     "resolved_legs":[{"true_prob":0.61,"outcome":1,"timestamp":"2026-08-10T12:00:00+00:00"}],
+     "clv_legs":[{"closing_prob":0.6,"clv_pct":0.02,"timestamp":"2026-08-10T12:00:00+00:00"}]}
+    """
+    if let a = decode(AnalyticsData.self, json) {
+        check(a.nResolved == 120 && a.nWon == 70, "analytics counts")
+        check(approx(a.hitRate ?? 0, 0.5833), "analytics hit rate")
+        check(a.calibrationBuckets?.count == 3, "all buckets decoded")
+        check(a.populatedBuckets.count == 2, "empty bucket filtered out of populatedBuckets")
+        check(a.pnlTimeline?.count == 2, "pnl timeline count")
+        check(a.pnlTimeline?.last?.cumPnl == 4.0, "cum_pnl last")
+        check(a.pnlTimeline?.first?.date != nil, "pnl point date parsed")
+        check(a.clvPlusRate == 0.61, "clv plus rate")
+        check(a.hasResolvedData, "hasResolvedData true")
+        check(a.roiPerSlip == 2.0, "roi per slip")
+    } else { check(false, "AnalyticsData failed to decode") }
+
+    // Empty analytics (new user) must decode to a benign, empty state.
+    if let empty = decode(AnalyticsData.self, """
+        {"brier_score":null,"log_loss":null,"n_resolved":0,"n_won":0,"n_lost":0,
+         "hit_rate":null,"avg_predicted_prob":null,"calibration_buckets":[],
+         "pnl_timeline":[],"resolved_slips":0,"won_slips":0,"roi_per_slip":null}
+        """) {
+        check(!empty.hasResolvedData, "empty analytics → hasResolvedData false")
+        check(empty.populatedBuckets.isEmpty, "empty analytics → no populated buckets")
+    } else { check(false, "empty AnalyticsData failed to decode") }
+}
+
 // MARK: - Formatting
 
 section("Formatting") {

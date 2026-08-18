@@ -11,6 +11,7 @@ final class BetsViewModel: ObservableObject {
 
     // Filters
     @Published var selectedLeagues: Set<String> = []   // empty ⇒ all
+    @Published var selectedProps: Set<String> = []     // empty ⇒ all
     @Published var minTruePct: Double = 50
     @Published var sortDescending = true
     @Published var includeGreenDevils = true
@@ -18,6 +19,13 @@ final class BetsViewModel: ObservableObject {
     @Published var searchText = ""
 
     var availableLeagues: [String] { Array(Set(bets.map(\.league))).sorted() }
+
+    /// Prop types present in the CURRENT league selection, so the prop chips
+    /// track the league filter instead of listing every league's props.
+    var availableProps: [String] {
+        let scoped = selectedLeagues.isEmpty ? bets : bets.filter { selectedLeagues.contains($0.league) }
+        return Array(Set(scoped.map(\.propType))).sorted()
+    }
 
     func load(client: CoreClient, model: AppModel) async {
         if bets.isEmpty { state = .loading }
@@ -50,6 +58,7 @@ final class BetsViewModel: ObservableObject {
         let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
         return bets.filter { b in
             (selectedLeagues.isEmpty || selectedLeagues.contains(b.league)) &&
+            (selectedProps.isEmpty || selectedProps.contains(b.propType)) &&
             b.truePct >= minTruePct - 0.0001 &&
             (includeGreenDevils || !b.isGreenDevil) &&
             (!hideLogged || !isLogged(b)) &&
@@ -58,8 +67,16 @@ final class BetsViewModel: ObservableObject {
         .sorted { sortDescending ? $0.trueProb > $1.trueProb : $0.trueProb < $1.trueProb }
     }
 
+    /// Drop any selected props that aren't in the current league scope (called
+    /// when the league filter changes) so a stale prop can't hide every row.
+    func pruneProps() {
+        let valid = Set(availableProps)
+        selectedProps.formIntersection(valid)
+    }
+
     func resetFilters() {
         selectedLeagues.removeAll()
+        selectedProps.removeAll()
         minTruePct = 50
         includeGreenDevils = true
         hideLogged = false

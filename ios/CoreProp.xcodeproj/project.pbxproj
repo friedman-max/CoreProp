@@ -33,9 +33,11 @@
 		B27B1C8AFE9F54E760B3AB01 /* BetsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C03B5636BF4045E84647B91 /* BetsView.swift */; };
 		BC025046F3DD2498E0C533D6 /* LinesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6B6329846299B26D3823818 /* LinesViewModel.swift */; };
 		BC83D0D7F74E2883F485FB05 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ED44D5F53D10987949066019 /* Assets.xcassets */; };
+		C45A17C80B3410A44E38F94C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 8B599CA2C7C528E4F449B4C4 /* PrivacyInfo.xcprivacy */; };
 		C54795990D32C1B4C3FDA1FA /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C10230A5390B40DE2AB292A /* AccountView.swift */; };
 		CF587ADA832B70B9988DE164 /* BacktestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5021F6C3CFCAC622AC733D30 /* BacktestView.swift */; };
 		D51DB222C1475A20D78A23E1 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 782C3A8FBBF17EB5FC1F1187 /* RootView.swift */; };
+		DA45C4FAF7474B632F5CBC7D /* AppRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 393D7E406DFF38EF7AA387E5 /* AppRouter.swift */; };
 		E1DF56EA76209D87BD8839CB /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B97A03514CD83FC864A27FB0 /* NotificationManager.swift */; };
 		E30E302C8CFD89D8EB81FDD9 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DB7FA15BABA11C807248964 /* SettingsView.swift */; };
 		E857943A088B80AA68AC5C0A /* SlipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90E097EE7FB3CFBF967EA25 /* SlipStore.swift */; };
@@ -65,6 +67,7 @@
 		280889C14CE3646D28A7A4E8 /* DeveloperView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperView.swift; sourceTree = "<group>"; };
 		2BCC371BB15C081CD4AB3A61 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		2E3C24639F19918804C11290 /* CoreProp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = CoreProp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		393D7E406DFF38EF7AA387E5 /* AppRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRouter.swift; sourceTree = "<group>"; };
 		3C03B5636BF4045E84647B91 /* BetsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetsView.swift; sourceTree = "<group>"; };
 		5021F6C3CFCAC622AC733D30 /* BacktestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BacktestView.swift; sourceTree = "<group>"; };
 		5FD18DD1FDF23D370F046FB1 /* NotificationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationsView.swift; sourceTree = "<group>"; };
@@ -74,6 +77,7 @@
 		7343098546C65D451F1A9A43 /* CorePropApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorePropApp.swift; sourceTree = "<group>"; };
 		782C3A8FBBF17EB5FC1F1187 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		7F519F1163EF7E236D5D2DD6 /* CorePropKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorePropKitTests.swift; sourceTree = "<group>"; };
+		8B599CA2C7C528E4F449B4C4 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		8CD6EC2581817AEBAD247A9E /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
 		9DB7FA15BABA11C807248964 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A07412E80EAB0EC0A4A7E9FA /* CorePropKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CorePropKit; path = CorePropKit; sourceTree = SOURCE_ROOT; };
@@ -175,6 +179,7 @@
 			children = (
 				ED44D5F53D10987949066019 /* Assets.xcassets */,
 				A7BCEB92D254F3AB09461B29 /* Info.plist */,
+				8B599CA2C7C528E4F449B4C4 /* PrivacyInfo.xcprivacy */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -245,6 +250,7 @@
 			children = (
 				6D7E5187E71FF8995A1F9D20 /* AppConfig.swift */,
 				BF3D98C36B5BC56C996C5FFF /* AppModel.swift */,
+				393D7E406DFF38EF7AA387E5 /* AppRouter.swift */,
 				A4B74B6B2CD2060D85EAA753 /* AuthManager.swift */,
 				7343098546C65D451F1A9A43 /* CorePropApp.swift */,
 				13BC8CEB9F400AE0AD9E6FB8 /* KeychainSessionStore.swift */,
@@ -357,6 +363,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BC83D0D7F74E2883F485FB05 /* Assets.xcassets in Resources */,
+				C45A17C80B3410A44E38F94C /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -371,6 +378,7 @@
 				23618A77276F982A2D6F42AB /* AnalyticsView.swift in Sources */,
 				33D8741B7B7E1AFD1D887210 /* AppConfig.swift in Sources */,
 				4966A7F9EB59204991607C5F /* AppModel.swift in Sources */,
+				DA45C4FAF7474B632F5CBC7D /* AppRouter.swift in Sources */,
 				45D551164DD7194AF1A0CD9F /* AuthManager.swift in Sources */,
 				717F9E0A27B40E8B7B08106B /* AuthView.swift in Sources */,
 				CF587ADA832B70B9988DE164 /* BacktestView.swift in Sources */,
@@ -586,7 +594,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = me.coreprop.app;
 				PRODUCT_NAME = CoreProp;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -608,7 +616,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = me.coreprop.app;
 				PRODUCT_NAME = CoreProp;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};

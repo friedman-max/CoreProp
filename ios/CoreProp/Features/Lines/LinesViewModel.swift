@@ -4,10 +4,17 @@ import CorePropKit
 
 @MainActor
 final class LinesViewModel: ObservableObject {
+    enum SortField: String, CaseIterable {
+        case trueProb = "True %"
+        case best = "Best odds"
+        case player = "Player"
+    }
+
     @Published private(set) var lines: [MarketLine] = []
     @Published private(set) var state: LoadState = .idle
     @Published var searchText = ""
     @Published var selectedLeagues: Set<String> = []
+    @Published var sortField: SortField = .trueProb
 
     private(set) var loadedSource: BoardSource?
 
@@ -36,9 +43,17 @@ final class LinesViewModel: ObservableObject {
 
     var filtered: [MarketLine] {
         let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
-        return lines.filter { l in
+        let matched = lines.filter { l in
             (selectedLeagues.isEmpty || (l.league.map { selectedLeagues.contains($0) } ?? false)) &&
             (q.isEmpty || (l.playerName ?? "").lowercased().contains(q) || l.prop.lowercased().contains(q))
+        }
+        switch sortField {
+        case .trueProb:
+            return matched.sorted { ($0.truePct ?? -1) > ($1.truePct ?? -1) }
+        case .best:
+            return matched.sorted { ($0.best ?? Int.min) > ($1.best ?? Int.min) }
+        case .player:
+            return matched.sorted { ($0.playerName ?? "") < ($1.playerName ?? "") }
         }
     }
 }

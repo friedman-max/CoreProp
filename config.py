@@ -213,6 +213,30 @@ VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:notifications@coreprop.app")
 
+# ── APNs (native iOS app push) ──────────────────────────────────────────────
+# Apple Push Notification service for the native iOS app (ios/). Web Push
+# (VAPID above) only reaches the browser/PWA, so the native app needs APNs.
+# The whole feature is a NO-OP unless ALL of APNS_AUTH_KEY / APNS_KEY_ID /
+# APNS_TEAM_ID / APNS_BUNDLE_ID are set (see engine/push.apns_is_configured),
+# so shipping it changes nothing until you configure it — same env-gating
+# discipline as VAPID / SIDE_BIAS / billing.
+#
+# Token-based auth (no certs): create an APNs Auth Key (.p8) in the Apple
+# Developer portal → Keys → enable "Apple Push Notifications service". You get a
+# 10-char Key ID and the .p8 file; your Team ID is in the membership page.
+#   APNS_AUTH_KEY  = the full contents of the .p8 (a PEM "-----BEGIN PRIVATE
+#                    KEY----- …"). Multi-line: set via a file/secret. Stays
+#                    server-side — it signs the APNs JWT (ES256).
+#   APNS_KEY_ID    = the .p8 Key ID.
+#   APNS_TEAM_ID   = your Apple Developer Team ID.
+#   APNS_BUNDLE_ID = the app bundle id / APNs topic (default me.coreprop.app).
+# The send host per device follows the token's stored `environment`
+# ('production' → api.push.apple.com, 'sandbox' → api.sandbox.push.apple.com).
+APNS_AUTH_KEY = os.getenv("APNS_AUTH_KEY", "")
+APNS_KEY_ID = os.getenv("APNS_KEY_ID", "")
+APNS_TEAM_ID = os.getenv("APNS_TEAM_ID", "")
+APNS_BUNDLE_ID = os.getenv("APNS_BUNDLE_ID", "me.coreprop.app")
+
 # Server
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))

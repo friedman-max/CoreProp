@@ -1,9 +1,17 @@
 import SwiftUI
 import UIKit
+import UserNotifications
 
-/// App delegate solely for APNs device-token callbacks (SwiftUI has no hook for
-/// these). See `NotificationManager` for the honest scope of push support.
-final class AppDelegate: NSObject, UIApplicationDelegate {
+/// App delegate for APNs device-token callbacks (SwiftUI has no hook for these)
+/// and notification presentation/tap handling. See `NotificationManager` for
+/// the honest scope of push support.
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
     func application(_ application: UIApplication,
                      didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Task { @MainActor in NotificationManager.shared.setDeviceToken(deviceToken) }
@@ -12,6 +20,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFailToRegisterForRemoteNotificationsWithError error: Error) {
         Task { @MainActor in NotificationManager.shared.setRegistrationFailure(error) }
+    }
+
+    // Show slip alerts even while the app is foregrounded.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
+    }
+
+    // A tapped slip alert opens the Backtest tab.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        Task { @MainActor in AppRouter.shared.openBacktest() }
+        completionHandler()
     }
 }
 

@@ -56,6 +56,7 @@ struct SlipCard: View {
             }
             .buttonStyle(.plain)
             .disabled(deleting)
+            .accessibilityLabel("Delete slip")
         }
     }
 

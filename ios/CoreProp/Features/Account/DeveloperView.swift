@@ -57,7 +57,7 @@ struct DeveloperView: View {
                         .listRowBackground(Theme.card)
                 }
             } footer: {
-                Text("The token is not uploaded: server-side APNs registration is not implemented yet.")
+                Text("The token is uploaded to /api/push/apns/register when you're signed in. Delivery also needs the server's APNs keys + the Push Notifications capability.")
             }
         }
         .scrollContentBackground(.hidden)

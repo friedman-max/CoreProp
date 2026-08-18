@@ -5,6 +5,7 @@ struct AccountView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var notifications: NotificationManager
+    @Environment(\.openURL) private var openURL
     @State private var signingOut = false
 
     private var displayName: String {
@@ -91,7 +92,7 @@ struct AccountView: View {
             }
             .listRowBackground(Theme.card)
         } footer: {
-            Text("Native push delivery is in progress. Web Push works today in the installed web app.")
+            Text("Get an Apple Push each time CoreProp auto-logs +EV slips for you.")
         }
     }
 
@@ -129,12 +130,30 @@ struct AccountView: View {
 
     private var aboutSection: some View {
         Section {
+            linkRow("Privacy Policy", "doc.text") { open("/privacy") }
+            linkRow("Terms of Service", "doc.plaintext") { open("/terms") }
             NavigationLink { DeveloperView() } label: { Label("Developer", systemImage: "hammer") }
                 .listRowBackground(Theme.card)
             infoRow("Version", appVersion)
         } footer: {
             Text("CoreProp is an analytics tool, not betting advice. 21+. If gambling stops being fun, call 1-800-GAMBLER.")
         }
+    }
+
+    private func linkRow(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Label(title, systemImage: icon).foregroundColor(Theme.text)
+                Spacer()
+                Image(systemName: "arrow.up.forward").font(.system(size: 12)).foregroundColor(Theme.text3)
+            }
+        }
+        .listRowBackground(Theme.card)
+    }
+
+    private func open(_ path: String) {
+        let base = model.environment.baseURL
+        if let url = URL(string: base.absoluteString + path) { openURL(url) }
     }
 
     private var signOutSection: some View {

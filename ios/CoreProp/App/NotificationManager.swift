@@ -3,19 +3,20 @@ import Combine
 import UIKit
 import UserNotifications
 
-/// Client-side notification support.
+/// Client-side notification support (Apple Push / APNs).
 ///
-/// **Honest scope:** the existing CoreProp push feature is Web Push (VAPID),
-/// which only reaches the installed *web* PWA — it cannot deliver to a native
-/// app. Native delivery needs APNs: an Apple Developer Program membership, the
-/// Push Notifications capability, a server endpoint to register device tokens,
-/// and a server-side APNs sender. None of that is wired yet.
+/// Requests notification authorization, registers for remote notifications, and
+/// uploads the captured APNs device token to the backend
+/// (`POST /api/push/apns/register`, via `AppModel`'s upload handler) so the
+/// auto-backtest worker can push slip alerts. This is the native counterpart of
+/// the web app's Web Push (VAPID), which only reaches the installed PWA.
 ///
-/// So this requests notification authorization and (best-effort) registers for
-/// remote notifications to capture the APNs device token, and surfaces the
-/// resulting state in Account. It does **not** claim to deliver anything: the
-/// token is held locally until a `POST /api/push/apns/register` endpoint exists
-/// (see README → Notifications). No fake/local "slip alert" is scheduled.
+/// End-to-end delivery is real but has two operator prerequisites (both env/
+/// account level, not code): the app target must have the **Push Notifications**
+/// capability (an `aps-environment` entitlement + an APNs-enabled App ID), and
+/// the server must have the `APNS_*` keys configured (see config.py /
+/// engine.push.apns_is_configured). Until both are in place, permission +
+/// registration still work; delivery is simply a server-side no-op.
 @MainActor
 final class NotificationManager: ObservableObject {
     static let shared = NotificationManager()
@@ -23,6 +24,20 @@ final class NotificationManager: ObservableObject {
     @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published private(set) var deviceTokenHex: String?
     @Published private(set) var lastError: String?
+
+    /// Set by `AppModel`: uploads a captured token to the backend (only when
+    /// signed in). Called whenever a fresh APNs token arrives.
+    var uploadHandler: (@Sendable (_ token: String, _ environment: String) async -> Void)?
+
+    /// APNs environment for this build. Debug builds provision the sandbox
+    /// gateway; release builds the production gateway.
+    static var pushEnvironment: String {
+        #if DEBUG
+        return "sandbox"
+        #else
+        return "production"
+        #endif
+    }
 
     private init() {}
 
@@ -53,12 +68,17 @@ final class NotificationManager: ObservableObject {
         }
     }
 
-    // Called from the app delegate.
+    // Called from the app delegate when APNs returns a device token.
     func setDeviceToken(_ data: Data) {
-        deviceTokenHex = data.map { String(format: "%02x", $0) }.joined()
+        let hex = data.map { String(format: "%02x", $0) }.joined()
+        deviceTokenHex = hex
         lastError = nil
-        // Intentionally NOT uploaded: server-side APNs registration/delivery is
-        // not implemented (see class doc + README).
+        // Upload to the backend (no-op when signed out / the endpoint is
+        // unconfigured — the handler guards on auth and swallows errors).
+        if let uploadHandler {
+            let env = Self.pushEnvironment
+            Task { await uploadHandler(hex, env) }
+        }
     }
 
     func setRegistrationFailure(_ error: Error) {

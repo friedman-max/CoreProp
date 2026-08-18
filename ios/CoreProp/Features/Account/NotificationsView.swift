@@ -22,7 +22,7 @@ struct NotificationsView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("HOW IT WORKS").font(Theme.ui(10.5, .semibold)).kerning(0.6).foregroundColor(Theme.text3)
-                    Text("The server currently sends alerts via Web Push to the installed web app. Native (APNs) delivery for this app is in progress — once it ships, the token this device registers will receive the same alerts. Nothing is sent to you until then.")
+                    Text("When you enable alerts, this device registers with Apple Push and the server sends a notification each time it auto-logs +EV slips for you. Tapping an alert opens your Backtest. (Delivery requires the server's APNs keys to be configured.)")
                         .font(Theme.ui(13)).foregroundColor(Theme.text3)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

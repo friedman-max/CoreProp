@@ -1325,14 +1325,22 @@ def _run_pipeline_body():
                     if _n_logged > 0:
                         try:
                             from engine import push as _push
+                            _msg = (
+                                f"{_n_logged} new +EV slip"
+                                f"{'s' if _n_logged != 1 else ''} logged"
+                            )
+                            # Web Push (installable PWA) — env-gated on VAPID.
                             if _push.is_configured():
-                                _msg = (
-                                    f"{_n_logged} new +EV slip"
-                                    f"{'s' if _n_logged != 1 else ''} logged"
-                                )
                                 threading.Thread(
                                     target=_push.send_to_user,
                                     args=(uid, "CoreProp", _msg, "/"),
+                                    daemon=True,
+                                ).start()
+                            # Apple Push (native iOS app) — env-gated on APNS_*.
+                            if _push.apns_is_configured():
+                                threading.Thread(
+                                    target=_push.send_apns_to_user,
+                                    args=(uid, "CoreProp", _msg),
                                     daemon=True,
                                 ).start()
                         except Exception:
