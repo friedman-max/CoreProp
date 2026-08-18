@@ -41,7 +41,7 @@ struct DeveloperView: View {
                 }
             }
 
-            Section("Push (APNs)") {
+            Section {
                 if let token = notifications.deviceTokenHex {
                     LabeledContent("Device token") {
                         Text(token.prefix(16) + "…").font(Theme.mono(11)).foregroundColor(Theme.text2)
@@ -56,6 +56,8 @@ struct DeveloperView: View {
                     Text(err).font(Theme.ui(12)).foregroundColor(Color(hex: 0xFCA5A5))
                         .listRowBackground(Theme.card)
                 }
+            } header: {
+                Text("Push (APNs)")
             } footer: {
                 Text("The token is uploaded to /api/push/apns/register when you're signed in. Delivery also needs the server's APNs keys + the Push Notifications capability.")
             }

@@ -29,15 +29,17 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Auto-Backtest") {
+            Section {
                 Toggle("Auto-log slips each refresh", isOn: $autoBacktest)
                     .onChange(of: autoBacktest) { newValue in Task { await saveAutoBacktest(newValue) } }
                     .listRowBackground(Theme.card)
+            } header: {
+                Text("Auto-Backtest")
             } footer: {
                 Text("When on, the server builds and logs a slip for you every refresh, above your minimum leg probability.")
             }
 
-            Section("Slip preferences") {
+            Section {
                 Picker("Type", selection: $slipType) {
                     Text("Power").tag(SlipType.power)
                     Text("Flex").tag(SlipType.flex)
@@ -64,6 +66,8 @@ struct SettingsView: View {
 
                 Toggle("Also auto-log green devils (goblins)", isOn: $greenDevils)
                     .listRowBackground(Theme.card)
+            } header: {
+                Text("Slip preferences")
             } footer: {
                 Text("Flex slips require at least 3 legs. The server enforces a probability floor on auto-logged slips.")
             }
@@ -100,7 +104,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var autoPlaceSection: some View {
         if apStatus != nil {
-            Section("Auto-place (advanced)") {
+            Section {
                 Picker("Mode", selection: $apMode) {
                     Text("Off").tag("off")
                     Text("Paper (simulate)").tag("paper")
@@ -155,6 +159,8 @@ struct SettingsView: View {
                         .foregroundColor(b.error ? Color(hex: 0xFCA5A5) : Theme.green)
                         .listRowBackground(Theme.card)
                 }
+            } header: {
+                Text("Auto-place (advanced)")
             } footer: {
                 Text("Off by default. Placement runs in the CoreProp desktop browser extension. Paper simulates without placing real money. Live auto-fills the stake and submits — the server caps every stake, enforces your daily cap, and disarms after repeated failures.")
             }

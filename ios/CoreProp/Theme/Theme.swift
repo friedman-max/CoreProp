@@ -1,4 +1,5 @@
 import SwiftUI
+import CorePropKit
 
 /// The CoreProp design system, ported verbatim from the `:root` block of
 /// `web/static/index.html`. Dark-mode only (there is no light variant).

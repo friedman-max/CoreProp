@@ -11,10 +11,20 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+
+      # The latest XcodeGen (installed below) emits a project in Xcode 16's
+      # objectVersion (77), which older Xcodes can't read ("future Xcode project
+      # file format (77)"). Select the newest Xcode present on the runner so the
+      # generated project always opens, regardless of the image's default.
+      - name: Select newest Xcode
+        run: |
+          LATEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $LATEST"
+          sudo xcode-select -s "$LATEST/Contents/Developer"
 
       - name: Show Xcode
         run: xcodebuild -version && swift --version

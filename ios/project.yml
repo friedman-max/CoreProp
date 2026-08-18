@@ -14,7 +14,7 @@ settings:
   base:
     MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
-    SWIFT_VERSION: "5.9"
+    SWIFT_VERSION: "5.0"          # -swift-version accepts 4/4.2/5/6, not "5.9"
     DEVELOPMENT_TEAM: ""              # set your Apple Developer team here (or in Xcode)
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
