@@ -87,7 +87,7 @@ function PushToggle() {
   );
 }
 
-function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" }) {
+function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app", locked = false }) {
   // Signed-out visitors on the landing page get no app tabs. All six used to
   // render for everyone: they look like navigation, but every click just
   // reopened the auth modal (app-main.jsx onTab bails when !loggedIn), and on a
@@ -97,7 +97,12 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
   const showTabs = loggedIn;
   // Logo destination: signed-in users land on +EV Bets; signed-out goes to
   // the marketing landing page regardless of which tab they were viewing.
-  const logoDest = loggedIn ? "+EV Bets" : "landing";
+  // A LOCKED user (billing enforced, no active sub) can't enter +EV Bets —
+  // onTab's locked-guard bounces "+EV Bets" back to pricing, making the logo a
+  // dead no-op on the pay screen. Route them to "landing" instead (onTab
+  // short-circuits "landing" ABOVE the locked guard), so the logo is a working
+  // "home" affordance for exactly the users who most need an escape.
+  const logoDest = (loggedIn && !locked) ? "+EV Bets" : "landing";
   const [busy, setBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);

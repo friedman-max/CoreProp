@@ -302,6 +302,25 @@ section("Decoding — Analytics (calibration + P&L + CLV)") {
     } else { check(false, "empty AnalyticsData failed to decode") }
 }
 
+section("Decoding — AutoPlaceStatus") {
+    if let a = decode(AutoPlaceStatus.self, """
+        {"armed":false,"mode":"live","stake":10.0,"max_stake":10.0,"daily_cap":50.0,
+         "spent_today":20.0,"remaining_today":30.0,"fail_streak":1,
+         "blocked_reason":"daily cap reached ($20.00 of $50.00)"}
+        """) {
+        check(a.modeValue == "live" && a.stake == 10.0, "auto-place mode+stake")
+        check(a.maxStake == 10.0 && a.dailyCap == 50.0, "auto-place caps")
+        check(a.remainingToday == 30.0 && a.failStreak == 1, "auto-place spend fields")
+        check(!a.disabledServerSide, "not disabled server-side")
+    } else { check(false, "AutoPlaceStatus failed to decode") }
+
+    if let d = decode(AutoPlaceStatus.self,
+                      #"{"armed":false,"mode":"off","blocked_reason":"auto-placement is disabled server-side"}"#) {
+        check(d.disabledServerSide, "disabled-server-side detected")
+        check(!d.isArmed, "not armed")
+    } else { check(false, "AutoPlaceStatus (disabled) failed to decode") }
+}
+
 // MARK: - Formatting
 
 section("Formatting") {

@@ -51,4 +51,19 @@ for name in "${FILES[@]}"; do
   printf "  ok  %-16s %6d bytes\n" "$name.js" "$(wc -c < "$OUT_DIR/$name.js")"
 done
 
-echo "Done. Commit web/static/dist/ alongside the .jsx sources."
+# ── Cache-bust: stamp a content-derived build id into index.html + sw.js ─────
+# The app is 10 plain global scripts whose cross-file globals only line up when
+# every bundle is from the SAME build. If a returning client reuses one stale
+# bundle alongside newer ones, a global mismatch throws during render and the
+# page goes blank. Deriving the ?v= token (and the service-worker cache name)
+# from a hash of the freshly built bundles guarantees: (a) any content change
+# moves the token so every client re-downloads all bundles together, and (b)
+# the SW's activate() purges every prior build's cached bundles, so an offline
+# visit can never serve a mixed-version set. Run on every ./build.sh — no manual
+# bumping (the old ?v=14d4eaeb went stale exactly this way).
+BUILD_ID=$(cat "$OUT_DIR"/*.js | shasum | cut -c1-10)
+perl -i -pe "s{(/static/dist/[a-z0-9-]+\.js\?v=)[a-z0-9]+}{\${1}$BUILD_ID}g" "$SRC_DIR/index.html"
+perl -i -pe "s{(coreprop-shell-)[A-Za-z0-9]+}{\${1}$BUILD_ID}" "$SRC_DIR/sw.js"
+echo "Cache-bust id: $BUILD_ID (stamped into index.html ?v= and sw.js CACHE)"
+
+echo "Done. Commit web/static/dist/ + index.html + sw.js alongside the .jsx sources."

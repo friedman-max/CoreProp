@@ -49,6 +49,11 @@ function App() {
   const [subComped, setSubComped] = useState(false);
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
+  // A successful mount means the loaded bundles are mutually consistent, so
+  // clear the ErrorBoundary's one-shot self-heal guard — a FUTURE stale-bundle
+  // render error is then free to heal again (see ErrorBoundary below).
+  useEffect(() => { try { sessionStorage.removeItem("cp-selfheal"); } catch (e) {} }, []);
+
   // Load billing status on login and after returning from Stripe Checkout.
   // The webhook may lag a second or two, so on a fresh ?checkout=success we
   // poll a few times before giving up.
@@ -183,6 +188,7 @@ function App() {
         onTab={onTab}
         onLogin={onLogin}
         loggedIn={loggedIn}
+        locked={locked}
         onLogout={async () => { try { await window.cpApi.signOut(); } catch (e) {} setLoggedIn(false); setView("landing"); }}
         variant={view === "landing" ? "landing" : "app"}
       />
@@ -255,8 +261,61 @@ styleEl.textContent = `
 `;
 document.head.appendChild(styleEl);
 
+// Error boundary. Under React 18 createRoot, ANY uncaught error during render
+// unmounts the whole tree and leaves a blank #root — the "flash the landing
+// screen, then blank" symptom. The most common trigger is a stale / version-
+// skewed client bundle (a returning browser reusing one bundle from an older
+// build alongside a newer one, so a cross-file global no longer lines up). This
+// catches the throw, shows a visible fallback, and self-heals a stale client
+// ONCE: unregister the service worker + drop the shell caches, then reload —
+// guarded by a sessionStorage flag so a persistent error can never loop-reload.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error, info) {
+    console.error("[CoreProp] render error:", error, info);
+    try {
+      if (sessionStorage.getItem("cp-selfheal")) return;   // already tried; show fallback
+      sessionStorage.setItem("cp-selfheal", "1");
+      const reload = () => location.reload();
+      Promise.resolve()
+        .then(() => ("serviceWorker" in navigator)
+          ? navigator.serviceWorker.getRegistrations()
+              .then((rs) => Promise.all(rs.map((r) => r.unregister()))).catch(() => {})
+          : null)
+        .then(() => ("caches" in window)
+          ? caches.keys().then((ks) =>
+              Promise.all(ks.filter((k) => k.startsWith("coreprop")).map((k) => caches.delete(k)))
+            ).catch(() => {})
+          : null)
+        .then(reload, reload);
+    } catch (e) { /* storage blocked (private mode): just show the fallback */ }
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center",
+                    background: "#0a0a0d", color: "#f4f4f8",
+                    font: "16px system-ui,sans-serif", padding: "24px", textAlign: "center" }}>
+        <div>
+          <div style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px" }}>Something went wrong</div>
+          <div style={{ color: "#b9b9c8", marginBottom: "18px" }}>
+            Reloading usually fixes it. If it keeps happening, clear this site's cache.
+          </div>
+          <button
+            onClick={() => { try { sessionStorage.removeItem("cp-selfheal"); } catch (e) {} location.reload(); }}
+            style={{ padding: "10px 18px", borderRadius: "999px", border: 0,
+                     background: "#1E6FB0", color: "#fff", fontWeight: 600, cursor: "pointer" }}>
+            Reload
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
 const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<App />);
+root.render(<ErrorBoundary><App /></ErrorBoundary>);
 
 // Register the service worker: installable PWA shell + Web Push receiver. Kept
 // out of React — it's a one-time global side effect and pure progressive

@@ -2092,6 +2092,13 @@ def _get_user_config(user: Optional[dict]) -> dict:
         "auto_slip_legs": 6,
         "auto_slip_min_prob": None,
         "auto_backtest_green_devils": False,
+        # Auto-place (migration_020). Defaults keep the feature OFF until armed.
+        "auto_place_mode": "off",
+        "auto_place_stake": 1.0,
+        "auto_place_max_stake": 5.0,
+        "auto_place_daily_cap": 25.0,
+        "auto_place_fail_streak": 0,
+        "auto_place_consent_at": None,
     }
     if not user:
         return base
@@ -2125,6 +2132,21 @@ def _get_user_config(user: Optional[dict]) -> dict:
                         pass
                 # auto_backtest_green_devils may be missing pre-migration_015.
                 base["auto_backtest_green_devils"] = bool(row.get("auto_backtest_green_devils", False))
+                # Auto-place (migration_020). These MUST be surfaced here —
+                # _auto_place_settings() resolves the effective mode from this
+                # dict, so if they aren't copied the feature is permanently
+                # "off" no matter what the row says. Guarded with is-not-None so
+                # a pre-migration_020 row (no columns) safely keeps the defaults.
+                if row.get("auto_place_mode"):
+                    base["auto_place_mode"] = str(row["auto_place_mode"])
+                if row.get("auto_place_stake") is not None:
+                    base["auto_place_stake"] = float(row["auto_place_stake"])
+                if row.get("auto_place_max_stake") is not None:
+                    base["auto_place_max_stake"] = float(row["auto_place_max_stake"])
+                if row.get("auto_place_daily_cap") is not None:
+                    base["auto_place_daily_cap"] = float(row["auto_place_daily_cap"])
+                base["auto_place_fail_streak"] = int(row.get("auto_place_fail_streak") or 0)
+                base["auto_place_consent_at"] = row.get("auto_place_consent_at")
     except Exception as e:
         logger.warning(f"Failed to fetch user config for {user['id']}: {e}")
 
@@ -2668,6 +2690,70 @@ def update_slip_prefs(update: SlipPrefsUpdate, user: dict = Depends(get_current_
         "auto_slip_min_prob": update.auto_slip_min_prob,
         "auto_backtest_green_devils": update.auto_backtest_green_devils,
     }
+
+class AutoPlacePrefs(BaseModel):
+    mode: str                        # "off" | "paper" | "live"
+    stake: Optional[float] = None    # per-slip dollar amount
+    daily_cap: Optional[float] = None
+    consent: Optional[bool] = None   # must be true to arm (paper/live)
+
+
+@app.post("/api/user/auto-place-prefs")
+def update_auto_place_prefs(update: AutoPlacePrefs, user: dict = Depends(get_current_user)):
+    """Arm/disarm auto-placement and set the per-slip stake + daily cap.
+
+    This only records the user's INTENT. Placement itself runs in the companion
+    desktop browser extension, which stages the slip on PrizePicks; the whole
+    path is a no-op unless the operator enabled it server-side
+    (AUTO_PLACE_ENABLED). Arming (paper/live) REQUIRES explicit consent, stored
+    as a timestamp — _auto_place_settings treats a missing consent as 'off'
+    regardless of mode, so this is the only place a user can truly arm."""
+    if not AUTO_PLACE_ENABLED:
+        raise HTTPException(status_code=403, detail="Auto-placement is disabled on this server.")
+    mode = (update.mode or "off").lower()
+    if mode not in ("off", "paper", "live"):
+        raise HTTPException(status_code=400, detail="mode must be 'off', 'paper', or 'live'.")
+    if mode in ("paper", "live") and not update.consent:
+        raise HTTPException(status_code=400, detail="Consent is required to arm auto-placement.")
+
+    from engine.database import get_user_db
+    db = get_user_db(user["jwt"])
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not reachable.")
+
+    payload = {
+        "user_id": user["id"],
+        "auto_place_mode": mode,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if update.stake is not None:
+        if not (0 < update.stake <= 1000):
+            raise HTTPException(status_code=400, detail="stake must be > 0 and <= 1000.")
+        # The set dollar amount is BOTH the per-slip stake and its ceiling, so
+        # the extension stakes exactly this and the server-side clamp
+        # (_auto_place_settings / auto_place_result) never lets it exceed it.
+        payload["auto_place_stake"] = update.stake
+        payload["auto_place_max_stake"] = update.stake
+    if update.daily_cap is not None:
+        if not (0 <= update.daily_cap <= 10000):
+            raise HTTPException(status_code=400, detail="daily_cap must be between 0 and 10000.")
+        payload["auto_place_daily_cap"] = update.daily_cap
+    if mode in ("paper", "live"):
+        payload["auto_place_consent_at"] = datetime.now(timezone.utc).isoformat()
+        # Re-arming clears a prior auto-disarm so the bot can resume.
+        payload["auto_place_fail_streak"] = 0
+
+    try:
+        db.table("user_config").upsert(payload).execute()
+    except Exception as e:
+        logger.error("Failed to update auto-place prefs for %s: %s", user["id"], e)
+        raise HTTPException(status_code=500, detail="Failed to update auto-place settings.")
+    return {
+        "status": "success", "mode": mode,
+        "stake": payload.get("auto_place_stake"),
+        "daily_cap": payload.get("auto_place_daily_cap"),
+    }
+
 
 # ---------------------------------------------------------------------------
 # PrizePicks-only endpoints
@@ -3382,6 +3468,119 @@ def auto_place_queue(user: dict = Depends(get_current_user)):
     return {"slips": out[:1], "mode": s["mode"], "stake": s["stake"]}
 
 
+def _legs_availability(legs: list[dict]) -> list[bool]:
+    """For each stored leg, is it STILL live on PrizePicks right now? Reuses the
+    same fuzzy match as /api/check-pp-availability. A leg that no longer matches
+    the current pp_lines is 'unstable' (line moved or pulled)."""
+    from rapidfuzz import fuzz
+    with _lock:
+        pp_lines = list(_state.get("pp_lines") or [])
+    out: list[bool] = []
+    for leg in legs:
+        player = (leg.get("player") or "").strip().lower()
+        prop   = (leg.get("prop") or "").strip().lower()
+        try:
+            line = float(leg.get("line") or 0)
+        except (TypeError, ValueError):
+            line = 0.0
+        side = (leg.get("side") or "").strip().lower()
+        best = 0
+        for pp in pp_lines:
+            if (pp.get("stat_type") or "").strip().lower() != prop:
+                continue
+            pp_side = (pp.get("side") or "").strip().lower()
+            if pp_side and pp_side != "both" and pp_side != side:
+                continue
+            try:
+                pp_line = float(pp.get("line_score") or 0)
+            except (TypeError, ValueError):
+                continue
+            if abs(pp_line - line) > 0.01:
+                continue
+            best = max(best, fuzz.ratio(player, (pp.get("player_name") or "").strip().lower()))
+        out.append(best >= 85)
+    return out
+
+
+def _reform_failed_slip(db, user_id: str, slip_id: str) -> Optional[dict]:
+    """After a FAILED auto-placement, drop the 'unstable' legs (no longer live on
+    PrizePicks) from the backtest and re-form the remaining stable legs into a
+    NEW slip so the placement queue can offer it again.
+
+    Only acts when at least one leg is genuinely unstable: a failure with every
+    leg still available is transient (a PrizePicks hiccup), and reforming it
+    would recreate the identical slip and loop forever. Never raises — a reform
+    problem must not break the result-recording path. Returns a summary or None.
+    """
+    try:
+        legs = (db.table("legs")
+                .select("leg_num, player, league, prop, line, side, true_prob, ind_ev_pct, game_start")
+                .eq("slip_id", slip_id).eq("user_id", user_id)
+                .order("leg_num").execute().data) or []
+        if not legs:
+            return None
+        slip_rows = (db.table("slips").select("slip_type")
+                     .eq("id", slip_id).eq("user_id", user_id).limit(1).execute().data) or []
+        slip_type = (slip_rows[0].get("slip_type") if slip_rows else None) or "Power"
+
+        avail = _legs_availability(legs)
+        stable = [lg for lg, ok in zip(legs, avail) if ok]
+        dropped = len(legs) - len(stable)
+        if dropped == 0:
+            return None  # transient failure — leave the slip intact, never loop
+
+        # Capture stable data BEFORE any delete, then remove the failed slip
+        # (its legs + header). auto_place_log.slip_id is a plain text column
+        # (no FK, migration_020), so the audit row we just wrote survives.
+        db.table("legs").delete().eq("slip_id", slip_id).eq("user_id", user_id).execute()
+        db.table("slips").delete().eq("id", slip_id).eq("user_id", user_id).execute()
+
+        if len(stable) < 2:
+            logger.info("auto_place: reform dropped slip %s — only %d stable leg(s), nothing to reform",
+                        slip_id, len(stable))
+            return {"reformed": False, "dropped": dropped, "kept": len(stable)}
+
+        # Re-form the stable legs into a fresh slip. New id ⇒ no auto_place_log
+        # row ⇒ the queue offers it for placement again.
+        import uuid
+        from engine.backtest import make_leg_fingerprint, insert_legs_idempotent
+        from engine.ev_calculator import power_slip_ev, flex_slip_ev
+
+        new_id = str(uuid.uuid4())[:8].upper()
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        probs = [float(lg.get("true_prob") or 0) for lg in stable]
+        cand = [e for e in (power_slip_ev(probs), flex_slip_ev(probs)) if e is not None]
+        proj = round(max(cand), 4) if cand else 0.0
+
+        db.table("slips").insert({
+            "id": new_id, "user_id": user_id, "timestamp": ts,
+            "slip_type": slip_type, "n_legs": len(stable), "proj_slip_ev_pct": proj,
+        }).execute()
+
+        db_legs = []
+        for i, lg in enumerate(stable, start=1):
+            gs = lg.get("game_start") or ""
+            db_legs.append({
+                "slip_id": new_id, "user_id": user_id, "leg_num": i,
+                "player": lg.get("player"), "league": lg.get("league"),
+                "prop": lg.get("prop"), "line": lg.get("line"), "side": lg.get("side"),
+                "true_prob": lg.get("true_prob"), "ind_ev_pct": lg.get("ind_ev_pct"),
+                "game_start": gs or None,
+                "closing_prob": lg.get("true_prob"), "clv_pct": 0.0,
+                "result": "pending", "stat_actual": None,
+                "dedup_key": make_leg_fingerprint(
+                    lg.get("player") or "", lg.get("prop") or "",
+                    lg.get("line") or "", lg.get("side") or "", gs),
+            })
+        insert_legs_idempotent(db, new_id, db_legs)
+        logger.info("auto_place: reformed slip %s -> %s (dropped %d unstable, kept %d)",
+                    slip_id, new_id, dropped, len(stable))
+        return {"reformed": True, "new_slip_id": new_id, "dropped": dropped, "kept": len(stable)}
+    except Exception as exc:
+        logger.error("auto_place: reform failed for slip %s: %s", slip_id, exc)
+        return None
+
+
 class AutoPlaceResult(BaseModel):
     slip_id: str
     status: str                 # placed | skipped | failed
@@ -3447,13 +3646,20 @@ def auto_place_result(req: AutoPlaceResult, user: dict = Depends(get_current_use
             user["id"], streak, req.reason,
         )
 
+    # On a genuine placement failure, self-heal the backtest: drop the legs that
+    # are no longer live on PrizePicks (the "unstable" ones that likely caused
+    # the failure) and re-form the remaining stable legs into a new slip the
+    # queue can place. No-op when every leg is still available (transient fail).
+    reform = _reform_failed_slip(db, user["id"], req.slip_id) if status == "failed" else None
+
     logger.info(
-        "auto_place: user=%s slip=%s %s (%s) stake=%.2f legs=%d/%d",
+        "auto_place: user=%s slip=%s %s (%s) stake=%.2f legs=%d/%d reform=%s",
         user["id"], req.slip_id, status, req.reason or "-",
-        stake, req.legs_staged, req.legs_total,
+        stake, req.legs_staged, req.legs_total, reform,
     )
     return {"ok": True, "fail_streak": streak,
-            "disarmed": streak >= _AUTO_PLACE_FAIL_LIMIT}
+            "disarmed": streak >= _AUTO_PLACE_FAIL_LIMIT,
+            "reform": reform}
 
 
 class PPAvailabilityRequest(BaseModel):

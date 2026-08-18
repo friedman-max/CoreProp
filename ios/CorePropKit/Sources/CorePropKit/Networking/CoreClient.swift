@@ -229,6 +229,24 @@ public struct CoreClient: Sendable {
 
     // MARK: Billing
 
+    // MARK: Auto-place (desktop-extension placement — this app only arms it)
+
+    public func autoPlaceStatus() async throws -> AutoPlaceStatus {
+        try await get("/api/auto-place/status", as: AutoPlaceStatus.self)
+    }
+
+    public func setAutoPlacePrefs(_ prefs: AutoPlacePrefsUpdate) async throws {
+        struct Body: Encodable {
+            let mode: String; let stake: Double?; let dailyCap: Double?; let consent: Bool?
+            enum CodingKeys: String, CodingKey { case mode, stake, dailyCap = "daily_cap", consent }
+        }
+        try await postVoid("/api/user/auto-place-prefs",
+                           body: Body(mode: prefs.mode, stake: prefs.stake,
+                                      dailyCap: prefs.dailyCap, consent: prefs.consent))
+    }
+
+    // MARK: Billing
+
     public func billingConfig() async throws -> BillingConfig { try await get("/api/billing/config", as: BillingConfig.self) }
     public func billingStatus() async throws -> BillingStatus { try await get("/api/billing/status", as: BillingStatus.self) }
 

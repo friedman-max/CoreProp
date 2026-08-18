@@ -90,6 +90,9 @@ function EVPage() {
   const [propQ, setPropQ] = useState("");
   const [minOdds, setMinOdds] = useState(50);
   const [side, setSide] = useState("Both");
+  // Group already-logged bets to the bottom (unlogged/actionable first) while
+  // keeping them visible — complements the row tint, independent of any hide.
+  const [loggedLast, setLoggedLast] = useState(false);
   const [slipType, setSlipType] = useState("Power");
   const [legs, setLegs] = useState(6);
   const [selected, setSelected] = useState([]);
@@ -319,8 +322,13 @@ function EVPage() {
       if (side !== "Both" && b.side !== side.toUpperCase()) return false;
       if ((b.truePct || 0) < minOdds) return false;
       return true;
-    }).sort((a, b) => (b.truePct || 0) - (a.truePct || 0));
-  }, [allBets, league, propQ, minOdds, side, showGreenDevils]);
+    }).sort((a, b) => {
+      // Optional first key: sink logged (already-in-backtest) rows to the
+      // bottom so unlogged, actionable bets are on top.
+      if (loggedLast && !!a.inBacktest !== !!b.inBacktest) return a.inBacktest ? 1 : -1;
+      return (b.truePct || 0) - (a.truePct || 0);
+    });
+  }, [allBets, league, propQ, minOdds, side, showGreenDevils, loggedLast]);
 
   const greenDevilCount = useMemoE(
     () => allBets.filter(b => b.isGreenDevil).length, [allBets]);
@@ -578,7 +586,16 @@ function EVPage() {
                 : { borderColor: "#16a34a", color: "#22c55e" }}
             >{showGreenDevils ? "On" : "Off"}{greenDevilCount ? ` · ${greenDevilCount}` : ""}</button>
           </div>
-          <button className="ev-clear" onClick={() => { setLeague("All"); setPropQ(""); setMinOdds(50); setSide("Both"); }}>Clear</button>
+          <div className="ev-filter">
+            <label>Sort</label>
+            <button
+              type="button"
+              className={"ev-chip " + (loggedLast ? "is-on" : "")}
+              onClick={() => setLoggedLast(v => !v)}
+              title="Sort unlogged bets first — logged (already in your backtest) bets sink to the bottom."
+            >{loggedLast ? "Unlogged first" : "By true %"}</button>
+          </div>
+          <button className="ev-clear" onClick={() => { setLeague("All"); setPropQ(""); setMinOdds(50); setSide("Both"); setLoggedLast(false); }}>Clear</button>
           {/* Mobile-only: a full-width grey bar at the bottom of the config
               tile that reveals/hides the slip builder (hidden by default). The
               panel drops out directly beneath it, connected to the tile. */}

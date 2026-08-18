@@ -74,3 +74,6 @@ repair_auth.py
 test.ps1
 scripts/
 scratch/
+
+# Headless-browser MCP scratch output (agent repro artifacts)
+.playwright-mcp/

@@ -142,6 +142,7 @@ struct BetsView: View {
                     }
                     Toggle("Include goblins", isOn: $vm.includeGreenDevils)
                     Toggle("Hide logged", isOn: $vm.hideLogged)
+                    Toggle("Unlogged first", isOn: $vm.loggedLast)
                     Button(role: .destructive) { vm.resetFilters() } label: {
                         Label("Reset filters", systemImage: "xmark.circle")
                     }

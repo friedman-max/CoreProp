@@ -16,6 +16,9 @@ final class BetsViewModel: ObservableObject {
     @Published var sortDescending = true
     @Published var includeGreenDevils = true
     @Published var hideLogged = false
+    /// Group already-logged bets to the bottom (unlogged/actionable first),
+    /// keeping them visible — complements `hideLogged` rather than replacing it.
+    @Published var loggedLast = false
     @Published var searchText = ""
 
     var availableLeagues: [String] { Array(Set(bets.map(\.league))).sorted() }
@@ -64,7 +67,13 @@ final class BetsViewModel: ObservableObject {
             (!hideLogged || !isLogged(b)) &&
             (q.isEmpty || b.playerName.lowercased().contains(q) || b.propType.lowercased().contains(q))
         }
-        .sorted { sortDescending ? $0.trueProb > $1.trueProb : $0.trueProb < $1.trueProb }
+        .sorted { a, b in
+            if loggedLast {
+                let la = isLogged(a), lb = isLogged(b)
+                if la != lb { return !la }   // unlogged (actionable) first
+            }
+            return sortDescending ? a.trueProb > b.trueProb : a.trueProb < b.trueProb
+        }
     }
 
     /// Drop any selected props that aren't in the current league scope (called
@@ -80,6 +89,7 @@ final class BetsViewModel: ObservableObject {
         minTruePct = 50
         includeGreenDevils = true
         hideLogged = false
+        loggedLast = false
         searchText = ""
     }
 }

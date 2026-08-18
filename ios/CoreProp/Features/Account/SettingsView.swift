@@ -17,6 +17,16 @@ struct SettingsView: View {
     @State private var saving = false
     @State private var banner: (text: String, error: Bool)?
 
+    // Auto-place (advanced). Arms the desktop extension to stage slips for a set
+    // stake; the extension stages on PrizePicks and the user submits.
+    @State private var apStatus: AutoPlaceStatus?
+    @State private var apMode = "off"
+    @State private var apStake: Double = 5
+    @State private var apDailyCap: Double = 25
+    @State private var apConsent = false
+    @State private var apSaving = false
+    @State private var apBanner: (text: String, error: Bool)?
+
     var body: some View {
         Form {
             Section("Auto-Backtest") {
@@ -58,6 +68,8 @@ struct SettingsView: View {
                 Text("Flex slips require at least 3 legs. The server enforces a probability floor on auto-logged slips.")
             }
 
+            autoPlaceSection
+
             Section {
                 Button {
                     Task { await savePrefs() }
@@ -85,9 +97,101 @@ struct SettingsView: View {
         .task { if !loaded { await load() } }
     }
 
+    @ViewBuilder
+    private var autoPlaceSection: some View {
+        if let s = apStatus, s.disabledServerSide {
+            Section("Auto-place") {
+                Text("Auto-placement isn't enabled on this server.")
+                    .font(Theme.ui(13)).foregroundColor(Theme.text3)
+                    .listRowBackground(Theme.card)
+            }
+        } else if apStatus != nil {
+            Section("Auto-place (advanced)") {
+                Picker("Mode", selection: $apMode) {
+                    Text("Off").tag("off")
+                    Text("Paper (simulate)").tag("paper")
+                    Text("Live").tag("live")
+                }
+                .listRowBackground(Theme.card)
+
+                if apMode != "off" {
+                    Stepper(value: $apStake, in: 1...100, step: 1) {
+                        HStack { Text("Stake"); Spacer()
+                            Text(Fmt.currency(apStake, maximumFractionDigits: 0))
+                                .font(Theme.mono(14, .semibold)).foregroundColor(Theme.text) }
+                    }
+                    .listRowBackground(Theme.card)
+
+                    VStack(alignment: .leading) {
+                        HStack { Text("Daily cap"); Spacer()
+                            Text(Fmt.currency(apDailyCap, maximumFractionDigits: 0))
+                                .font(Theme.mono(14, .semibold)).foregroundColor(Theme.primary2) }
+                        Slider(value: $apDailyCap, in: 0...500, step: 5)
+                    }
+                    .listRowBackground(Theme.card)
+
+                    if apMode == "live" {
+                        Label("Live arms placement for real money on your PrizePicks account.",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(Theme.ui(12)).foregroundColor(Theme.amber)
+                            .listRowBackground(Theme.card)
+                    }
+                    Toggle("I understand and consent", isOn: $apConsent)
+                        .listRowBackground(Theme.card)
+                }
+
+                Button {
+                    Task { await saveAutoPlace() }
+                } label: {
+                    HStack { Spacer()
+                        if apSaving { ProgressView() } else { Text("Save auto-place").fontWeight(.semibold) }
+                        Spacer() }
+                }
+                .disabled(apSaving || (apMode != "off" && !apConsent))
+                .listRowBackground(Theme.card)
+
+                if let b = apBanner {
+                    Text(b.text).font(Theme.ui(13))
+                        .foregroundColor(b.error ? Color(hex: 0xFCA5A5) : Theme.green)
+                        .listRowBackground(Theme.card)
+                }
+            } footer: {
+                Text("Placement runs in the CoreProp desktop browser extension, which stages the slip on PrizePicks for this stake — you review and submit each wager. Paper simulates without placing. The server caps every stake and disarms after repeated failures.")
+            }
+        }
+    }
+
+    private func saveAutoPlace() async {
+        apSaving = true
+        apBanner = nil
+        defer { apSaving = false }
+        let prefs = AutoPlacePrefsUpdate(
+            mode: apMode,
+            stake: apMode == "off" ? nil : apStake,
+            dailyCap: apMode == "off" ? nil : apDailyCap,
+            consent: apConsent)
+        do {
+            try await model.client.setAutoPlacePrefs(prefs)
+            apBanner = ("Auto-place settings saved.", false)
+            apStatus = try? await model.client.autoPlaceStatus()
+        } catch let e as APIError {
+            apBanner = (e.display, true)
+        } catch {
+            apBanner = (error.localizedDescription, true)
+        }
+    }
+
     private var legRange: ClosedRange<Int> { slipType == .flex ? 3...6 : 2...6 }
 
     private func load() async {
+        // Auto-place status is independent of user_config (the server may have
+        // the whole feature disabled). Load it first so the section renders.
+        if let s = try? await model.client.autoPlaceStatus() {
+            apStatus = s
+            apMode = s.modeValue
+            if let st = s.stake, st > 0 { apStake = st }
+            if let dc = s.dailyCap, dc > 0 { apDailyCap = dc }
+        }
         guard let cfg = try? await model.client.userConfig() else { loaded = true; return }
         autoBacktest = cfg.autoBacktest ?? false
         if let t = cfg.autoSlipType, let st = SlipType(rawValue: t) { slipType = st }
