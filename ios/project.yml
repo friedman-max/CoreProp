@@ -1,0 +1,70 @@
+name: CoreProp
+options:
+  bundleIdPrefix: me.coreprop
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  CorePropKit:
+    path: CorePropKit
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""              # set your Apple Developer team here (or in Xcode)
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: minimal
+
+targets:
+  CoreProp:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: CoreProp
+    dependencies:
+      - package: CorePropKit
+        product: CorePropKit
+    settings:
+      base:
+        PRODUCT_NAME: CoreProp
+        PRODUCT_BUNDLE_IDENTIFIER: me.coreprop.app
+        INFOPLIST_FILE: CoreProp/Support/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0.0"
+
+  CorePropTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: CorePropTests
+    dependencies:
+      - target: CoreProp
+      - package: CorePropKit
+        product: CorePropKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.coreprop.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  CoreProp:
+    build:
+      targets:
+        CoreProp: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - CorePropTests
