@@ -29,6 +29,7 @@
       }
       notify();
     });
+    probeAuthProviders();
     return sbClient;
   }
 
@@ -48,6 +49,98 @@
     currentSession = data.session;
     notify();
     return data;
+  }
+
+  // ── Password reset ──────────────────────────────────────────────────────
+
+  /**
+   * Email a password-reset link.
+   *
+   * Unlike signup confirmation, this DOES send to an already-confirmed
+   * account, so it is also the only way to email an existing user.
+   *
+   * `redirectTo` must be on Supabase's Redirect URLs allow-list or Supabase
+   * silently ignores it and falls back to Site URL — the same trap as
+   * signUp's emailRedirectTo.
+   *
+   * Deliberately does NOT reveal whether the address exists: Supabase returns
+   * success either way, and callers must show the same message regardless, or
+   * this becomes an account-enumeration oracle.
+   */
+  async function requestPasswordReset(email) {
+    const sb = init();
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/`,
+    });
+    if (error) throw error;
+    return true;
+  }
+
+  /**
+   * Set a new password. Only works while the recovery session from the emailed
+   * link is active — Supabase puts the app into that session automatically via
+   * detectSessionInUrl when the user lands back on the site.
+   */
+  async function setNewPassword(password) {
+    const sb = init();
+    const { data, error } = await sb.auth.updateUser({ password });
+    if (error) throw error;
+    return data;
+  }
+
+  // ── Google OAuth ────────────────────────────────────────────────────────
+  //
+  // Gated on a server-provided flag rather than being always-on: the button
+  // must not appear until the provider is actually configured in Supabase,
+  // because Supabase answers signInWithOAuth for an unconfigured provider by
+  // redirecting to an error page — which looks, to the user, exactly like the
+  // app is broken.
+  //
+  // The flag is read from Supabase's own public /auth/v1/settings, which
+  // reports `external.google`. Deliberately NOT a build-time constant or an
+  // env var: this way enabling the provider in the Supabase dashboard makes
+  // the button appear on next load with no code change and nothing to keep in
+  // sync. One small cached GET, fired async so it never blocks first paint.
+  let googleOn = false;
+  function setGoogleEnabled(v) { googleOn = !!v; }
+  function googleEnabled() { return googleOn; }
+
+  function probeAuthProviders() {
+    const cfg = window.__COREPROP_CONFIG || {};
+    if (!cfg.supabase_url || !cfg.supabase_anon_key) return;
+    fetch(`${cfg.supabase_url}/auth/v1/settings`, {
+      headers: { apikey: cfg.supabase_anon_key },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const on = !!(d && d.external && d.external.google);
+        if (on !== googleOn) { googleOn = on; notify(); }
+      })
+      .catch(() => { /* leave the button hidden — failing closed is correct */ });
+  }
+
+  /**
+   * Start the Google OAuth redirect.
+   *
+   * `next` is a CLIENT route to return to. It must be on Supabase's Redirect
+   * URLs allow-list, or Supabase silently ignores it and falls back to the
+   * project's Site URL — the same trap documented on signUp's emailRedirectTo.
+   */
+  async function signInWithGoogle(next) {
+    const sb = init();
+    const redirectTo = `${window.location.origin}${next || "/"}`;
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo,
+        // Force the account chooser. Without it, anyone with exactly one
+        // Google session is signed straight through with no chance to pick a
+        // different account — bad on a shared machine.
+        queryParams: { prompt: "select_account" },
+      },
+    });
+    if (error) throw error;
+    // On success the browser navigates away; nothing after this runs.
   }
 
   async function signUp(email, password, username) {
@@ -308,11 +401,109 @@
     throw new Error("Portal did not return a URL.");
   }
 
+  // ── Web Push ───────────────────────────────────────────────────────────
+  // Notifies the user when auto-backtest logs slips for them while the app is
+  // closed. iOS 16.4+ supports this ONLY from a Home Screen install; a Safari
+  // tab reports the APIs as present and then never delivers, so pushSupported()
+  // checks standalone mode explicitly rather than feature-detecting alone.
+
+  // iOS sets navigator.standalone; the manifest route sets display-mode.
+  function isStandalone() {
+    return window.navigator.standalone === true
+      || window.matchMedia("(display-mode: standalone)").matches;
+  }
+
+  // On iOS specifically, Notification/PushManager exist in a normal tab but
+  // permission can never be granted there — so treat "in a tab on iOS" as
+  // unsupported and let the UI tell the user to add to Home Screen.
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  function pushSupported() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+    if (isIOS && !isStandalone()) return false;
+    return true;
+  }
+
+  function pushPermission() {
+    return (typeof Notification === "undefined") ? "unsupported" : Notification.permission;
+  }
+
+  // VAPID keys travel as url-safe base64 but subscribe() wants raw bytes.
+  function urlB64ToUint8Array(base64) {
+    const padded = (base64 + "=".repeat((4 - base64.length % 4) % 4))
+      .replace(/-/g, "+").replace(/_/g, "/");
+    const raw = window.atob(padded);
+    return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+  }
+
+  async function pushSubscribed() {
+    if (!pushSupported()) return false;
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return false;
+    return !!(await reg.pushManager.getSubscription());
+  }
+
+  async function enablePush() {
+    if (!pushSupported()) throw new Error("NOT_SUPPORTED");
+
+    // Must be called from a user gesture or the prompt never appears.
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") throw new Error("DENIED");
+
+    const { configured, key } = await apiFetch("/api/push/vapid-key");
+    if (!configured || !key) throw new Error("NOT_CONFIGURED");
+
+    // Scope "/" matches the worker served from the origin root by app.py.
+    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    await navigator.serviceWorker.ready;
+
+    // Reuse an existing subscription rather than minting a second one for the
+    // same browser — the endpoint would differ and the device would get every
+    // notification twice.
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,          // required; Chrome rejects false
+        applicationServerKey: urlB64ToUint8Array(key),
+      });
+    }
+
+    const j = sub.toJSON();
+    await apiFetch("/api/push/subscribe", {
+      method: "POST",
+      body: { endpoint: sub.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth },
+    });
+    return true;
+  }
+
+  async function disablePush() {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return true;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return true;
+    // Tell the server FIRST: if unsubscribe() succeeds and the POST then
+    // fails, the row survives with a dead endpoint and the user keeps
+    // "unsubscribing" forever with nothing changing server-side.
+    try {
+      await apiFetch("/api/push/unsubscribe", {
+        method: "POST",
+        body: { endpoint: sub.endpoint, p256dh: "", auth: "" },
+      });
+    } catch (e) { /* fall through — still drop the local subscription */ }
+    await sub.unsubscribe();
+    return true;
+  }
+
   window.cpApi = {
     init, getSession, getUser, isLoggedIn, subscribe,
     signIn, signUp, signOut,
+    signInWithGoogle, googleEnabled, setGoogleEnabled,
+    requestPasswordReset, setNewPassword,
     apiFetch, betToUi, lineToUi, useBoardLines,
     cachedFetch, getCached, subscribeCache, prefetch,
     billingConfig, billingStatus, startCheckout, openBillingPortal,
+    pushSupported, pushPermission, pushSubscribed, enablePush, disablePush,
+    isStandalone,
   };
 })();

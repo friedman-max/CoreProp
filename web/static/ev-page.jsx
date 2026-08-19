@@ -130,6 +130,56 @@ function EVPage() {
   // shows a loading state instead of "Save preferences".
   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
+  // ── Push notifications ───────────────────────────────────────────────────
+  // Deliberately NOT part of the saved-prefs blob: a push subscription belongs
+  // to this browser install, not to the account. Saving it as a preference
+  // would make the toggle read "on" on a device that never subscribed.
+  const [pushOn, setPushOn] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushNote, setPushNote] = useState("");
+  // Whether the SERVER can actually send. Starts null (unknown) and the toggle
+  // stays hidden until we hear back, because the static bundles and the Python
+  // process deploy independently here — app.py is served from a long-lived
+  // launchd process while web/static is read off disk per request, so a fresh
+  // build can be live for minutes before the routes it calls exist. Rendering
+  // the toggle optimistically means real users click it and get an error.
+  const [pushAvailable, setPushAvailable] = useState(null);
+
+  React.useEffect(() => {
+    if (!window.cpApi) return;
+    // Asked unconditionally — even where the browser can't subscribe — so the
+    // two reasons the toggle can be absent stay independent. Collapsing them
+    // would hide the iOS "add to Home Screen" hint on exactly the devices that
+    // need it, since those report pushSupported() === false.
+    window.cpApi.apiFetch("/api/push/vapid-key")
+      .then(r => setPushAvailable(!!(r && r.configured && r.key)))
+      .catch(() => setPushAvailable(false));   // 404 on an un-restarted server
+    if (window.cpApi.pushSupported()) {
+      window.cpApi.pushSubscribed().then(setPushOn).catch(() => {});
+    }
+  }, []);
+
+  const togglePush = async (want) => {
+    setPushBusy(true);
+    setPushNote("");
+    try {
+      if (want) { await window.cpApi.enablePush(); setPushOn(true); }
+      else { await window.cpApi.disablePush(); setPushOn(false); }
+    } catch (err) {
+      // Distinguish the three failures a user can actually act on. "denied" is
+      // the important one: once blocked, the in-page prompt never reappears,
+      // so telling them to click again would be a lie.
+      const m = err && err.message;
+      if (m === "DENIED") setPushNote("Blocked. Re-allow notifications for CoreProp in iOS Settings.");
+      else if (m === "NOT_CONFIGURED") setPushNote("Push isn't set up on the server yet.");
+      else if (m === "NOT_SUPPORTED") setPushNote("Add CoreProp to your Home Screen first.");
+      else setPushNote("Couldn't change notifications. Try again.");
+      setPushOn(false);
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
   React.useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -408,7 +458,35 @@ function EVPage() {
             <span className="ev-check" aria-hidden="true" />
             <span style={{ color: "#22c55e" }}>Green devils</span>
           </label>
+          {/* Only offered where it can actually work — which means BOTH the
+              browser supports it AND the server can send. On iOS in a Safari
+              tab the Push APIs exist but permission can never be granted, so
+              that case gets the Home Screen hint instead of a dead toggle.
+              While pushAvailable is null (still checking) nothing renders. */}
+          {!(window.cpApi && window.cpApi.pushSupported()) ? (
+            <span className="ev-push-hint" title="iOS only delivers notifications to a Home Screen install, never a Safari tab.">
+              Add to Home Screen for alerts
+            </span>
+          ) : pushAvailable ? (
+            <label className="ev-auto" title="Get a notification when auto-backtest logs new slips, even with the app closed.">
+              <input
+                type="checkbox"
+                checked={pushOn}
+                disabled={pushBusy || !autoBacktest}
+                onChange={e => togglePush(e.target.checked)}
+              />
+              <span className="ev-check" aria-hidden="true" />
+              Notify me
+            </label>
+          ) : null}
         </div>
+        {pushNote && <div className="ev-push-note">{pushNote}</div>}
+        {/* Notifications announce auto-backtest results, so they are
+            meaningless with auto-backtest off. Say so rather than leaving a
+            dead checkbox with no explanation. */}
+        {window.cpApi && window.cpApi.pushSupported() && pushAvailable && !autoBacktest && (
+          <div className="ev-push-note">Turn on Auto-Backtest to enable alerts.</div>
+        )}
         <div className="ev-slip-row">
           <div className="ev-slip-field">
             <label>Slip Type</label>

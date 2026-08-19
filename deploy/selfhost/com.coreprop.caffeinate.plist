@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Keeps the Mac awake so the scrape pipeline actually runs.
+
+  Install:  cp deploy/selfhost/com.coreprop.caffeinate.plist ~/Library/LaunchAgents/
+            launchctl load ~/Library/LaunchAgents/com.coreprop.caffeinate.plist
+  Stop:     launchctl unload ~/Library/LaunchAgents/com.coreprop.caffeinate.plist
+  Verify:   pmset -g assertions | grep -i preventsystemsleep
+
+  WHY THIS EXISTS
+  ---------------
+  `pmset -g custom` reports `sleep 1` — this Mac suspends after one minute idle.
+  A sleeping host does not scrape: on 2026-08-14 the pipeline logged a 439-minute
+  gap (08:22 -> 15:41) that ended the instant the lid was opened, plus repeated
+  25-90 minute gaps overnight. Users saw hours-old prop lines presented as
+  current, which is worse than an honest outage.
+
+  The permanent fix is `sudo pmset -a sleep 0`, which needs a password and so
+  cannot be automated here. This is the no-sudo equivalent.
+
+  FLAGS
+  -----
+    -i  prevent idle system sleep
+    -m  prevent disk from idle-sleeping
+    -s  prevent system sleep  (ONLY asserted while on AC power)
+    -u  declare user activity, so the idle timer keeps resetting
+
+  A bare `caffeinate -i` was already running and was NOT sufficient — the sleep
+  log shows "Entering Sleep state due to 'Maintenance Sleep'" at 14:07, 14:12
+  and 14:31 with that assertion held. `-s` is the one that covers those.
+
+  Display sleep is deliberately NOT prevented (no -d): the screen may still turn
+  off, which saves power and does not affect the scraper.
+
+  *** LIMITATION — READ THIS ***
+  caffeinate CANNOT prevent clamshell (lid-close) sleep on a MacBook. If the lid
+  is shut without an external display + power, the machine sleeps regardless and
+  scraping stops. The 439-minute gap above was a lid-close event. Options:
+    - keep the lid open, or
+    - run the Mac in clamshell mode on AC with an external display, or
+    - `sudo pmset -b disablesleep 1` (needs a password; disables lid sleep).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.coreprop.caffeinate</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-i</string>
+        <string>-m</string>
+        <string>-s</string>
+        <string>-u</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- caffeinate holds the assertion for as long as it runs, so if it ever
+         dies the machine becomes sleepable again. Restart it unconditionally. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/seniortech/Library/Logs/coreprop/caffeinate.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seniortech/Library/Logs/coreprop/caffeinate.err.log</string>
+</dict>
+</plist>

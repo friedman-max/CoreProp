@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CoreProp app server, run as a login-scoped launchd service.
+
+  Install:  cp deploy/selfhost/com.coreprop.server.plist ~/Library/LaunchAgents/
+            launchctl load  ~/Library/LaunchAgents/com.coreprop.server.plist
+  Stop:     launchctl unload ~/Library/LaunchAgents/com.coreprop.server.plist
+  Logs:     ~/Library/Logs/coreprop/
+
+  Secrets are NOT in this file — it is committed to git. The app calls
+  load_dotenv() with no path, which resolves relative to the process cwd, so
+  WorkingDirectory below is what lets it find .env. Do not remove it.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.coreprop.server</string>
+
+    <!-- Absolute interpreter path: launchd does not resolve PATH the way a
+         login shell does. This is the framework build whose CA bundle was
+         repaired via "Install Certificates.command" — the JWKS fetch that
+         verifies every Supabase login depends on it. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>main.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/seniortech/Desktop/All My Files/Code Projects/CoreProp-main</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart unconditionally: a scraper that dies at 03:00 should not stay
+         dead until someone notices the site is blank. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Don't hot-loop if it crashes on startup (e.g. bad .env). -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- Interactive, not Background: macOS CPU-throttles Background jobs, and
+         this one serves user requests. -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/seniortech/Library/Logs/coreprop/server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seniortech/Library/Logs/coreprop/server.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+
+        <!-- Bind loopback only. cloudflared is the sole ingress; binding
+             0.0.0.0 would expose the app to everything on the local network. -->
+        <key>HOST</key>
+        <string>127.0.0.1</string>
+        <!-- 8010 deliberately avoids 8000 (the `coreprop` dev preview) and
+             8021 (the `coreprop-local` preview) so the service and a dev run
+             never fight over a port. -->
+        <key>PORT</key>
+        <string>8010</string>
+
+        <key>HEADLESS</key>
+        <string>true</string>
+
+        <!-- This box is now the PRIMARY. Both must stay false, and nothing
+             else may run with DISABLE_PERSISTENCE=false at the same time —
+             two writers would clobber each other's shared state seed in
+             Supabase. If Render ever comes back up, flip it back to true
+             there or here, but never false in both places. -->
+        <key>DISABLE_PERSISTENCE</key>
+        <string>false</string>
+        <key>DISABLE_AUTO_BACKTEST</key>
+        <string>false</string>
+
+        <!-- NOTE: this alone does not paywall anything. _user_has_access()
+             returns True for everyone unless _billing_configured() is also
+             satisfied, which needs STRIPE_SECRET_KEY + STRIPE_PRICE_MONTHLY +
+             STRIPE_PRICE_YEARLY present in .env. See README step 3. -->
+        <key>BILLING_ENFORCE</key>
+        <string>true</string>
+
+        <!-- This builds every Stripe success / cancel / billing-portal return
+             URL; a wrong value sends paying customers to a dead host after
+             checkout. Must match the `hostname` in ~/.cloudflared/config.yml
+             exactly. -->
+        <key>PUBLIC_BASE_URL</key>
+        <string>https://coreprop.me</string>
+    </dict>
+</dict>
+</plist>

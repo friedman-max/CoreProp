@@ -67,6 +67,19 @@ from scrapers.pinnacle import scrape_pinnacle
 from scrapers.novig import scrape_novig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+# httpx emits one INFO line per request, and a single scrape cycle makes
+# thousands of book calls — measured at 98% of this process's log output
+# (~200 MB/day sustained), which is fine on a platform that discards logs and
+# is not fine on a self-hosted box writing to disk. The scrapers' own INFO
+# summaries ("FanDuel [NHL]: 1 unique props captured") are the useful signal and
+# are kept. Set COREPROP_HTTP_LOG=info to restore per-request lines while
+# debugging a scraper.
+logging.getLogger("httpx").setLevel(
+    logging.INFO if os.getenv("COREPROP_HTTP_LOG", "").lower() == "info"
+    else logging.WARNING
+)
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="CoreProp")
@@ -110,6 +123,41 @@ async def _limit_request_body(request: Request, call_next):
 # Results checker / CLV singletons (stateless, run in background via service role)
 _results_checker  = ESPNResultsChecker()
 _clv_tracker      = CLVTracker()
+
+# ── Sub-cadence gates for expensive background passes ───────────────────────
+#
+# Several housekeeping jobs ride the scrape pipeline and so inherited its
+# interval (5 min by default). That interval exists for LINE freshness; these
+# jobs only chase results for games that already finished, and each one costs a
+# large Supabase read every time it runs. Supabase's free tier bills egress,
+# and the observatory pass alone measured ~5.3 GB/month at the 5-minute
+# cadence — the entire allowance.
+#
+# Overridable via env so the cadence can be tuned without a deploy.
+# NOTE: plain `os`, not the `_os` alias — that alias is only imported far below
+# (near the billing block), so it does not exist yet at module-import time here.
+_OBS_RESOLVE_EVERY_MIN = int(os.getenv("COREPROP_OBS_RESOLVE_EVERY_MIN", "20"))
+
+_last_run_at: dict[str, float] = {}
+_last_run_lock = threading.Lock()
+
+
+def _due(job: str, every_min: int) -> bool:
+    """True at most once per `every_min` for `job`.
+
+    First call always returns True so a fresh process does its work
+    immediately rather than idling for a full interval. Uses a monotonic
+    clock so a system clock change cannot stall a job indefinitely.
+    """
+    if every_min <= 0:
+        return True
+    now = time.monotonic()
+    with _last_run_lock:
+        prev = _last_run_at.get(job)
+        if prev is not None and (now - prev) < every_min * 60:
+            return False
+        _last_run_at[job] = now
+        return True
 
 # ---------------------------------------------------------------------------
 # In-memory state — moved to web/state.py during the Phase-1 router split.
@@ -1271,7 +1319,7 @@ def _run_pipeline_body():
                         ("set" if user_min is not None else "default"),
                         cfg.CELL_DROPS_ENABLED,
                     )
-                    _log_pool(std_pool)
+                    _cycle_logged = _log_pool(std_pool)
 
                     # Green devils (PrizePicks goblins): opt-in only, ranked by
                     # hit probability (the "best bet" / bonus-max use case).
@@ -1285,7 +1333,32 @@ def _run_pipeline_body():
                             "auto_backtest    user=%s green_devil_pool=%d (floor=%.3f, %s-%d)",
                             uid, len(gd_pool), min_prob, slip_type, n_legs,
                         )
-                        _log_pool(gd_pool, "green_devil")
+                        _cycle_logged += _log_pool(gd_pool, "green_devil")
+
+                    # ── Push notification ──────────────────────────────────
+                    # ONE notification per user per cycle, covering both pools.
+                    # Auto-backtest can log up to MAX_AUTO_SLIPS_PER_CYCLE (10)
+                    # in a single refresh; notifying per slip is how you get
+                    # muted by the end of the first evening.
+                    #
+                    # Sent from inside the per-user loop but after both pools,
+                    # so the count is the cycle total. send_to_user swallows
+                    # its own errors — a push failure must never break slip
+                    # logging, which is the thing the user actually wants.
+                    #
+                    # `db` here is get_db(), the SERVICE-ROLE client, which is
+                    # what push_subscriptions needs: it is deny-all under RLS
+                    # (migration_022), so a user-JWT client reads zero rows and
+                    # would silently never notify anyone.
+                    if _cycle_logged:
+                        from web.push import send_to_user, slip_notification_text
+                        _title, _body = slip_notification_text(_cycle_logged)
+                        _n = send_to_user(db, uid, _title, _body, url="/backtest")
+                        if _n:
+                            logger.info(
+                                "push    user=%s notified %d device(s) about %d slip(s)",
+                                uid, _n, _cycle_logged,
+                            )
             except Exception as e:
                 logger.error("Auto-backtest background worker error: %s", e)
 
@@ -1440,12 +1513,29 @@ def _run_pipeline_body():
             # dataset gets outcomes. check_observatory_results was defined but
             # never called anywhere (dead since ~May 23) — the same
             # defined-but-unwired bug as the observatory closing pass.
-            try:
-                obs_updated = _results_checker.check_observatory_results()
-                if obs_updated:
-                    logger.info("ResultsChecker: %d observatory rows resolved", obs_updated)
-            except Exception as rc_exc:
-                logger.warning("ResultsChecker observatory background error: %s", rc_exc)
+            #
+            # RATE-LIMITED, and this is the single biggest Supabase egress cost
+            # in the app. It rides the scrape pipeline, so it inherited the
+            # 5-minute cadence — but its query is
+            #   select * from market_observatory where result='pending'
+            #                and game_start < now()-2h  limit 2000
+            # which measured 1,891 eligible rows * 324 B ≈ 613 KB EVERY RUN.
+            # At 288 runs/day that is ~176 MB/day ≈ 5.3 GB/month, i.e. the
+            # entire free-tier egress allowance on its own — and it is re-reading
+            # the same in-flight rows while waiting for ESPN to publish results.
+            #
+            # Nothing here is time-critical: every row it looks at belongs to a
+            # game that finished at least two hours ago, so resolving on a
+            # 20-minute cadence instead of 5 changes no user-visible behaviour
+            # and cuts this query's egress 4x. Backlog still drains fast (the
+            # limit is 2000/run and steady-state pending is ~1.9k).
+            if _due("observatory_results", _OBS_RESOLVE_EVERY_MIN):
+                try:
+                    obs_updated = _results_checker.check_observatory_results()
+                    if obs_updated:
+                        logger.info("ResultsChecker: %d observatory rows resolved", obs_updated)
+                except Exception as rc_exc:
+                    logger.warning("ResultsChecker observatory background error: %s", rc_exc)
 
         threading.Thread(target=_check_results_bg, daemon=True).start()
 
@@ -1471,12 +1561,24 @@ def _reschedule(interval_min: int):
         scheduler.remove_job("auto_refresh")
     except JobLookupError:
         pass
+    # misfire_grace_time: APScheduler's default is 1 SECOND. run_pipeline
+    # scrapes five books sequentially and regularly takes tens of seconds; if
+    # a run finishes even 2s past its slot, the default grace treats the tick
+    # as missed and skips it outright rather than firing late — observed live
+    # 2026-08-13 11:57:30 ("missed by 0:00:02"), which turned one 5-minute gap
+    # into 10 and was reported as data "9 minutes old" against a 5-minute
+    # promise. This does not delay anything: a run that lands on time is
+    # unaffected, and a genuinely wedged process (stalled beyond the grace
+    # window) still correctly waits for the next tick rather than piling up
+    # queued runs. The 30s floor keeps interval_min=1 sane; the interval-30s
+    # ceiling keeps grace from exceeding the interval itself.
     scheduler.add_job(
         run_pipeline,
         trigger="interval",
         minutes=interval_min,
         id="auto_refresh",
         next_run_time=datetime.now() + timedelta(minutes=interval_min),
+        misfire_grace_time=max(30, interval_min * 60 - 30),
     )
     with _lock:
         _state["next_refresh"] = datetime.now() + timedelta(minutes=interval_min)
@@ -1776,6 +1878,95 @@ def favicon():
         media_type="image/x-icon",
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    """Serve the push service worker from the ORIGIN ROOT.
+
+    The file lives in web/static/, but a service worker's default scope is the
+    directory it is served from — at /static/sw.js it could only control
+    /static/* and would never receive push for the app itself. Serving the same
+    bytes at /sw.js gives it scope over the whole origin.
+
+    no-cache because a stale worker is sticky: browsers keep running the
+    installed copy, so a cached sw.js can outlive several deploys.
+    """
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+class PushSubscribe(BaseModel):
+    endpoint: str
+    p256dh: str
+    auth: str
+
+
+@app.get("/api/push/vapid-key")
+def push_vapid_key():
+    """Public VAPID key the browser needs to create a subscription.
+
+    Public by design — it is handed to every subscriber and grants nothing on
+    its own. Unauthenticated so the page can decide whether to offer the
+    notification toggle at all before doing any authed work.
+    """
+    from web.push import VAPID_PUBLIC_KEY, push_configured
+    return {"configured": push_configured(), "key": VAPID_PUBLIC_KEY}
+
+
+@app.post("/api/push/subscribe")
+def push_subscribe(sub: PushSubscribe, user: dict = Depends(get_current_user)):
+    """Register this browser to receive the owner's auto-backtest notifications.
+
+    Written with the service-role writer, not the user's JWT client:
+    push_subscriptions is deny-all under RLS (migration_022) because the
+    p256dh/auth pair is the encryption key for that device's push channel.
+    """
+    from engine.writer import writer as _writer
+    db = _writer("push.subscribe")
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not reachable.")
+    try:
+        # Upsert on endpoint: re-subscribing the same browser (permission
+        # re-granted, or a second sign-in) must not create a duplicate row that
+        # would deliver the same notification twice to one device.
+        db.table("push_subscriptions").upsert({
+            "endpoint": sub.endpoint,
+            "user_id": user["id"],
+            "p256dh": sub.p256dh,
+            "auth": sub.auth,
+        }, on_conflict="endpoint").execute()
+        return {"status": "subscribed"}
+    except Exception as e:
+        logger.error("push    subscribe failed for user %s: %s", user["id"], e)
+        raise HTTPException(status_code=500, detail="Could not save subscription.")
+
+
+@app.post("/api/push/unsubscribe")
+def push_unsubscribe(sub: PushSubscribe, user: dict = Depends(get_current_user)):
+    """Drop this browser's subscription.
+
+    Scoped to the caller's own user_id as well as the endpoint — without that,
+    knowing any endpoint string would be enough to silence another account.
+    """
+    from engine.writer import writer as _writer
+    db = _writer("push.unsubscribe")
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not reachable.")
+    try:
+        (db.table("push_subscriptions")
+           .delete()
+           .eq("endpoint", sub.endpoint)
+           .eq("user_id", user["id"])
+           .execute())
+        return {"status": "unsubscribed"}
+    except Exception as e:
+        logger.error("push    unsubscribe failed for user %s: %s", user["id"], e)
+        raise HTTPException(status_code=500, detail="Could not remove subscription.")
 
 
 @app.get("/extension")
@@ -4202,8 +4393,44 @@ def billing_portal(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=502, detail=f"Stripe portal failed: {e}")
 
 
-def _sync_subscription_to_db(sub: dict):
-    """Persist a Stripe Subscription object onto the owning user's row."""
+def _stripe_to_dict(obj) -> dict:
+    """Normalize anything the Stripe SDK hands back into a plain, fully-nested
+    dict.
+
+    stripe-python <10 made `StripeObject` a subclass of `dict`, so `.get()`
+    worked on API results directly. From v10 on it is a plain object — its MRO
+    is `StripeObject -> object` — and `.get` raises `AttributeError: get`.
+    requirements.txt asks for `stripe>=9.0.0` with no upper bound, so which
+    object model you get depends on when pip last resolved the dependency.
+    That is not a difference the billing path can afford to notice, hence this
+    boundary.
+
+    `json.loads(str(obj))` is used rather than `to_dict()` because it is
+    recursive in every SDK version; `to_dict()` has been shallow in some.
+    """
+    if isinstance(obj, dict):
+        return obj
+    try:
+        parsed = json.loads(str(obj))
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+    try:
+        return dict(obj.to_dict())
+    except Exception:
+        logger.error("billing: could not normalize Stripe object %r", type(obj))
+        return {}
+
+
+def _sync_subscription_to_db(sub):
+    """Persist a Stripe Subscription object onto the owning user's row.
+
+    Accepts either a plain dict (webhook payload) or a Stripe SDK object
+    (`stripe.Subscription.retrieve`); both reach here, and on stripe>=10 only
+    the former supports `.get`.
+    """
+    sub = _stripe_to_dict(sub)
     customer_id = sub.get("customer")
     if not customer_id:
         return
@@ -4216,17 +4443,45 @@ def _sync_subscription_to_db(sub: dict):
         return
 
     status = sub.get("status")
-    # Plan label from the first line item's price id.
+    # Plan label and period end both come off the first line item.
     plan = None
+    items = []
     try:
         items = (sub.get("items") or {}).get("data") or []
         if items:
             plan = _plan_for_price_id(items[0]["price"]["id"])
     except Exception:
         pass
-    cpe = sub.get("current_period_end")
+
+    # current_period_end moved OFF the Subscription object and onto each
+    # subscription item in Stripe API version 2025-03-31.basil. Our webhook
+    # endpoint is pinned to 2026-04-22.dahlia and the SDK renders
+    # 2026-06-24.dahlia, so both are past that cut: on the modern shape
+    # `sub["current_period_end"]` is simply absent.
+    #
+    # That was silent, because the `if cpe_iso:` guard below makes "field
+    # missing" indistinguishable from "deliberately not set" — the column just
+    # stayed NULL forever. The damage lands in _user_has_access: for a
+    # 'canceled' subscription it keeps access alive until current_period_end,
+    # so with NULL there a customer who cancels loses access the same instant
+    # instead of at the end of the month they already paid for.
+    #
+    # Root is still read as a fallback so a replayed pre-basil event, or a
+    # future re-pin to an older version, keeps working.
+    cpe = None
+    if items:
+        cpe = items[0].get("current_period_end")
+    if not isinstance(cpe, (int, float)):
+        cpe = sub.get("current_period_end")
     cpe_iso = (datetime.fromtimestamp(cpe, tz=timezone.utc).isoformat()
                if isinstance(cpe, (int, float)) else None)
+    if cpe_iso is None and status in _ACTIVE_SUB_STATUSES:
+        # Not fatal, but it means a later cancellation cannot honour the paid
+        # period. Log it rather than let the column go quietly NULL again.
+        logger.warning(
+            "billing: no current_period_end on sub for user %s (status=%s); "
+            "cancellation will not honour the paid-through date", user_id, status,
+        )
 
     fields = {
         "stripe_customer_id":  customer_id,
@@ -4250,17 +4505,79 @@ async def billing_webhook(request: Request):
     payload = await request.body()
     sig = request.headers.get("stripe-signature", "")
 
+    # Verify the signature and parse the body as two separate steps.
+    #
+    # These used to be one step via `stripe.Webhook.construct_event`, which
+    # both verifies AND returns a parsed `StripeObject`. That coupling caused a
+    # production-only 500: on stripe-python >=10 the returned object is no
+    # longer a dict subclass, so the `event.get("type")` below raised
+    # `AttributeError: get` — and it raised OUTSIDE the handler's try/except,
+    # so Stripe got a 500 and retried forever while subscription_status was
+    # never written. A paying customer would be charged and still see 402.
+    #
+    # It was invisible in development because the no-secret branch parsed the
+    # payload with json.loads and produced a real dict, so only deploys with
+    # STRIPE_WEBHOOK_SECRET set could ever hit it. Parsing the raw payload in
+    # both cases keeps the two branches byte-identical from here on.
+    #
+    # `verify_header` is the pure signature check; `construct_event` also
+    # inspects `event.object`, which is a second thing that can throw on a
+    # payload shape we did not expect.
+    # Decode before verifying: `verify_header` signs the payload as a *str* and
+    # silently fails to match if handed bytes. `construct_event` used to do this
+    # decode internally, which is why passing raw bytes worked before.
     try:
-        if STRIPE_WEBHOOK_SECRET:
-            event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
-        else:
-            # No signing secret set yet — parse without verification (dev only).
-            import json as _json
-            event = _json.loads(payload.decode("utf-8"))
-            logger.warning("billing: webhook signature NOT verified (no STRIPE_WEBHOOK_SECRET)")
+        body = payload.decode("utf-8")
+    except UnicodeDecodeError as e:
+        logger.error("billing: webhook body is not valid UTF-8: %s", e)
+        raise HTTPException(status_code=400, detail="Malformed payload.")
+
+    # Fail CLOSED with no signing secret.
+    #
+    # This route takes no `user` dependency, and _sync_subscription_to_db will
+    # resolve the target account from `data.object.metadata.supabase_user_id`
+    # straight out of the request body when the customer id is unknown — a
+    # fallback that billing_checkout genuinely stamps, so it is live. With
+    # verification skipped, an unauthenticated POST can therefore write
+    # subscription_status='active' onto any Supabase uuid (free Pro), or write
+    # a dead status and a bogus stripe_customer_id onto a paying user's row
+    # (revokes them, and orphans their real subscription from
+    # _find_user_id_by_customer). _upsert_user_billing uses the service key and
+    # bypasses RLS.
+    #
+    # _billing_configured() does NOT include STRIPE_WEBHOOK_SECRET, so "keys
+    # and prices set, signing secret missing" is a reachable state — and the
+    # self-host runbook walks straight through it, since the endpoint's secret
+    # is only pasted in after the domain cutover. The window used to be an open
+    # write endpoint on a public tunnel. Now it is a 503.
+    if not STRIPE_WEBHOOK_SECRET:
+        if _os.getenv("COREPROP_ALLOW_UNSIGNED_WEBHOOKS", "").lower() != "true":
+            logger.error(
+                "billing: refusing webhook — STRIPE_WEBHOOK_SECRET is unset. Set it, "
+                "or set COREPROP_ALLOW_UNSIGNED_WEBHOOKS=true for local development."
+            )
+            raise HTTPException(status_code=503, detail="Webhook signing not configured.")
+        logger.warning("billing: webhook signature NOT verified "
+                       "(COREPROP_ALLOW_UNSIGNED_WEBHOOKS=true) — never do this in production")
+    else:
+        try:
+            stripe.WebhookSignature.verify_header(
+                body, sig, STRIPE_WEBHOOK_SECRET, stripe.Webhook.DEFAULT_TOLERANCE
+            )
+        except Exception as e:
+            logger.error("billing: webhook signature verification failed: %s", e)
+            raise HTTPException(status_code=400, detail="Invalid signature.")
+
+    try:
+        event = json.loads(body)
+        if not isinstance(event, dict):
+            raise ValueError("event is not a JSON object")
     except Exception as e:
-        logger.error("billing: webhook signature verification failed: %s", e)
-        raise HTTPException(status_code=400, detail="Invalid signature.")
+        # Distinct from the 400 above: the sender proved it holds the signing
+        # secret, so this is a malformed body, not a forgery. Keep the log
+        # lines separable or a real forgery attempt hides in the noise.
+        logger.error("billing: webhook payload not parseable as JSON: %s", e)
+        raise HTTPException(status_code=400, detail="Malformed payload.")
 
     etype = event.get("type", "")
     obj = (event.get("data") or {}).get("object") or {}
@@ -4283,9 +4600,22 @@ async def billing_webhook(request: Request):
                 _sync_subscription_to_db(sub)
     except Exception as e:
         logger.error("billing: webhook handler error for %s: %s", etype, e)
-        # 200 anyway so Stripe doesn't hammer retries on a transient DB blip;
-        # the next subscription.updated event will re-sync.
-        return {"received": True, "handled": False}
+        # Ask Stripe to retry rather than acknowledging a write that did not
+        # happen. A 2xx marks the event delivered and it is never sent again.
+        #
+        # This used to return 200 unconditionally, reasoning that "the next
+        # subscription.updated event will re-sync". That holds for mid-life
+        # events but is false for customer.subscription.deleted, which is
+        # terminal — there is no later event for a subscription that no longer
+        # exists, so a one-request Supabase blip (_upsert_user_billing raises
+        # outright with no DB connection) stranded the row permanently. The
+        # failure mode is a customer who cancelled still showing as active, or
+        # a paid customer stuck unentitled, with nothing to repair it.
+        #
+        # Stripe's retry is exponential backoff over ~3 days, not hammering,
+        # and a genuinely permanent failure surfaces in the Stripe dashboard
+        # instead of vanishing into our logs.
+        raise HTTPException(status_code=500, detail="Handler error; please retry.")
 
     return {"received": True}
 

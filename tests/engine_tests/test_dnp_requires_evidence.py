@@ -50,6 +50,42 @@ def test_failed_fetch_is_recorded(rc, monkeypatch):
     )
 
 
+def test_summary_failure_is_recorded(rc, monkeypatch):
+    """A box-score error must be remembered too, not just a scoreboard error.
+
+    Regression for 2026-08-09: the scoreboard kept answering 200 while the
+    summary endpoint failed, so `_fetch_failed` stayed empty, the guard passed,
+    and 162 legs were written DNP overnight. The scoreboard tells you a game
+    happened; the summary is the only thing that tells you who played.
+    """
+    class ScoreboardOkSummaryBoom:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, url, *a, **k):
+            self.calls += 1
+            if self.calls == 1:                     # scoreboard
+                class R:
+                    @staticmethod
+                    def raise_for_status():
+                        return None
+
+                    @staticmethod
+                    def json():
+                        return {"events": [{"id": "401585183"}]}
+                return R()
+            raise RuntimeError("403 Forbidden")     # summary
+
+    monkeypatch.setattr(rc, "_session", ScoreboardOkSummaryBoom())
+    out = rc._fetch_all_stats("MLB", "20260808")
+
+    assert out == {}
+    assert ("MLB", "20260808") in rc._fetch_failed, (
+        "the scoreboard succeeded but every box score failed; the date was not "
+        "flagged, so the DNP guard would pass and grade the slate DNP"
+    )
+
+
 def test_window_failure_is_detected_for_either_date(rc):
     """The guard covers both dates in the UTC-boundary lookup window."""
     gs = datetime(2026, 8, 5, 1, 40, tzinfo=timezone.utc)

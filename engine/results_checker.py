@@ -580,6 +580,17 @@ class ESPNResultsChecker:
                 r2.raise_for_status()
                 summary = r2.json()
             except Exception as exc:
+                # Same reasoning as the scoreboard failure above, for the call
+                # that actually carries the box score. A summary we could not
+                # read is not evidence that its players failed to appear, and
+                # the scoreboard answering 200 while summaries fail leaves
+                # `_fetch_failed` empty — so every leg on this date falls
+                # through to the `hours_since_end >= 6` branch and is written
+                # DNP. That is the 2026-08-09 wall (162 legs overnight, 158 of
+                # the first 200 sampled provably wrong) and the 08-05 guard did
+                # not cover it. Flag the whole date: we cannot tell which
+                # players were in the game we just failed to read.
+                self._fetch_failed.add((league, date_str))
                 logger.warning(
                     "ResultsChecker: summary error event %s: %s", event_id, exc
                 )

@@ -1,0 +1,57 @@
+# XcodeGen spec for the CoreProp iOS app.
+#
+# The .xcodeproj is NOT checked in — it is generated from this file, so there is
+# no 20k-line project.pbxproj to merge-conflict over. Regenerate any time with:
+#
+#     cd ios && xcodegen generate
+#
+# DEVELOPMENT_TEAM is deliberately absent. With a free Apple developer account
+# you pick the team once in Xcode (Signing & Capabilities -> Team) and Xcode
+# writes it into the generated project; hardcoding someone else's team id here
+# would only break the next person to clone this.
+name: CoreProp
+options:
+  bundleIdPrefix: me.coreprop
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    # Free accounts cannot use automatic signing without a team selected in the
+    # UI, so we leave signing style automatic and let Xcode fill in the team.
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  CoreProp:
+    type: application
+    platform: iOS
+    sources:
+      - path: CoreProp
+    info:
+      path: CoreProp/Info.plist
+      properties:
+        CFBundleDisplayName: CoreProp
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Portrait only: the web app's +EV table is a nine-column grid that
+        # already needs horizontal scrolling at phone widths, and landscape
+        # buys ~150px while costing the vertical room the row list needs.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        # The site is HTTPS-only, so no ATS exceptions are needed. If you ever
+        # point BASE_URL at a plaintext http:// dev server, that is when you
+        # would add NSAppTransportSecurity -- not before.
+        UIUserInterfaceStyle: Dark
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.coreprop.ios
+        INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleLightContent
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_USER_SCRIPT_SANDBOXING: "YES"
+        TARGETED_DEVICE_FAMILY: "1"

@@ -13,10 +13,26 @@
 // PrizePicks" button queues the slip on whichever the user has open —
 // localhost while developing, onrender in production — and the extension has
 // no way to know which, so it asks all of them.
+// 8010 is the self-hosted launchd service (deploy/selfhost/); 8000 is the app
+// default and the `coreprop` dev preview; 8021 is the `coreprop-local` preview.
+// Unlike manifest match patterns, these are real fetch targets — a port cannot
+// be wildcarded here, so every port the server might listen on has to be
+// listed. Omitting one is silent: the fan-out just never finds a backend and
+// the content script spins on "Waking up CoreProp…" forever.
+// coreprop.me is FIRST because this list is probed sequentially: it is the
+// production host as of 2026-08-10 (self-hosted behind a Cloudflare Tunnel).
+// onrender.com is kept only as a fallback in case Render is ever restored —
+// it currently 503s, so leaving it ahead would cost a wasted round trip on
+// every probe.
 const COREPROP_URLS = [
+  "https://coreprop.me",
   "https://coreprop.onrender.com",
+  "http://localhost:8010",
+  "http://127.0.0.1:8010",
   "http://localhost:8000",
   "http://127.0.0.1:8000",
+  "http://localhost:8021",
+  "http://127.0.0.1:8021",
 ];
 
 const BASE_KEY = "coreprop:base";

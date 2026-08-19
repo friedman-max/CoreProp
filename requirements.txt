@@ -14,3 +14,4 @@ stripe>=9.0.0
 pandas
 numpy
 psutil
+pywebpush

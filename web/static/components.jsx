@@ -29,7 +29,7 @@ function Logo({ size = 32, animated = true }) {
 // ───────── Top Nav ─────────
 const NAV_TABS = ["+EV Bets", "Combined Lines", "PrizePicks Lines", "Sportsbooks", "Backtest", "Analytics"];
 
-function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" }) {
+function TopNav({ active, onTab, onLogin, onSignup, loggedIn, onLogout, variant = "app" }) {
   // Signed-out visitors on the landing page get no app tabs. All six used to
   // render for everyone: they look like navigation, but every click just
   // reopened the auth modal (app-main.jsx onTab bails when !loggedIn), and on a
@@ -46,6 +46,12 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
   const user = (window.cpApi && window.cpApi.getUser && window.cpApi.getUser()) || null;
   const email = user?.email || "";
   const displayName = (user?.user_metadata?.username || email || "Account");
+  // Google returns the profile photo as `avatar_url` (and `picture` on some
+  // token shapes). Email/password users have neither, so the lettered circle
+  // stays as the fallback — and it also has to catch a broken/expired photo
+  // URL at runtime, hence the onError swap below.
+  const avatarUrl = user?.user_metadata?.avatar_url || user?.user_metadata?.picture || "";
+  const [avatarBroken, setAvatarBroken] = useState(false);
   const initial = (email || user?.user_metadata?.username || "?").trim().charAt(0).toUpperCase();
 
   const handleLogout = async () => {
@@ -92,12 +98,30 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
               aria-expanded={menuOpen}
               title={email}
             >
-              <span className="cp-avatar">{initial}</span>
+              {avatarUrl && !avatarBroken ? (
+                <img
+                  className="cp-avatar"
+                  src={avatarUrl}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  style={{ objectFit: "cover", padding: 0 }}
+                  onError={() => setAvatarBroken(true)}
+                />
+              ) : (
+                <span className="cp-avatar">{initial}</span>
+              )}
             </button>
             {menuOpen && (
               <div className="cp-menu" role="menu">
                 <div className="cp-menu-hd">
-                  <div className="cp-avatar cp-avatar-lg">{initial}</div>
+                  {avatarUrl && !avatarBroken ? (
+                    <img className="cp-avatar cp-avatar-lg" src={avatarUrl} alt=""
+                         referrerPolicy="no-referrer"
+                         style={{ objectFit: "cover", padding: 0 }}
+                         onError={() => setAvatarBroken(true)} />
+                  ) : (
+                    <div className="cp-avatar cp-avatar-lg">{initial}</div>
+                  )}
                   <div className="cp-menu-id">
                     <div className="cp-menu-name">{displayName}</div>
                     {email && <div className="cp-menu-email">{email}</div>}
@@ -115,9 +139,16 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
           // control here was "Log In", so the primary conversion path lived
           // exclusively in the page body and vanished as soon as you scrolled.
           <>
+            {/* Sign up is the primary action for a signed-out visitor; "Log in"
+                is the quieter secondary for people who already have an account.
+                "See pricing" stays available but no longer competes as the only
+                filled button. */}
             <button className="cp-btn cp-btn-ghost cp-btn-sm" onClick={onLogin}>Log in</button>
-            <button className="cp-btn cp-btn-primary cp-btn-sm" onClick={() => onTab && onTab("pricing")}>
-              See pricing
+            <button className="cp-btn cp-btn-ghost cp-btn-sm" onClick={() => onTab && onTab("pricing")}>
+              Pricing
+            </button>
+            <button className="cp-btn cp-btn-primary cp-btn-sm" onClick={onSignup || onLogin}>
+              Sign up
             </button>
           </>
         )}
@@ -127,15 +158,29 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app" })
 }
 
 // ───────── Auth Modal ─────────
-function AuthModal({ open, onClose, onSubmit }) {
-  const [mode, setMode] = useState("login");
+function AuthModal({ open, onClose, onSubmit, notice, initialMode }) {
+  // Signup is the default: a signed-out visitor is far more likely to be new
+  // than returning, and the whole funnel depends on them creating an account.
+  const [mode, setMode] = useState(initialMode || "signup");
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // Set to the address we just signed up once Supabase accepts the account but
+  // withholds a session pending email confirmation. Deliberately NOT reusing
+  // `err`: that renders in #FCA5A5 with role="alert", so the single most
+  // encouraging moment in the funnel — the account being created — was being
+  // announced to the user as a red failure.
+  const [signedUpEmail, setSignedUpEmail] = useState("");
+  // "" | "sent" — drives the forgot-password sub-view. Separate from `mode` so
+  // returning from it restores the login tab the user came from.
+  const [resetSent, setResetSent] = useState("");
   const dialogRef = useRef(null);
   const firstFieldRef = useRef(null);
+  // Re-read on every open: api.jsx probes Supabase asynchronously, so the
+  // provider may have resolved after this component first mounted.
+  const googleOn = !!(window.cpApi && window.cpApi.googleEnabled && window.cpApi.googleEnabled());
 
   // Escape to dismiss, and don't let the page behind scroll while the modal
   // owns the screen. The dropdown in TopNav already did both; this dialog did
@@ -173,6 +218,20 @@ function AuthModal({ open, onClose, onSubmit }) {
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   };
 
+  // Clear the confirmation panel when the dialog is dismissed, so reopening it
+  // shows the form again rather than a stale "check your email".
+  useEffect(() => {
+    if (!open) { setSignedUpEmail(""); setErr(""); setResetSent(""); }
+  }, [open]);
+
+  // Honour the mode the opener asked for each time the dialog opens. Without
+  // this, `useState(initialMode)` would only apply on first mount, so the
+  // dead-link rescue would land on the signup tab after the dialog had been
+  // opened once already.
+  useEffect(() => {
+    if (open && initialMode) setMode(initialMode);
+  }, [open, initialMode]);
+
   if (!open) return null;
 
   const submit = async (e) => {
@@ -187,7 +246,30 @@ function AuthModal({ open, onClose, onSubmit }) {
       } else {
         const res = await window.cpApi.signUp(email, pw);
         if (!res.session) {
-          setErr("Check your email for a confirmation link, then log in.");
+          // CAREFUL: a signup for an email that ALREADY has an account also
+          // lands here, and Supabase deliberately makes it look identical —
+          // it returns HTTP 200 with a FABRICATED user (random id, a
+          // confirmation_sent_at of "now") and sends no email at all. That is
+          // its anti-enumeration defence: an attacker must not be able to
+          // probe which addresses are registered.
+          //
+          // The one honest signal is `identities`: length 1 for a genuine new
+          // signup, length 0 when the address is already taken. Verified
+          // against this project's live auth server both ways.
+          //
+          // Without this check an existing user who forgets they registered
+          // gets the cheerful "check your email" panel and waits forever for
+          // a message that is never sent.
+          const identities = (res.user && res.user.identities) || res.identities;
+          if (Array.isArray(identities) && identities.length === 0) {
+            setErr("That email already has an account — log in instead.");
+            setBusy(false);
+            return;
+          }
+          // Genuine new signup awaiting confirmation. Swap the whole dialog
+          // for a confirmation panel rather than dropping a line of red text
+          // under a form that still looks like it needs resubmitting.
+          setSignedUpEmail(email);
           setBusy(false);
           return;
         }
@@ -215,10 +297,168 @@ function AuthModal({ open, onClose, onSubmit }) {
         <div className="cp-modal-logo">
           <Logo size={56} animated={false} />
         </div>
+
+        {mode === "forgot" ? (
+          <div style={{ padding: "4px 4px 8px" }}>
+            {resetSent ? (
+              // Same copy whether or not the address exists. Saying "no such
+              // account" here would turn this form into an enumeration oracle.
+              <div style={{ textAlign: "center" }} role="status">
+                <div aria-hidden="true" style={{
+                  width: 56, height: 56, margin: "0 auto 18px", borderRadius: "50%",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "rgba(34,197,94,.14)", color: "#86EFAC", fontSize: 28,
+                }}>✓</div>
+                <h2 style={{ margin: "0 0 10px", fontSize: 20, fontWeight: 650, color: "var(--text)" }}>
+                  Check your email
+                </h2>
+                <p style={{ margin: "0 0 20px", fontSize: 14, lineHeight: 1.55, color: "var(--text-2)" }}>
+                  If an account exists for <b style={{ color: "var(--text-2)" }}>{resetSent}</b>, a
+                  password reset link is on its way.
+                </p>
+                <button className="cp-btn cp-btn-primary cp-btn-lg" type="button"
+                        style={{ width: "100%" }}
+                        onClick={() => { setMode("login"); setResetSent(""); setErr(""); }}>
+                  Back to log in
+                </button>
+              </div>
+            ) : (
+              <>
+                <h2 style={{ margin: "0 0 8px", fontSize: 19, fontWeight: 650, color: "var(--text)" }}>
+                  Reset your password
+                </h2>
+                <p style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.5, color: "var(--text-3)" }}>
+                  Enter your email and we'll send you a link to set a new one.
+                </p>
+                <form className="cp-form" onSubmit={async (e) => {
+                  e.preventDefault();
+                  setErr("");
+                  if (!email) { setErr("Enter your email."); return; }
+                  setBusy(true);
+                  try {
+                    await window.cpApi.requestPasswordReset(email);
+                    setResetSent(email);
+                  } catch (ex) {
+                    setErr(ex.message || "Couldn't send the reset email. Try again.");
+                  } finally { setBusy(false); }
+                }}>
+                  <input className="cp-input" placeholder="Email" type="email" aria-label="Email"
+                         autoComplete="email" value={email}
+                         onChange={e => setEmail(e.target.value)} disabled={busy} />
+                  {err && <div role="alert" style={{ color: "#FCA5A5", fontSize: 13, padding: "2px 4px" }}>{err}</div>}
+                  <button className="cp-btn cp-btn-primary cp-btn-lg" type="submit" disabled={busy}>
+                    {busy ? "Sending…" : "Send reset link"}
+                  </button>
+                </form>
+                <button type="button" className="cp-link"
+                        style={{ display: "block", margin: "14px auto 0", fontSize: 13 }}
+                        onClick={() => { setMode("login"); setErr(""); }}>
+                  ← Back to log in
+                </button>
+              </>
+            )}
+          </div>
+        ) : signedUpEmail ? (
+          // Account created, awaiting email confirmation. role="status" (not
+          // "alert") so assistive tech reads this as the good news it is.
+          <div style={{ textAlign: "center", padding: "4px 4px 8px" }} role="status">
+            <div
+              aria-hidden="true"
+              style={{
+                width: 56, height: 56, margin: "0 auto 18px", borderRadius: "50%",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: "rgba(34,197,94,.14)", color: "#86EFAC", fontSize: 28,
+              }}
+            >✓</div>
+            <h2 style={{ margin: "0 0 10px", fontSize: 20, fontWeight: 650, color: "var(--text)" }}>
+              Thank you for choosing CoreProp!
+            </h2>
+            <p style={{ margin: "0 0 6px", fontSize: 14, lineHeight: 1.55, color: "var(--text-2)" }}>
+              Please check your email for verification to use your new account.
+            </p>
+            {/* Showing the address catches a typo'd signup right here, instead
+                of after the user has waited for mail that can never arrive. */}
+            <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--text-3)" }}>
+              Sent to <b style={{ color: "var(--text-2)" }}>{signedUpEmail}</b>
+            </p>
+            <button
+              className="cp-btn cp-btn-primary cp-btn-lg"
+              type="button"
+              style={{ width: "100%" }}
+              onClick={onClose}
+            >
+              Got it
+            </button>
+            <p style={{ margin: "14px 0 0", fontSize: 12, color: "var(--text-3)" }}>
+              Not there in a minute? Check your spam folder.
+            </p>
+          </div>
+        ) : (
+        <>
+        {/* Explanatory copy from the opener (e.g. a consumed confirmation
+            link). Neutral blue, role=status — this is information, not the
+            user's mistake, so it must not read as a validation error. */}
+        {notice && (
+          <div
+            role="status"
+            style={{
+              margin: "0 0 14px", padding: "10px 12px", borderRadius: 10,
+              background: "rgba(59,130,246,.12)", border: "1px solid rgba(59,130,246,.28)",
+              color: "#BFDBFE", fontSize: 13, lineHeight: 1.5,
+            }}
+          >{notice}</div>
+        )}
         <div className="cp-seg">
           <button type="button" className={"cp-seg-btn " + (mode === "login" ? "is-active" : "")} onClick={() => { setMode("login"); setErr(""); }}>Log in</button>
           <button type="button" className={"cp-seg-btn " + (mode === "signup" ? "is-active" : "")} onClick={() => { setMode("signup"); setErr(""); }}>Sign up</button>
         </div>
+
+        {/* Only rendered once Supabase actually reports the provider as
+            configured (api.jsx probes /auth/v1/settings). Showing it while the
+            provider is off would redirect the user to a Supabase error page,
+            which reads as "this site is broken". */}
+        {googleOn && (
+          <>
+            <button
+              type="button"
+              className="cp-btn cp-btn-lg"
+              style={{
+                width: "100%", background: "#fff", color: "#1f2937",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                fontWeight: 600, marginBottom: 14,
+              }}
+              disabled={busy}
+              onClick={async () => {
+                setErr("");
+                setBusy(true);
+                try {
+                  await window.cpApi.signInWithGoogle("/");   // navigates away
+                } catch (ex) {
+                  setErr(ex.message || "Couldn't start Google sign-in.");
+                  setBusy(false);
+                }
+              }}
+            >
+              {/* Google's brand guidelines require the official four-colour
+                  mark; a monochrome "G" is a trademark problem. */}
+              <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+                <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+                <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
+                <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/>
+                <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+              </svg>
+              <span>{mode === "signup" ? "Sign up with Google" : "Continue with Google"}</span>
+            </button>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10,
+              color: "var(--text-3)", fontSize: 12, margin: "0 0 14px",
+            }}>
+              <span style={{ flex: 1, height: 1, background: "rgba(255,255,255,.10)" }} />
+              or
+              <span style={{ flex: 1, height: 1, background: "rgba(255,255,255,.10)" }} />
+            </div>
+          </>
+        )}
         <form className="cp-form" onSubmit={submit}>
           <input ref={firstFieldRef} className="cp-input" placeholder="Email" type="email" aria-label="Email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} disabled={busy} />
           <input className="cp-input" placeholder="Password" type="password" aria-label="Password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={pw} onChange={e => setPw(e.target.value)} disabled={busy} />
@@ -230,6 +470,15 @@ function AuthModal({ open, onClose, onSubmit }) {
             {busy ? "Working…" : (mode === "login" ? "Log in" : "Create account")}
           </button>
         </form>
+        {mode === "login" && (
+          <button type="button" className="cp-link"
+                  style={{ display: "block", margin: "12px auto 0", fontSize: 13 }}
+                  onClick={() => { setMode("forgot"); setErr(""); }}>
+            Forgot your password?
+          </button>
+        )}
+        </>
+        )}
       </div>
     </div>
   );
@@ -336,7 +585,75 @@ function fmtRefresh(minutes) {
   return m ? `${h} hr ${m} min` : `${h} hr`;
 }
 
+// ───────── Error boundary ─────────
+//
+// React 18's createRoot UNMOUNTS THE WHOLE TREE on an uncaught render error.
+// With no boundary, one bad value anywhere — a null a component did not guard,
+// a field missing from an API payload — replaced the entire site with a blank
+// white page, and the only symptom users could report was "it flashes then goes
+// blank". There was no error text, nothing in the UI, and nothing recorded.
+//
+// This converts that into a visible, reportable error and keeps the page alive.
+// It CANNOT catch async errors (fetch rejections, event handlers) — React
+// boundaries only cover render, lifecycle and constructors — so it is a safety
+// net, not a substitute for handling those at the source.
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    // Keep the raw error in the console for anyone with devtools open, and
+    // stash it on window so a user can be talked through reading it out over
+    // chat without needing to screenshot a stack trace.
+    console.error("CoreProp render error:", error, info);
+    try {
+      window.__COREPROP_LAST_ERROR = {
+        message: String(error && error.message || error),
+        stack: String(error && error.stack || ""),
+        componentStack: String(info && info.componentStack || ""),
+        at: new Date().toISOString(),
+      };
+    } catch (e) { /* never let the reporter itself throw */ }
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    const msg = String(this.state.error && this.state.error.message || this.state.error);
+    return (
+      <main style={{ maxWidth: 560, margin: "12vh auto", padding: "0 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 40, marginBottom: 14 }} aria-hidden="true">⚠️</div>
+        <h1 style={{ fontSize: 22, fontWeight: 650, margin: "0 0 10px", color: "var(--text)" }}>
+          Something broke on this page
+        </h1>
+        <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--text-2)", margin: "0 0 18px" }}>
+          This is a bug on our side, not something you did. Reloading usually fixes it.
+        </p>
+        <button className="cp-btn cp-btn-primary cp-btn-lg" onClick={() => window.location.reload()}>
+          Reload CoreProp
+        </button>
+        <details style={{ marginTop: 22, textAlign: "left" }}>
+          <summary style={{ cursor: "pointer", fontSize: 12.5, color: "var(--text-3)" }}>
+            Technical details (helps us fix it)
+          </summary>
+          <pre style={{
+            marginTop: 10, padding: 12, borderRadius: 8, fontSize: 11.5, lineHeight: 1.5,
+            background: "rgba(255,255,255,.04)", color: "var(--text-3)",
+            whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflow: "auto",
+          }}>{msg}</pre>
+        </details>
+      </main>
+    );
+  }
+}
+
 Object.assign(window, {
+  ErrorBoundary,
   Logo, TopNav, AuthModal, BookBadge, TruePct, LeaguePill, AnimatedNumber,
   NAV_TABS, useCoverage, fmtRefresh,
 });

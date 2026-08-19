@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Cloudflare Tunnel for coreprop.me, as a login-scoped launchd service.
+
+  Install:  cp deploy/selfhost/com.coreprop.tunnel.plist ~/Library/LaunchAgents/
+            launchctl load  ~/Library/LaunchAgents/com.coreprop.tunnel.plist
+  Stop:     launchctl unload ~/Library/LaunchAgents/com.coreprop.tunnel.plist
+  Logs:     ~/Library/Logs/coreprop/tunnel.log
+
+  DO NOT use `brew services start cloudflared` instead of this. Homebrew's
+  bundled plist runs `cloudflared tunnel --url http://127.0.0.1:8010`, which is
+  a QUICK tunnel: it ignores ~/.cloudflared/config.yml, ignores the named
+  tunnel entirely, and mints a fresh random *.trycloudflare.com hostname on
+  every restart. coreprop.me would never be served, and the Stripe webhook
+  would break on each bounce. It also reports `error` in `brew services list`.
+
+  `tunnel run coreprop` uses the named tunnel and the ingress rules in
+  ~/.cloudflared/config.yml, so the hostname is stable across restarts.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.coreprop.tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/cloudflared</string>
+        <!-- Explicit config path: launchd does not source a login shell, so
+             cloudflared's $HOME-relative default lookup is not reliable here. -->
+        <string>--config</string>
+        <string>/Users/seniortech/.cloudflared/config.yml</string>
+        <string>--no-autoupdate</string>
+        <string>tunnel</string>
+        <string>run</string>
+        <string>coreprop</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- The tunnel is the only ingress. If it dies the site is dark, so bring
+         it back unconditionally. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Don't hot-loop if the credentials file is missing or the config is
+         invalid — cloudflared exits immediately in both cases. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/seniortech/Library/Logs/coreprop/tunnel.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/seniortech/Library/Logs/coreprop/tunnel.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- cloudflared resolves the credentials-file path in config.yml and
+             its own default cert location relative to HOME. -->
+        <key>HOME</key>
+        <string>/Users/seniortech</string>
+    </dict>
+</dict>
+</plist>

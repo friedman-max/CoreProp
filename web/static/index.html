@@ -777,6 +777,14 @@ a{color:inherit;text-decoration:none}
 .ev-auto-gd input:checked ~ .ev-check{background:#16a34a;border-color:#16a34a}
 .ev-auto-gd:hover .ev-check{border-color:#22c55e}
 .ev-auto-gd input:focus-visible ~ .ev-check{box-shadow:0 0 0 3px rgba(34,197,94,.25)}
+/* Shown instead of the "Notify me" checkbox where push can't work — iOS only
+ * delivers to a Home Screen install, never a Safari tab. Styled as quiet
+ * guidance, not a control, because there is nothing here to click. */
+.ev-push-hint{font-size:11.5px;color:var(--text-3);font-style:italic;line-height:1.3}
+/* Inline status under the toggle: permission denied, server not configured,
+ * or auto-backtest off. Amber rather than red — every one of these is a
+ * "do this first", not a failure. */
+.ev-push-note{font-size:11.5px;color:#FCD34D;line-height:1.35;margin:-4px 0 2px}
 .ev-slip-row{display:grid;grid-template-columns:1fr .6fr;gap:8px}
 .ev-slip-field{display:flex;flex-direction:column;gap:5px}
 .ev-slip-field label{font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase}
@@ -1537,16 +1545,16 @@ a{color:inherit;text-decoration:none}
      browsers were heuristically reusing the old javascript against freshly
      deployed html+css, which rendered the previous build. With the header in
      place this query never needs bumping again. -->
-<script src="/static/dist/api.js?v=14d4eaeb"></script>
-<script src="/static/dist/tweaks-panel.js?v=14d4eaeb"></script>
-<script src="/static/dist/components.js?v=14d4eaeb"></script>
-<script src="/static/dist/landing.js?v=14d4eaeb"></script>
-<script src="/static/dist/ev-page.js?v=14d4eaeb"></script>
-<script src="/static/dist/page-boards.js?v=14d4eaeb"></script>
-<script src="/static/dist/page-backtest.js?v=14d4eaeb"></script>
-<script src="/static/dist/page-analytics.js?v=14d4eaeb"></script>
-<script src="/static/dist/pricing.js?v=14d4eaeb"></script>
-<script src="/static/dist/app-main.js?v=14d4eaeb"></script>
+<script src="/static/dist/api.js?v=b1435ed8"></script>
+<script src="/static/dist/tweaks-panel.js?v=b1435ed8"></script>
+<script src="/static/dist/components.js?v=b1435ed8"></script>
+<script src="/static/dist/landing.js?v=b1435ed8"></script>
+<script src="/static/dist/ev-page.js?v=b1435ed8"></script>
+<script src="/static/dist/page-boards.js?v=b1435ed8"></script>
+<script src="/static/dist/page-backtest.js?v=b1435ed8"></script>
+<script src="/static/dist/page-analytics.js?v=b1435ed8"></script>
+<script src="/static/dist/pricing.js?v=b1435ed8"></script>
+<script src="/static/dist/app-main.js?v=b1435ed8"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

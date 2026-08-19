@@ -36,7 +36,49 @@ function App() {
   // billing enforcement is switched on server-side (BILLING_ENFORCE).
   const [subActive, setSubActive] = useState(true);
   const [subEnforce, setSubEnforce] = useState(false);
+  // Message to seed the auth dialog with, e.g. after a dead confirmation link.
+  const [authNotice, setAuthNotice] = useState("");
+  // Which tab the auth dialog opens on. Signup by default — see TopNav.
+  const [authMode, setAuthMode] = useState("signup");
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+  // Rescue the "your confirmation link is dead" dead-end.
+  //
+  // Supabase's confirmation link is SINGLE USE. Mail security scanners and
+  // link prefetchers (university and corporate filters especially) fetch every
+  // URL in an email, which CONSUMES the token — so by the time the human
+  // clicks it, Supabase 303s to
+  //   /#error=access_denied&error_code=otp_expired&error_description=...
+  // Verified by hand: the first GET of a generated link returns
+  // #access_token=…, the second returns exactly that error.
+  //
+  // The account IS confirmed at that point (the scanner's fetch did it). The
+  // user just has no session and, with nothing handling this hash, saw a raw
+  // error fragment on the landing page and had no way forward — which meant a
+  // brand-new account could never reach checkout.
+  //
+  // So: read it, wipe it from the URL (a refresh must not resurrect it), and
+  // open the login dialog explaining they can simply sign in.
+  useEffect(() => {
+    const hash = window.location.hash || "";
+    if (!hash || hash.indexOf("error") === -1) return;
+    const p = new URLSearchParams(hash.replace(/^#/, ""));
+    const code = p.get("error_code");
+    const desc = p.get("error_description");
+    if (!code && !desc) return;
+
+    // replaceState, not assignment: assigning location.hash leaves a "#" and
+    // pushes a history entry, so Back would land on the error again.
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+
+    setAuthNotice(
+      code === "otp_expired"
+        ? "That confirmation link had already been used — email providers often open links automatically. Your account is confirmed, so just log in below."
+        : (desc ? desc.replace(/\+/g, " ") : "That link could not be used. Try logging in below.")
+    );
+    setAuthMode("login");   // the account already exists — don't offer signup
+    setAuthOpen(true);
+  }, []);
 
   // Load billing status on login and after returning from Stripe Checkout.
   // The webhook may lag a second or two, so on a fresh ?checkout=success we
@@ -85,10 +127,20 @@ function App() {
     }
   }, [view, active]);
 
-  // If billing enforcement locks the account while the user is in the app,
-  // bounce them to the pricing page to subscribe.
+  // If billing enforcement locks the account, route to pricing — that is the
+  // only thing an unpaid user can usefully do, and it is the whole revenue
+  // path for a brand-new account.
+  //
+  // "landing" is included deliberately: a user who has just confirmed their
+  // email arrives signed-in but unsubscribed, and reconcile() can leave them
+  // on the marketing page. Without this they would have to find the pricing
+  // link themselves. The landing page stays fully functional for signed-OUT
+  // visitors — this only fires once a locked session actually exists.
   useEffect(() => {
-    if (locked && view === "ev") { setView("pricing"); }
+    if (locked && (view === "ev" || view === "landing")) {
+      setView("pricing");
+      window.scrollTo({ top: 0 });
+    }
   }, [locked, view]);
 
   // Prefetch every tab's data into the SWR cache shortly after login so the
@@ -136,7 +188,12 @@ function App() {
     return window.cpApi.subscribe((session) => reconcile(!!session?.user));
   }, []);
 
-  const onLogin = () => setAuthOpen(true);
+  // Two entry points into the same dialog, differing only in which tab opens.
+  // Named for the tab they show, NOT for the button that calls them — an
+  // earlier `onLogin` that opened the SIGNUP tab got wired to a button
+  // labelled "Log in" and showed a signup form.
+  const openSignup = () => { setAuthNotice(""); setAuthMode("signup"); setAuthOpen(true); };
+  const openLogin  = () => { setAuthNotice(""); setAuthMode("login");  setAuthOpen(true); };
   const onStart = () => { setView("pricing"); window.scrollTo({ top: 0 }); };
   // Only ever called by AuthModal, AFTER Supabase has returned a session. It is
   // the one place allowed to assert loggedIn.
@@ -149,7 +206,11 @@ function App() {
   // still false, so each tab fired an unauthenticated fetch and showed
   // permanent empty/error state. Open the auth modal instead — after a real
   // sign-in, onAuthSubmit runs and the user lands in the app for real.
-  const onNeedsAuth = () => setAuthOpen(true);
+  //
+  // Opens SIGNUP explicitly: someone clicking "Try 7 days free" while signed
+  // out is almost certainly new. It previously called bare setAuthOpen(true),
+  // which inherited whichever tab happened to be set last.
+  const onNeedsAuth = openSignup;
 
   const onTab = (tab) => {
     if (tab === "landing") { setView("landing"); return; }
@@ -169,13 +230,25 @@ function App() {
       <TopNav
         active={view === "ev" ? active : ""}
         onTab={onTab}
-        onLogin={onLogin}
+        onLogin={openLogin}
+        onSignup={openSignup}
         loggedIn={loggedIn}
         onLogout={async () => { try { await window.cpApi.signOut(); } catch (e) {} setLoggedIn(false); setView("landing"); }}
         variant={view === "landing" ? "landing" : "app"}
       />
-      {view === "landing" && <Landing onLogin={onLogin} onStart={onStart} />}
+      {/* Landing's own "Log in" must open the LOGIN tab. onLogin here is the
+          signup entry point (see TopNav), so passing it would label a button
+          "Log in" and then show a signup form. */}
+      {view === "landing" && <Landing onLogin={openLogin} onStart={onStart} />}
       {view === "pricing" && <PricingPage onStart={onNeedsAuth} onBack={() => setView(loggedIn && !locked ? "ev" : "landing")} loggedIn={loggedIn} locked={locked} />}
+      {/* `view === "ev" && locked` deliberately renders NOTHING here — the
+          effect above bounces it to "pricing". That bounce runs after render,
+          so without this fallback there is a frame (and, if the effect is ever
+          skipped, a permanent state) where the page is completely blank apart
+          from the nav. Render the pricing page directly instead of nothing. */}
+      {view === "ev" && locked && (
+        <PricingPage onStart={onNeedsAuth} onBack={() => setView("landing")} loggedIn={loggedIn} locked={locked} />
+      )}
       {view === "ev" && !locked && (() => {
         // Keep-alive tab host: once a tab has been visited it stays mounted
         // and is hidden via display:none when inactive. This preserves each
@@ -188,15 +261,25 @@ function App() {
           "Backtest":         BacktestPage,
           "Analytics":        AnalyticsPage,
         };
+        // `visited` is grown by an effect, which runs AFTER render — so the
+        // first render after switching to a never-opened tab matched nothing
+        // and painted a blank page for a frame. Treat the active tab as
+        // visited unconditionally so there is always exactly one tab mounted.
         return Object.entries(TABS).map(([name, Comp]) =>
-          visited.has(name) ? (
+          (visited.has(name) || name === active) ? (
             <div key={name} style={{ display: active === name ? "block" : "none" }}>
               <Comp />
             </div>
           ) : null
         );
       })()}
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onSubmit={onAuthSubmit} />
+      <AuthModal
+        open={authOpen}
+        onClose={() => { setAuthOpen(false); setAuthNotice(""); }}
+        onSubmit={onAuthSubmit}
+        notice={authNotice}
+        initialMode={authMode}
+      />
 
       <TweaksPanel>
         <TweakSection label="Theme" />
@@ -244,4 +327,10 @@ styleEl.textContent = `
 document.head.appendChild(styleEl);
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<App />);
+// ErrorBoundary OUTSIDE App: a throw during App's own render (not just a
+// child's) must still produce a visible error rather than a blank document.
+root.render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);

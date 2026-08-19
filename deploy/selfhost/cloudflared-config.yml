@@ -1,0 +1,32 @@
+# Cloudflare Tunnel ingress for CoreProp.
+#
+# Install to ~/.cloudflared/config.yml after creating the tunnel (README step 4).
+# The tunnel dials OUT to Cloudflare, so there is no port forwarding, no static
+# IP, and your home IP is never published in DNS.
+
+tunnel: coreprop
+
+# `cloudflared tunnel create coreprop` prints this path and the UUID.
+# Replace TUNNEL-UUID below with the value it gives you.
+credentials-file: /Users/seniortech/.cloudflared/TUNNEL-UUID.json
+
+# Keep the connection warm so the first request after an idle stretch isn't slow.
+originRequest:
+  connectTimeout: 30s
+  # The +EV board is ~0.7 MB of JSON; give a slow scrape cycle room to answer.
+  noTLSVerify: false
+
+ingress:
+  # Must match PUBLIC_BASE_URL in com.coreprop.server.plist exactly.
+  - hostname: coreprop.me
+    # Must match PORT in com.coreprop.server.plist.
+    service: http://127.0.0.1:8010
+
+  # Stripe and Supabase are configured against the apex, but browsers reach for
+  # www out of habit; serving both avoids a dead-looking site.
+  - hostname: www.coreprop.me
+    service: http://127.0.0.1:8010
+
+  # Required catch-all: cloudflared refuses to start without a final
+  # hostname-less rule.
+  - service: http_status:404

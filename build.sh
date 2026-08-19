@@ -51,4 +51,57 @@ for name in "${FILES[@]}"; do
   printf "  ok  %-16s %6d bytes\n" "$name.js" "$(wc -c < "$OUT_DIR/$name.js")"
 done
 
+# Cache-bust index.html's <script src="...?v=N"> tags.
+#
+# Cloudflare rewrites our origin's `cache-control: no-cache` to `max-age=14400`
+# for .js, so a browser that already has a bundle keeps it for four hours. The
+# ?v= query is what forces a refetch — but it was a hand-typed constant (?v=2),
+# so rebuilding without remembering to bump it shipped code that no existing
+# visitor would see for four hours, while curl against the origin showed the
+# new file and everything looked fine.
+#
+# Deriving it from the content of dist/ makes it impossible to forget: the
+# token only changes when the bundles actually change, so this is also a no-op
+# on a rebuild that produced identical output.
+INDEX="$SRC_DIR/index.html"
+if [[ -f "$INDEX" ]]; then
+  VER="$(cat "$OUT_DIR"/*.js | shasum | cut -c1-8)"
+  # BSD sed (macOS) needs the empty-string argument to -i.
+  sed -i '' -E "s|(/static/dist/[a-z-]+\.js)\?v=[^\"']*|\1?v=$VER|g" "$INDEX"
+  echo
+  echo "Cache-bust token -> ?v=$VER  ($(grep -c "?v=$VER" "$INDEX") script tags in index.html)"
+fi
+
+# Drift guard. FILES above is hand-maintained, so a .jsx that nobody added to
+# it is never rebuilt — but a stale dist/<name>.js from an earlier build keeps
+# sitting there looking current. Editing such a source appears to do nothing,
+# and the reason is invisible: the build reports success because it only ever
+# looks at the names it was given.
+#
+# This bit us with auth-page.jsx: dist/auth-page.js was two days staler than
+# every sibling, and auth-page.jsx turned out to be unwired entirely (it is not
+# in index.html's <script> list and nothing references AuthPage). Left alone,
+# the next person to edit it loses an hour.
+missing=()
+for src in "$SRC_DIR"/*.jsx; do
+  name="$(basename "$src" .jsx)"
+  found=0
+  for f in "${FILES[@]}"; do [[ "$f" == "$name" ]] && found=1 && break; done
+  [[ $found -eq 0 ]] && missing+=("$name")
+done
+
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo
+  echo "WARNING: these .jsx sources are NOT in the build list, so they were not rebuilt:"
+  for m in "${missing[@]}"; do
+    if [[ -f "$OUT_DIR/$m.js" ]]; then
+      echo "  - $m.jsx  (a STALE $OUT_DIR/$m.js exists and will keep being served)"
+    else
+      echo "  - $m.jsx  (never built)"
+    fi
+  done
+  echo "  Add it to FILES above, or delete the source if it is dead code."
+  echo "  Check index.html's <script> tags to see whether it is actually loaded."
+fi
+
 echo "Done. Commit web/static/dist/ alongside the .jsx sources."
