@@ -146,7 +146,7 @@ a{color:inherit;text-decoration:none}
 /* ─────────── buttons ─────────── */
 .cp-btn{
   display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  padding:10px 16px;border-radius:999px;border:1px solid transparent;
+  padding:10px 16px;border-radius:var(--r-pill);border:1px solid transparent;
   background:transparent;color:var(--text);font-weight:600;font-size:14px;
   cursor:pointer;transition:transform .08s ease, background .15s ease, border-color .15s ease, box-shadow .2s ease;
   letter-spacing:.005em;white-space:nowrap;
@@ -230,7 +230,7 @@ a{color:inherit;text-decoration:none}
 .cp-nav-c{display:flex;gap:4px;align-items:center;justify-content:center;flex-wrap:wrap}
 .cp-tab{
   background:transparent;border:0;color:var(--text-2);
-  padding:9px 16px;border-radius:999px;font-size:13.5px;font-weight:500;
+  padding:9px 16px;border-radius:var(--r-pill);font-size:13.5px;font-weight:500;
   cursor:pointer;transition:background .15s ease, color .15s ease;
   white-space:nowrap;
 }
@@ -463,7 +463,7 @@ a{color:inherit;text-decoration:none}
 
 /* CTA */
 .lp-cta{max-width:var(--lp-max);margin:0 auto;padding:0 22px var(--lp-gap)}
-.lp-cta-card{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--radius);padding:clamp(36px,4.5vw,56px) 24px;text-align:center}
+.lp-cta-card{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-xl);padding:clamp(36px,4.5vw,56px) 24px;text-align:center}
 .lp-cta-card .lp-h2-sub{margin:0 auto 22px}
 
 /* FOOTER */
@@ -675,7 +675,7 @@ a{color:inherit;text-decoration:none}
  * than the text inputs beside it and dragged its own "LEAGUE" / "SIDE" label
  * 3px down out of line with "PROP TYPE" / "MIN TRUE %". Vertical padding is
  * dropped in favour of flex centring so the height is exact at any font-size. */
-.ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);height:34px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
+.ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);height:34px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-pill);font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
 .ev-chip:hover{border-color:var(--hair-2);color:var(--text)}
 .ev-chip.is-on{background:var(--primary);border-color:var(--primary);color:white}
 .ev-stepper{display:flex;align-items:center;background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-sm);overflow:hidden}
@@ -873,22 +873,22 @@ a{color:inherit;text-decoration:none}
 /* Flat, not gradient-clipped text. */
 .pp-h1-g{color:var(--green)}
 .pp-h1-sub{color:var(--text-2);font-size:17px;margin:0 0 26px}
-.pp-toggle{display:inline-flex;background:#0c0c14;border:1px solid var(--hair);padding:5px;border-radius:999px;gap:4px}
-.pp-tg-btn{background:transparent;border:0;color:var(--text-3);padding:10px 22px;border-radius:999px;font-weight:600;font-size:13.5px;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:8px}
+.pp-toggle{display:inline-flex;background:#0c0c14;border:1px solid var(--hair);padding:5px;border-radius:var(--r-pill);gap:4px}
+.pp-tg-btn{background:transparent;border:0;color:var(--text-3);padding:10px 22px;border-radius:var(--r-pill);font-weight:600;font-size:13.5px;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:8px}
 .pp-tg-btn.is-on{background:#1f1f2e;color:white;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
-.pp-save{color:var(--green);font-size:11px;font-weight:700;letter-spacing:.04em;background:rgba(34,197,94,.12);padding:2px 8px;border-radius:999px;white-space:nowrap}
+.pp-save{color:var(--green);font-size:11px;font-weight:700;letter-spacing:.04em;background:rgba(34,197,94,.12);padding:2px 8px;border-radius:var(--r-pill);white-space:nowrap}
 .pp-tg-btn{white-space:nowrap}
 
 .pp-card-wrap{position:relative;z-index:1;display:flex;justify-content:center;max-width:620px;margin:0 auto}
 .pp-card-wrap .pp-card{width:100%}
 
-.pp-card{position:relative;background:linear-gradient(180deg,#15151f,#0f0f17);border:1px solid var(--hair-2);border-radius:24px;padding:36px 32px 28px;box-shadow:var(--shadow-card);overflow:hidden}
+.pp-card{position:relative;background:linear-gradient(180deg,#15151f,#0f0f17);border:1px solid var(--hair-2);border-radius:var(--r-xl);padding:36px 32px 28px;box-shadow:var(--shadow-card);overflow:hidden}
 /* A 1px hairline, not a masked two-tone gradient border. */
-.pp-card-glow{position:absolute;inset:-1px;border-radius:25px;border:1px solid var(--hair-2);pointer-events:none}
+.pp-card-glow{position:absolute;inset:-1px;border-radius:calc(var(--r-xl) + 1px);border:1px solid var(--hair-2);pointer-events:none}
 .pp-card-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
 .pp-card-tag{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--primary-2)}
 .pp-card-dot{width:7px;height:7px;border-radius:50%;background:var(--primary);box-shadow:0 0 10px var(--primary)}
-.pp-card-trial{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);padding:5px 11px;border-radius:999px}
+.pp-card-trial{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);padding:5px 11px;border-radius:var(--r-pill)}
 
 .pp-price{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
 .pp-price-row{display:flex;align-items:baseline;gap:2px;line-height:1;font-family:"Inter",sans-serif}
@@ -992,7 +992,7 @@ a{color:inherit;text-decoration:none}
  * whole cluster to the right edge, past the left-aligned filter fields. */
 .bd-clear{background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:0 14px;height:34px;border-radius:var(--r-sm);font-size:13px;cursor:default;align-self:center;margin-left:auto;display:inline-flex;align-items:center}
 .bd-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#FCA5A5}
-.bd-badge{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--text-2);background:rgba(30,111,176,.10);border:1px solid rgba(30,111,176,.25);padding:0 12px;height:34px;border-radius:999px;align-self:center;display:inline-flex;align-items:center}
+.bd-badge{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--text-2);background:rgba(30,111,176,.10);border:1px solid rgba(30,111,176,.25);padding:0 12px;height:34px;border-radius:var(--r-pill);align-self:center;display:inline-flex;align-items:center}
 .bd-pag{display:inline-flex;align-items:center;gap:4px;align-self:center;height:34px}
 .bd-pag-btn{background:#0a0a12;border:1px solid var(--hair);color:var(--text);width:28px;height:28px;border-radius:var(--r-sm);cursor:default;font-size:14px}
 .bd-pag-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary-2)}
@@ -1000,7 +1000,7 @@ a{color:inherit;text-decoration:none}
 .bd-pag-num{font-size:12px;color:var(--text-2);padding:0 6px}
 
 .bd-chips{display:inline-flex;gap:5px;flex-wrap:wrap}
-.bd-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);padding:6px 12px;border-radius:8px;font-size:12px;font-weight:500;cursor:default;transition:.15s}
+.bd-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);padding:6px 12px;border-radius:var(--r-pill);font-size:12px;font-weight:500;cursor:default;transition:.15s}
 .bd-chip:hover{border-color:var(--hair-2);color:var(--text)}
 .bd-chip.is-on{background:var(--primary);border-color:var(--primary);color:white}
 
@@ -1501,7 +1501,7 @@ a{color:inherit;text-decoration:none}
      * the negative margins bleed it flush to the tile edges (own row). */
     flex:0 0 calc(100% + 32px);width:calc(100% + 32px);
     margin:4px -16px 0;
-    padding:13px 16px;border-radius:0 0 13px 13px;
+    padding:13px 16px;border-radius:0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
     border-left:0;border-right:0;border-bottom:0;
     border-top:1px solid var(--hair);
   }
@@ -1515,7 +1515,7 @@ a{color:inherit;text-decoration:none}
     display:none;margin:-14px 0 14px;position:static;height:auto;
     background:linear-gradient(180deg,#13131c,#0e0e16);
     border:1px solid var(--hair);border-top:0;
-    border-radius:0 0 14px 14px;
+    border-radius:0 0 var(--r-lg) var(--r-lg);
     padding:16px 18px 18px;flex-direction:column;gap:14px;
     animation:evSlipDrop .22s ease both;
   }
