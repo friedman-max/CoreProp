@@ -87,6 +87,141 @@ function PushToggle() {
   );
 }
 
+// ───────── Auto-place ─────────
+// The on-switch for real-money auto-submission. It existed ONLY in the native
+// iOS app (ios/CoreProp/Features/Account/SettingsView.swift), so on the web and
+// on the installed PWA there was no way to arm it at all — the backend routes,
+// the DB columns and the extension were all shipped and working, and the
+// feature was still 100% inert because auto_place_consent_at could never be set.
+//
+// Server contract (web/app.py):
+//   GET  /api/auto-place/status        -> armed, mode, stake, caps, blocked_reason
+//   POST /api/user/auto-place-prefs    -> {mode, stake, daily_cap, consent}
+// The server treats a missing consent timestamp as mode='off' no matter what
+// the mode column says, so `consent: true` MUST accompany any arming write.
+function AutoPlacePanel({ onClose }) {
+  const api = window.cpApi;
+  const [status, setStatus] = useState(null);
+  const [mode, setMode] = useState("off");
+  const [stake, setStake] = useState(1);
+  const [cap, setCap] = useState(25);
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [okMsg, setOkMsg] = useState("");
+  // Arming LIVE moves real money, so it takes a second deliberate press
+  // rather than riding on the same click that selected the mode.
+  const [confirmLive, setConfirmLive] = useState(false);
+
+  const load = React.useCallback(() => {
+    api.apiFetch("/api/auto-place/status")
+      .then(st => {
+        setStatus(st);
+        setMode(st.mode || "off");
+        if (typeof st.stake === "number" && st.stake > 0) setStake(st.stake);
+        if (typeof st.daily_cap === "number") setCap(st.daily_cap);
+        // Already armed ⇒ consent is on file; don't make them re-tick it.
+        if (st.mode && st.mode !== "off") setConsent(true);
+      })
+      .catch(e => setErr(e.message || "Couldn't load auto-place status."));
+  }, [api]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const save = async (nextMode) => {
+    if (busy) return;
+    if (nextMode === "live" && !confirmLive) { setConfirmLive(true); return; }
+    setBusy(true); setErr(""); setOkMsg("");
+    try {
+      await api.apiFetch("/api/user/auto-place-prefs", {
+        method: "POST",
+        body: {
+          mode: nextMode,
+          stake: Number(stake),
+          daily_cap: Number(cap),
+          // Only meaningful when arming; harmless when disarming.
+          consent: nextMode === "off" ? undefined : true,
+        },
+      });
+      setMode(nextMode);
+      setConfirmLive(false);
+      setOkMsg(nextMode === "off" ? "Auto-place disarmed."
+             : nextMode === "paper" ? "Armed in paper mode — nothing is submitted."
+             : "Armed LIVE. Real money will be staked.");
+      load();
+    } catch (e) {
+      setErr((e.message || "Couldn't save.").replace(/^HTTP \d+:\s*/, ""));
+    } finally { setBusy(false); }
+  };
+
+  const armed = status && status.armed;
+
+  return (
+    <div className="ap-modal-back" onClick={onClose}>
+      <div className="ap-modal" onClick={e => e.stopPropagation()} role="dialog" aria-label="Auto-place settings">
+        <div className="ap-hd">
+          <h3>Auto-place</h3>
+          <button className="ap-x" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+
+        <div className={"ap-state " + (armed ? "is-on" : "")}>
+          {status === null ? "Loading…"
+            : armed ? `Armed · ${status.mode} · $${status.stake} per slip`
+            : `Not armed${status.blocked_reason ? " — " + status.blocked_reason : ""}`}
+        </div>
+
+        {status && status.spent_today !== null && (
+          <div className="ap-sub">
+            ${Number(status.spent_today).toFixed(2)} of ${Number(status.daily_cap).toFixed(2)} used today
+            {status.fail_streak > 0 && ` · ${status.fail_streak} recent failure(s)`}
+          </div>
+        )}
+
+        <div className="ap-field">
+          <label>Stake per slip ($)</label>
+          <input className="cp-input cp-input-sm" type="number" min="1" max="1000" step="1"
+                 value={stake} onChange={e => setStake(e.target.value)} />
+        </div>
+        <div className="ap-field">
+          <label>Daily cap ($)</label>
+          <input className="cp-input cp-input-sm" type="number" min="0" max="10000" step="1"
+                 value={cap} onChange={e => setCap(e.target.value)} />
+        </div>
+
+        <label className="ap-consent">
+          <input type="checkbox" checked={consent} onChange={e => { setConsent(e.target.checked); setConfirmLive(false); }} />
+          <span>
+            I understand that arming <b>live</b> mode lets CoreProp submit real
+            PrizePicks entries with my money, up to the caps above, without
+            asking me each time.
+          </span>
+        </label>
+
+        <div className="ap-actions">
+          <button className="cp-btn cp-btn-sm" disabled={busy || mode === "off"}
+                  onClick={() => save("off")}>Off</button>
+          <button className="cp-btn cp-btn-sm" disabled={busy || !consent}
+                  onClick={() => save("paper")}>Paper</button>
+          <button className={"cp-btn cp-btn-sm " + (confirmLive ? "ap-danger" : "")}
+                  disabled={busy || !consent}
+                  onClick={() => save("live")}>
+            {confirmLive ? "Tap again to arm LIVE" : "Live"}
+          </button>
+        </div>
+
+        <p className="ap-note">
+          Placement runs in the CoreProp browser extension on a desktop browser
+          signed in to PrizePicks — arming here does nothing on its own.
+          Paper mode stages and logs without submitting.
+        </p>
+
+        {err && <div className="ap-err">{err}</div>}
+        {okMsg && <div className="ap-ok">{okMsg}</div>}
+      </div>
+    </div>
+  );
+}
+
 function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app", locked = false }) {
   // Signed-out visitors on the landing page get no app tabs. All six used to
   // render for everyone: they look like navigation, but every click just
@@ -105,6 +240,7 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app", l
   const logoDest = (loggedIn && !locked) ? "+EV Bets" : "landing";
   const [busy, setBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [autoPlaceOpen, setAutoPlaceOpen] = useState(false);
   const menuRef = useRef(null);
   const user = (window.cpApi && window.cpApi.getUser && window.cpApi.getUser()) || null;
   const email = user?.email || "";
@@ -129,6 +265,7 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app", l
   }, [menuOpen]);
 
   return (
+    <>
     <header className={"cp-nav " + (variant === "landing" ? "is-landing" : "")}>
       <div className="cp-nav-l">
         <button className="cp-logo-btn" onClick={() => onTab && onTab(logoDest)} aria-label="Home">
@@ -168,6 +305,10 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app", l
                 </div>
                 <div className="cp-menu-sep" />
                 <PushToggle />
+                <button className="cp-menu-item" role="menuitem"
+                        onClick={() => { setMenuOpen(false); setAutoPlaceOpen(true); }}>
+                  Auto-place…
+                </button>
                 <button className="cp-menu-item" role="menuitem" onClick={handleLogout} disabled={busy}>
                   {busy ? "Logging out…" : "Log out"}
                 </button>
@@ -187,6 +328,8 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app", l
         )}
       </div>
     </header>
+    {autoPlaceOpen && <AutoPlacePanel onClose={() => setAutoPlaceOpen(false)} />}
+    </>
   );
 }
 

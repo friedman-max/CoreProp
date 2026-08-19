@@ -794,6 +794,56 @@ a{color:inherit;text-decoration:none}
 }
 .ev-pulse{color:var(--green);font-style:normal;font-weight:600}
 
+/* ───────── Auto-place panel ─────────
+ * The arming UI for real-money auto-submission. Sized mobile-first: the whole
+ * point of this control is that it is reachable from the installed PWA, where
+ * the only other place it existed (the native iOS app) is not an option. */
+.ap-modal-back{
+  position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.62);
+  display:grid;place-items:center;padding:16px;
+}
+.ap-modal{
+  width:min(420px,100%);max-height:88vh;overflow-y:auto;
+  background:var(--card);border:1px solid var(--hair);border-radius:var(--r-xl,16px);
+  padding:18px 18px 16px;box-shadow:var(--shadow-card);
+}
+.ap-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.ap-hd h3{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em}
+.ap-x{background:none;border:0;color:var(--text-3);font-size:16px;cursor:pointer;padding:4px 6px}
+/* Armed state is red, not green: "on" here means money can leave. */
+.ap-state{
+  font-size:13.5px;font-weight:600;padding:9px 11px;border-radius:var(--r-md,10px);
+  background:rgba(255,255,255,.04);border:1px solid var(--hair);color:var(--text-2);
+}
+.ap-state.is-on{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:#FECACA}
+.ap-sub{font-size:12px;color:var(--text-3);margin:6px 2px 0}
+.ap-field{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px}
+.ap-field label{font-size:13px;color:var(--text-2)}
+.ap-field input{width:110px;text-align:right}
+.ap-consent{
+  display:flex;gap:9px;align-items:flex-start;margin:14px 0 4px;
+  font-size:12.5px;line-height:1.45;color:var(--text-2);cursor:pointer;
+}
+.ap-consent input{margin-top:2px;flex-shrink:0}
+.ap-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px}
+/* The three mode buttons inherit .cp-btn, which on this surface renders with
+ * no border or fill — they read as plain text rather than controls. Give them
+ * explicit chrome: these decide whether real money moves, so "looks tappable"
+ * is a safety property, not decoration. */
+.ap-actions .cp-btn{
+  border:1px solid var(--hair);background:rgba(255,255,255,.05);color:var(--text);
+  border-radius:var(--r-md,10px);padding:10px 4px;font-size:13.5px;font-weight:600;
+  min-height:42px;               /* comfortable touch target on a phone */
+  cursor:pointer;transition:background .12s ease,border-color .12s ease;
+}
+.ap-actions .cp-btn:hover:not(:disabled){background:rgba(255,255,255,.09);border-color:var(--primary)}
+.ap-actions .cp-btn:disabled{opacity:.42;cursor:not-allowed}
+/* The confirm state for LIVE — deliberately alarming. */
+.ap-danger{background:var(--red)!important;border-color:var(--red)!important;color:#fff!important}
+.ap-note{font-size:11.5px;line-height:1.5;color:var(--text-3);margin:12px 0 0}
+.ap-err{margin-top:10px;font-size:12.5px;color:#FCA5A5}
+.ap-ok{margin-top:10px;font-size:12.5px;color:#86EFAC}
+
 /* Table */
 .ev-table{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);overflow:hidden}
 .ev-row{
@@ -1779,16 +1829,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=8b18457b39"></script>
-<script src="/static/dist/tweaks-panel.js?v=8b18457b39"></script>
-<script src="/static/dist/components.js?v=8b18457b39"></script>
-<script src="/static/dist/landing.js?v=8b18457b39"></script>
-<script src="/static/dist/ev-page.js?v=8b18457b39"></script>
-<script src="/static/dist/page-boards.js?v=8b18457b39"></script>
-<script src="/static/dist/page-backtest.js?v=8b18457b39"></script>
-<script src="/static/dist/page-analytics.js?v=8b18457b39"></script>
-<script src="/static/dist/pricing.js?v=8b18457b39"></script>
-<script src="/static/dist/app-main.js?v=8b18457b39"></script>
+<script src="/static/dist/api.js?v=2439472991"></script>
+<script src="/static/dist/tweaks-panel.js?v=2439472991"></script>
+<script src="/static/dist/components.js?v=2439472991"></script>
+<script src="/static/dist/landing.js?v=2439472991"></script>
+<script src="/static/dist/ev-page.js?v=2439472991"></script>
+<script src="/static/dist/page-boards.js?v=2439472991"></script>
+<script src="/static/dist/page-backtest.js?v=2439472991"></script>
+<script src="/static/dist/page-analytics.js?v=2439472991"></script>
+<script src="/static/dist/pricing.js?v=2439472991"></script>
+<script src="/static/dist/app-main.js?v=2439472991"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same
