@@ -37,7 +37,7 @@ from fastapi import FastAPI, HTTPException, Depends, Request, Response, Query
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -106,6 +106,46 @@ async def _limit_request_body(request: Request, call_next):
         except ValueError:
             pass  # malformed header; let the framework reject it
     return await call_next(request)
+
+
+# HTTPS enforcement. cloudflared terminates TLS at the Cloudflare edge and
+# forwards to this origin over plain http on loopback, so uvicorn is started
+# WITHOUT --proxy-headers and request.url.scheme is ALWAYS "http" here. The
+# original scheme survives only in X-Forwarded-Proto.
+#
+# This matters well beyond tidiness: http://coreprop.me was serving the whole
+# app in cleartext with no redirect, and a service worker only registers in a
+# secure context — so any user who reached the site over http got a Home Screen
+# PWA whose push notifications could never work, with nothing visibly wrong.
+#
+# Deliberately keyed on the header being PRESENT and exactly "http". A missing
+# header means the request did not come through the tunnel (loopback health
+# checks, `python main.py` in development) and is left completely alone — that
+# is what makes an infinite redirect loop impossible: the only way to be
+# redirected is to have announced yourself as http.
+@app.middleware("http")
+async def _force_https(request: Request, call_next):
+    proto = (request.headers.get("x-forwarded-proto") or "").strip().lower()
+    if proto == "http":
+        host = request.headers.get("host") or ""
+        if host:
+            target = f"https://{host}{request.url.path}"
+            if request.url.query:
+                target += f"?{request.url.query}"
+            # 307 preserves method+body. A 301 would be cached by the browser
+            # forever, which is unrecoverable if this ever needs backing out.
+            return RedirectResponse(target, status_code=307)
+
+    response = await call_next(request)
+    # Only assert HSTS on requests that actually arrived over TLS. Sending it
+    # on a cleartext response is meaningless, and sending it on loopback would
+    # pin a developer's browser to https://localhost.
+    if proto == "https":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
 
 # Results checker / CLV singletons (stateless, run in background via service role)
 _results_checker  = ESPNResultsChecker()

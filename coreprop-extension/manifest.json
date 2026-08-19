@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "CoreProp — PrizePicks Slip Builder",
-  "version": "2.4.0",
-  "description": "Stages your CoreProp slip on the PrizePicks board. Never submits a wager.",
+  "version": "2.4.1",
+  "description": "Stages your CoreProp slip on the PrizePicks board. Submits only when you explicitly arm auto-place.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://app.prizepicks.com/*",
+    "https://coreprop.me/*",
     "http://localhost:8000/*",
     "http://127.0.0.1:8000/*",
-    "https://coreprop.onrender.com/*"
+    "http://127.0.0.1:8010/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -21,9 +22,10 @@
     },
     {
       "matches": [
-        "https://coreprop.onrender.com/*",
+        "https://coreprop.me/*",
         "http://localhost:8000/*",
-        "http://127.0.0.1:8000/*"
+        "http://127.0.0.1:8000/*",
+        "http://127.0.0.1:8010/*"
       ],
       "js": ["cp-beacon.js"],
       "run_at": "document_idle"
