@@ -1257,13 +1257,25 @@ a{color:inherit;text-decoration:none}
 .bd-f-grow{flex:1;min-width:160px}
 .bd-f-grow input{width:100%}
 /* Clear sits with the "# lines" badge and the pager on the right of the filter
- * bar. All three are vertically centered (align-self:center) and the same
- * height so they line up on one row; `margin-left:auto` on Clear pushes the
- * whole cluster to the right edge, past the left-aligned filter fields. */
-.bd-clear{background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:0 14px;height:34px;border-radius:var(--r-sm);font-size:13px;cursor:default;align-self:center;margin-left:auto;display:inline-flex;align-items:center}
+ * bar. All three are the same 34px height so they line up with each other, and
+ * `margin-left:auto` on Clear pushes the whole cluster to the right edge, past
+ * the left-aligned filter fields.
+ *
+ * align-self is flex-END, not center. A `.bd-f` is a two-row column (a 10.5px
+ * label over its control), so centering the cluster against that taller column
+ * floated it 9.5px ABOVE the controls it reads as a row with — measured, at
+ * every width and on all three boards. flex-end puts all four on one baseline
+ * and matches .ev-clear, which already does this.
+ *
+ * The heights are NOT negotiable: 34px is the filter-bar contract shared with
+ * .bd-f select / .bd-f input (see the .cp-btn-sm note above for why these are
+ * deliberately off the button height scale). .bd-pag-btn stays 28px INSIDE the
+ * 34px .bd-pag. align-self changes where a box sits, not how tall it is — keep
+ * it that way. */
+.bd-clear{background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:0 14px;height:34px;border-radius:var(--r-sm);font-size:13px;cursor:default;align-self:flex-end;margin-left:auto;display:inline-flex;align-items:center}
 .bd-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:var(--red-2)}
-.bd-badge{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--text-2);background:rgba(30,111,176,.10);border:1px solid rgba(30,111,176,.25);padding:0 12px;height:34px;border-radius:var(--r-pill);align-self:center;display:inline-flex;align-items:center}
-.bd-pag{display:inline-flex;align-items:center;gap:4px;align-self:center;height:34px}
+.bd-badge{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--text-2);background:rgba(30,111,176,.10);border:1px solid rgba(30,111,176,.25);padding:0 12px;height:34px;border-radius:var(--r-pill);align-self:flex-end;display:inline-flex;align-items:center}
+.bd-pag{display:inline-flex;align-items:center;gap:4px;align-self:flex-end;height:34px}
 .bd-pag-btn{background:#0a0a12;border:1px solid var(--hair);color:var(--text);width:28px;height:28px;border-radius:var(--r-sm);cursor:default;font-size:14px}
 .bd-pag-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary-2)}
 .bd-pag-btn:disabled{opacity:.3}
@@ -1274,7 +1286,10 @@ a{color:inherit;text-decoration:none}
 .bd-chip:hover{border-color:var(--hair-2);color:var(--text)}
 .bd-chip.is-on{background:var(--primary);border-color:var(--primary);color:white}
 
-.bd-tbl-wrap{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);overflow:auto}
+/* --r-lg, not --r-md: this is a card-class surface (a full-width panel holding
+ * the board), and every other one on the page — .an-panel, .bt-slip, .cp-modal —
+ * is --r-lg. Phase 1 left it a step down by oversight. */
+.bd-tbl-wrap{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);overflow:auto}
 .bd-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
 /* The sticky header needs an opaque fill of its own to hide the rows scrolling
  * under it, so it must be painted with whatever .bd-tbl-wrap is painted with —
@@ -1288,10 +1303,33 @@ a{color:inherit;text-decoration:none}
 .bd-tbl thead th.sortable.is-active.is-asc::after{content:" \2191"}
 .bd-tbl tbody td{padding:var(--s-3) var(--s-4);border-bottom:1px solid var(--hair);vertical-align:middle}
 .bd-tbl tbody tr:last-child td{border-bottom:0}
-.bd-tbl tbody tr:hover{background:rgba(30,111,176,.04)}
+/* Neutral hover, not accent. Boards is a comparison table you read across, not a
+ * selectable list — an accent-blue hover reads as "this row is selected", which
+ * nothing here ever is. .025 white is the same value the +EV row uses for its
+ * neutral hover (injected by app-main.jsx as `.app:not(.tint-on)
+ * .ev-row-data:hover`, which is the one that actually renders — the .ev-row-data
+ * rule in this sheet is dead for default users). Keep the two in step.
+ *
+ * .bd-edge-row keeps its green: that IS semantic (the book is paying above our
+ * true price), so it is a value encoding, not a selection affordance. */
+.bd-tbl tbody tr:hover{background:rgba(255,255,255,.025)}
 .bd-tbl tbody tr.bd-edge-row{background:rgba(34,197,94,.05)}
 .bd-tbl tbody tr.bd-edge-row:hover{background:rgba(34,197,94,.10)}
-.bd-empty{text-align:center;color:var(--text-3);padding:40px 14px;font-size:13px}
+/* HEADS UP: this padding does not currently render. `.bd-empty` is (0,1,0) and
+ * `.bd-tbl tbody td` — re-declared in the density-overrides block below — is
+ * (0,1,2), so the td's `var(--s-3) clamp(var(--s-4),1.4vw,var(--s-5))` wins on
+ * specificity and the empty row measures 12px/20px, not 40px/14px. Measured in
+ * Chromium at 1440 and 375. The declaration is on the scale here so that if
+ * anyone ever does give it the specificity to apply (or drops the td override)
+ * it lands on a real step instead of the off-scale 40/14 it carried before;
+ * raising its specificity to make it bite is a ~56px taller empty state and a
+ * deliberate visual decision, not a cleanup. text-align / color / font-size on
+ * this rule DO apply — the td rule sets none of them.
+ *
+ * The Clear-filters button inside the empty row was an inline marginLeft:10 in
+ * page-boards.jsx; it lives here now, on the scale. */
+.bd-empty{text-align:center;color:var(--text-3);padding:var(--s-10) var(--s-4);font-size:13px}
+.bd-empty .bd-clear{margin-left:var(--s-3)}
 
 .bd-player{font-weight:600;letter-spacing:-.005em}
 .bd-muted{color:var(--text-2)}
@@ -1966,16 +2004,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=1ffad6966a"></script>
-<script src="/static/dist/tweaks-panel.js?v=1ffad6966a"></script>
-<script src="/static/dist/components.js?v=1ffad6966a"></script>
-<script src="/static/dist/landing.js?v=1ffad6966a"></script>
-<script src="/static/dist/ev-page.js?v=1ffad6966a"></script>
-<script src="/static/dist/page-boards.js?v=1ffad6966a"></script>
-<script src="/static/dist/page-backtest.js?v=1ffad6966a"></script>
-<script src="/static/dist/page-analytics.js?v=1ffad6966a"></script>
-<script src="/static/dist/pricing.js?v=1ffad6966a"></script>
-<script src="/static/dist/app-main.js?v=1ffad6966a"></script>
+<script src="/static/dist/api.js?v=67fc5f4021"></script>
+<script src="/static/dist/tweaks-panel.js?v=67fc5f4021"></script>
+<script src="/static/dist/components.js?v=67fc5f4021"></script>
+<script src="/static/dist/landing.js?v=67fc5f4021"></script>
+<script src="/static/dist/ev-page.js?v=67fc5f4021"></script>
+<script src="/static/dist/page-boards.js?v=67fc5f4021"></script>
+<script src="/static/dist/page-backtest.js?v=67fc5f4021"></script>
+<script src="/static/dist/page-analytics.js?v=67fc5f4021"></script>
+<script src="/static/dist/pricing.js?v=67fc5f4021"></script>
+<script src="/static/dist/app-main.js?v=67fc5f4021"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

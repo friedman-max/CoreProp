@@ -71,7 +71,10 @@ function BoardEmptyRow({ cols, state, error, empty, onClear }) {
     <tr>
       <td className="bd-empty" colSpan={cols}>
         {msg}
-        {state === "ok" && onClear && <button className="bd-clear" style={{ marginLeft: 10 }} onClick={onClear}>Clear filters</button>}
+        {/* The gap to the message is `.bd-empty .bd-clear` in index.html — it has
+            to beat .bd-clear's own `margin-left:auto`, which a class can do and an
+            inline 10px was doing by brute force. */}
+        {state === "ok" && onClear && <button className="bd-clear" onClick={onClear}>Clear filters</button>}
       </td>
     </tr>
   );
