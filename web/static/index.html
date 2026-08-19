@@ -262,7 +262,7 @@ a{color:inherit;text-decoration:none}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 .cp-modal{
   position:relative;width:min(420px,92vw);background:var(--card);
-  border:1px solid var(--hair);border-radius:18px;padding:32px 28px 28px;
+  border:1px solid var(--hair);border-radius:var(--r-lg);padding:32px 28px 28px;
   box-shadow:var(--shadow-card);
   max-height:90vh;overflow-y:auto;
   animation:popIn .35s cubic-bezier(.2,1.2,.4,1);
@@ -665,7 +665,7 @@ a{color:inherit;text-decoration:none}
 .ev-main{padding:22px 22px 80px;min-width:0}
 
 /* Filters */
-.ev-filters{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;padding:18px 20px;background:linear-gradient(180deg,#13131c,#101019);border:1px solid var(--hair);border-radius:14px;margin-bottom:14px}
+.ev-filters{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;padding:18px 20px;background:linear-gradient(180deg,#13131c,#101019);border:1px solid var(--hair);border-radius:var(--r-lg);margin-bottom:14px}
 .ev-filter{display:flex;flex-direction:column;gap:7px;min-width:0}
 .ev-filter-grow{flex:1;min-width:200px}
 .ev-filter label{font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase}
@@ -715,7 +715,7 @@ a{color:inherit;text-decoration:none}
 .ev-pulse{color:var(--green);font-style:normal;font-weight:600}
 
 /* Table */
-.ev-table{background:linear-gradient(180deg,#13131c,#101019);border:1px solid var(--hair);border-radius:14px;overflow:hidden}
+.ev-table{background:linear-gradient(180deg,#13131c,#101019);border:1px solid var(--hair);border-radius:var(--r-lg);overflow:hidden}
 .ev-row{
   display:grid;
   /* Track 8 (GAME) is minmax(86px,.8fr), not a bare .8fr: the timestamp
@@ -1055,7 +1055,7 @@ a{color:inherit;text-decoration:none}
 .bt-card-label .cp-skel{height:11px;width:90px}
 
 .bt-slips-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
-.bt-slip{background:linear-gradient(180deg,#15151f,#0e0e16);border:1px solid var(--hair);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
+.bt-slip{background:linear-gradient(180deg,#15151f,#0e0e16);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
 .bt-slip::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;opacity:.65}
 .bt-slip.is-win::before{background:linear-gradient(180deg,var(--green),rgba(34,197,94,.2))}
 .bt-slip.is-loss::before{background:linear-gradient(180deg,var(--red),rgba(239,68,68,.2))}
@@ -1107,7 +1107,7 @@ a{color:inherit;text-decoration:none}
 .tone-bad{color:#FCA5A5!important}
 
 /* ═══════════════════════════════════════════ ANALYTICS + OBSERVATORY shared ═══════════════════════════════════════════ */
-.an-panel{background:linear-gradient(180deg,#13131c,#0f0f17);border:1px solid var(--hair);border-radius:14px;padding:18px 20px;margin-bottom:14px}
+.an-panel{background:linear-gradient(180deg,#13131c,#0f0f17);border:1px solid var(--hair);border-radius:var(--r-lg);padding:18px 20px;margin-bottom:14px}
 .an-panel-h{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:14px;flex-wrap:wrap}
 .an-panel-h h3{margin:0;font-size:15px;font-weight:700;letter-spacing:-.005em}
 .an-section-sub{font-size:12px;color:var(--text-3)}
