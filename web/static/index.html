@@ -90,8 +90,10 @@
   /* Row-level accent tint. --primary-hi (.22) was tuned for focus rings and
    * badges, where it sits under --primary-2 (7.16:1). Behind a row it is
    * inherited by .ev-time's --text-3 and measures 4.45:1 — under the AA floor
-   * the :root note above documents. .10 matches --red-hi so the selected and
-   * logged rows carry symmetric weight, and keeps --text-3 at 5.03:1. */
+   * the :root note above documents. .10 is the most-tinted stop of the gradient
+   * it replaced, so the flat fill holds that gradient's exact worst case and
+   * keeps --text-3 at 5.03:1 (see .ev-row-data.is-sel). -hi/-lo mark tint
+   * FAMILY, not intensity: --red-hi is also .10. */
   --primary-lo:rgba(30,111,176,.10);
   --green:     #22C55E;
   --green-hi:  rgba(34,197,94,.14);
