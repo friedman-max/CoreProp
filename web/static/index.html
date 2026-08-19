@@ -1010,8 +1010,19 @@ a{color:inherit;text-decoration:none}
 .ev-empty-slip:nth-child(3){top:16px;left:20px;transform:rotate(8deg)}
 .ev-slip-empty p{margin:0;text-align:center;max-width:200px;line-height:1.5}
 
-.ev-leg{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-3);background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-sm);animation:fadeUp .25s ease both}
-.ev-leg-i{width:18px;height:18px;background:var(--primary-hi);color:var(--primary-2);border-radius:var(--r-sm);display:grid;place-items:center;font-size:10px;font-family:"JetBrains Mono",monospace;font-weight:700;flex-shrink:0}
+/* The slip's inner tiles sit on --r-md, not --r-sm: the spec's radius scale puts
+ * "inputs, inner tiles" there, and the leg row is the rail's inner tile. Note
+ * what --r-md does to the 18px index chip — 12px+12px exceeds the box, so the
+ * browser scales both radii by 18/24 and the chip renders as a 9px circle
+ * (measured; getComputedStyle still reports the specified 12px). That is the
+ * intended read — a numbered bullet, not a rounded square. If it ever needs to
+ * be a square again, resize the box rather than un-tokenizing the radius.
+ *
+ * `color:var(--primary-2)` on .ev-leg-i is not optional decoration: it sits on
+ * background:var(--primary-hi), and that explicit colour is what makes it pass
+ * test_primary_hi_never_backs_inherited_text. Do not drop it. */
+.ev-leg{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-3);background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-md);animation:fadeUp .25s ease both}
+.ev-leg-i{width:18px;height:18px;background:var(--primary-hi);color:var(--primary-2);border-radius:var(--r-md);display:grid;place-items:center;font-size:10px;font-family:"JetBrains Mono",monospace;font-weight:700;flex-shrink:0}
 .ev-leg-body{flex:1;min-width:0}
 .ev-leg-n{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-leg-p{font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
