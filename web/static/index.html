@@ -167,7 +167,7 @@ a{color:inherit;text-decoration:none}
  * visible focus state, which makes the landing page unusable by keyboard and
  * fails WCAG 2.4.7. One rule covers buttons, links, inputs and <summary>. */
 :where(button,a,summary,input,select,[tabindex]):focus-visible{
-  outline:2px solid var(--primary-2);outline-offset:2px;border-radius:6px;
+  outline:2px solid var(--primary-2);outline-offset:2px;border-radius:var(--r-sm);
 }
 
 /* Honour the OS "reduce motion" setting. prefers-reduced-motion is a
@@ -186,7 +186,7 @@ a{color:inherit;text-decoration:none}
 .cp-btn-save:hover{background:#15803d}
 .cp-btn-save.is-dis{background:#16a34a40;color:#86EFAC80;cursor:not-allowed;box-shadow:none}
 
-.cp-link{background:transparent;border:0;color:var(--primary-2);font-weight:500;cursor:pointer;font-size:13px;padding:6px 8px;border-radius:6px}
+.cp-link{background:transparent;border:0;color:var(--primary-2);font-weight:500;cursor:pointer;font-size:13px;padding:6px 8px;border-radius:var(--r-sm)}
 .cp-link:hover{background:rgba(30,111,176,.10)}
 .cp-center{text-align:center;align-self:center}
 
@@ -250,7 +250,7 @@ a{color:inherit;text-decoration:none}
 .cp-menu-name{font-weight:600;font-size:13.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cp-menu-email{font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cp-menu-sep{height:1px;background:var(--hair);margin:2px 0 6px}
-.cp-menu-item{width:100%;text-align:left;background:transparent;border:0;color:var(--text-2);padding:9px 10px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;transition:.12s}
+.cp-menu-item{width:100%;text-align:left;background:transparent;border:0;color:var(--text-2);padding:9px 10px;border-radius:var(--r-sm);font-size:13px;font-weight:500;cursor:pointer;transition:.12s}
 .cp-menu-item:hover{background:rgba(239,68,68,.12);color:#FCA5A5}
 
 /* ─────────── auth modal ─────────── */
@@ -268,11 +268,11 @@ a{color:inherit;text-decoration:none}
   animation:popIn .35s cubic-bezier(.2,1.2,.4,1);
 }
 @keyframes popIn{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}
-.cp-modal-x{position:absolute;top:14px;right:14px;background:transparent;border:0;color:var(--text-3);width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:14px}
+.cp-modal-x{position:absolute;top:14px;right:14px;background:transparent;border:0;color:var(--text-3);width:30px;height:30px;border-radius:var(--r-sm);cursor:pointer;font-size:14px}
 .cp-modal-x:hover{background:rgba(255,255,255,.06);color:var(--text)}
 .cp-modal-logo{display:flex;justify-content:center;margin-bottom:18px}
 .cp-seg{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:#0c0c14;border:1px solid var(--hair);border-radius:12px;padding:4px;margin-bottom:16px}
-.cp-seg-btn{background:transparent;border:0;color:var(--text-3);padding:9px;border-radius:9px;font-weight:600;font-size:13px;cursor:pointer;transition:.15s}
+.cp-seg-btn{background:transparent;border:0;color:var(--text-3);padding:9px;border-radius:var(--r-sm);font-weight:600;font-size:13px;cursor:pointer;transition:.15s}
 .cp-seg-btn.is-active{background:var(--primary);color:white;box-shadow:0 1px 0 rgba(255,255,255,.2) inset}
 .cp-form{display:flex;flex-direction:column;gap:10px}
 .cp-form .cp-btn{margin-top:4px}
@@ -282,7 +282,7 @@ a{color:inherit;text-decoration:none}
 .cp-tp{font-weight:600;font-size:14px;font-variant-numeric:tabular-nums;font-family:"JetBrains Mono",ui-monospace,monospace}
 .cp-odd{display:inline-flex;align-items:center;gap:5px;margin-right:6px}
 .cp-odd-n{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px;color:var(--text-2);font-weight:500}
-.cp-book{font-size:9.5px;font-weight:700;letter-spacing:.06em;padding:2px 5px;border-radius:4px}
+.cp-book{font-size:9.5px;font-weight:700;letter-spacing:.06em;padding:2px 5px;border-radius:var(--r-sm)}
 
 /* ═══════════════════════════════════════════ LANDING ═══════════════════════════════════════════ */
 /* Type scale, spacing and surfaces are shared with the app tabs (same tokens).
@@ -418,7 +418,7 @@ a{color:inherit;text-decoration:none}
 .lp-bk-head span{text-align:right}
 .lp-bk-row{background:var(--bg-2);border:1px solid var(--hair);border-radius:10px;padding:9px 12px;min-height:42px}
 .lp-bk-id{display:flex;align-items:center;gap:9px;min-width:0}
-.lp-bk-pill{flex-shrink:0;display:inline-grid;place-items:center;min-width:40px;height:22px;padding:0 8px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:.04em}
+.lp-bk-pill{flex-shrink:0;display:inline-grid;place-items:center;min-width:40px;height:22px;padding:0 8px;border-radius:var(--r-sm);font-size:11px;font-weight:700;letter-spacing:.04em}
 .lp-bk-name{font-size:13px;line-height:1.5;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lp-bk-q{text-align:right;font-size:13.5px;line-height:1.5;color:var(--text-3);font-variant-numeric:tabular-nums}
 /* The favoured side is the whole point of the tile — it gets the weight. */
@@ -613,7 +613,7 @@ a{color:inherit;text-decoration:none}
  * geometry. Before it, the hero painted its header and then grew ~440px of
  * card underneath a beat later — half of "takes WAY too long to load" was that
  * layout shift, not the fetch. */
-.lp-sk{display:block;border-radius:8px;background:linear-gradient(90deg,rgba(255,255,255,.035),rgba(255,255,255,.085),rgba(255,255,255,.035));background-size:200% 100%;animation:lpSkShimmer 1.25s linear infinite}
+.lp-sk{display:block;border-radius:var(--r-sm);background:linear-gradient(90deg,rgba(255,255,255,.035),rgba(255,255,255,.085),rgba(255,255,255,.035));background-size:200% 100%;animation:lpSkShimmer 1.25s linear infinite}
 @keyframes lpSkShimmer{from{background-position:200% 0}to{background-position:-200% 0}}
 /* These two min-heights are not cosmetic: they make the skeleton's meter row
  * and flame row measure the same as the loaded card's, so the swap costs 0px
@@ -632,7 +632,7 @@ a{color:inherit;text-decoration:none}
 /* CTA panel (returning visitor, three plays already spent), and its dismissed
  * one-line remnant. */
 .lp-game-ctap{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:12px;background:#121320;border:1px solid #2C2C39;border-radius:22px;padding:30px 22px;min-height:300px;width:100%}
-.lp-game-ctap-x{position:absolute;top:10px;right:10px;width:30px;height:30px;border-radius:8px;background:transparent;border:0;color:#93939C;cursor:pointer;font-size:14px}
+.lp-game-ctap-x{position:absolute;top:10px;right:10px;width:30px;height:30px;border-radius:var(--r-sm);background:transparent;border:0;color:#93939C;cursor:pointer;font-size:14px}
 .lp-game-ctap-x:hover{background:rgba(255,255,255,.06);color:#FBF9FF}
 .lp-game-ctap-h{margin:0;font-size:22px;font-weight:700;color:#FBF9FF;letter-spacing:-.01em}
 .lp-game-ctap-sub{margin:0;font-size:14px;line-height:1.55;color:var(--text-2);max-width:34ch}
@@ -678,11 +678,11 @@ a{color:inherit;text-decoration:none}
 .ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);height:34px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
 .ev-chip:hover{border-color:var(--hair-2);color:var(--text)}
 .ev-chip.is-on{background:var(--primary);border-color:var(--primary);color:white}
-.ev-stepper{display:flex;align-items:center;background:#0a0a12;border:1px solid var(--hair);border-radius:8px;overflow:hidden}
+.ev-stepper{display:flex;align-items:center;background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-sm);overflow:hidden}
 .ev-stepper button{background:transparent;border:0;color:var(--text-2);width:30px;height:32px;cursor:default;font-size:14px;font-weight:600}
 .ev-stepper button:hover{background:rgba(255,255,255,.05);color:white}
 .ev-stepper span{padding:0 12px;font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text)}
-.ev-clear{margin-left:auto;background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:9px 16px;border-radius:8px;font-size:13px;cursor:default;align-self:flex-end}
+.ev-clear{margin-left:auto;background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:9px 16px;border-radius:var(--r-sm);font-size:13px;cursor:default;align-self:flex-end}
 .ev-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#FCA5A5}
 /* Slip Builder toggle — desktop hides it (the sidebar aside is always visible
  * there). On mobile (block at the end of the sheet) it becomes a full-width
@@ -771,7 +771,7 @@ a{color:inherit;text-decoration:none}
  * row min-width) consumed most of the cell and pushed the player name out on
  * top of the LEAGUE column. The red row treatment below is the status now, and
  * .ev-legend in the meta row is what tells the user red = logged. */
-.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.10em;background:rgba(96,165,250,.14);color:#93C5FD;padding:2px 6px;border-radius:5px;margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
+.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.10em;background:rgba(96,165,250,.14);color:#93C5FD;padding:2px 6px;border-radius:var(--r-sm);margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
 
 /* Logged-bet row: bet is already in this user's backtest, so it will not
  * be selected for future auto-built slips. Painted red end-to-end so the
@@ -806,7 +806,7 @@ a{color:inherit;text-decoration:none}
 .ev-books .cp-odd-n{min-width:44px;text-align:right}
 .ev-time{font-size:12px;color:var(--text-3);font-family:"JetBrains Mono",monospace;white-space:nowrap}
 .ev-add{display:flex;justify-content:center}
-.ev-add-btn{width:24px;height:24px;border-radius:6px;background:#0a0a12;border:1px solid var(--hair-2);display:grid;place-items:center;color:var(--text-3);font-size:14px;transition:.15s}
+.ev-add-btn{width:24px;height:24px;border-radius:var(--r-sm);background:#0a0a12;border:1px solid var(--hair-2);display:grid;place-items:center;color:var(--text-3);font-size:14px;transition:.15s}
 .ev-row-data:hover .ev-add-btn{color:var(--text);border-color:var(--primary)}
 .ev-add-btn.is-sel{background:var(--primary);color:white;border-color:var(--primary)}
 
@@ -819,7 +819,7 @@ a{color:inherit;text-decoration:none}
  * :checked state. Matches the accent (--primary) with a drawn checkmark; the
  * green-devils variant (.ev-auto-gd) uses the green accent. */
 .ev-auto input{position:absolute;opacity:0;width:0;height:0;margin:0;pointer-events:none}
-.ev-check{width:16px;height:16px;flex-shrink:0;border:1.5px solid var(--hair-2);border-radius:5px;background:#0a0a12;position:relative;transition:background .15s,border-color .15s}
+.ev-check{width:16px;height:16px;flex-shrink:0;border:1.5px solid var(--hair-2);border-radius:var(--r-sm);background:#0a0a12;position:relative;transition:background .15s,border-color .15s}
 .ev-check::after{content:"";position:absolute;left:4.5px;top:1.5px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);transform-origin:center;transition:transform .15s ease}
 .ev-auto input:checked ~ .ev-check{background:var(--primary);border-color:var(--primary)}
 .ev-auto input:checked ~ .ev-check::after{transform:rotate(45deg) scale(1)}
@@ -842,19 +842,19 @@ a{color:inherit;text-decoration:none}
 .ev-slip-legs{flex:1;min-height:140px;display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid var(--hair)}
 .ev-slip-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-3);font-size:12.5px;gap:14px;padding:30px 0}
 .ev-empty-stack{position:relative;width:80px;height:60px}
-.ev-empty-slip{position:absolute;width:60px;height:36px;background:#0a0a12;border:1px solid var(--hair);border-radius:6px}
+.ev-empty-slip{position:absolute;width:60px;height:36px;background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-sm)}
 .ev-empty-slip:nth-child(1){top:0;left:0;transform:rotate(-6deg)}
 .ev-empty-slip:nth-child(2){top:8px;left:10px;transform:rotate(2deg)}
 .ev-empty-slip:nth-child(3){top:16px;left:20px;transform:rotate(8deg)}
 .ev-slip-empty p{margin:0;text-align:center;max-width:200px;line-height:1.5}
 
-.ev-leg{display:flex;align-items:center;gap:8px;padding:9px 10px;background:#0a0a12;border:1px solid var(--hair);border-radius:8px;animation:fadeUp .25s ease both}
-.ev-leg-i{width:18px;height:18px;background:var(--primary-hi);color:var(--primary-2);border-radius:5px;display:grid;place-items:center;font-size:10px;font-family:"JetBrains Mono",monospace;font-weight:700;flex-shrink:0}
+.ev-leg{display:flex;align-items:center;gap:8px;padding:9px 10px;background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-sm);animation:fadeUp .25s ease both}
+.ev-leg-i{width:18px;height:18px;background:var(--primary-hi);color:var(--primary-2);border-radius:var(--r-sm);display:grid;place-items:center;font-size:10px;font-family:"JetBrains Mono",monospace;font-weight:700;flex-shrink:0}
 .ev-leg-body{flex:1;min-width:0}
 .ev-leg-n{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-leg-p{font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-leg-pct{font-size:12.5px}
-.ev-leg-x{background:transparent;border:0;color:var(--text-3);width:22px;height:22px;border-radius:5px;cursor:default;font-size:11px}
+.ev-leg-x{background:transparent;border:0;color:var(--text-3);width:22px;height:22px;border-radius:var(--r-sm);cursor:default;font-size:11px}
 .ev-leg-x:hover{background:rgba(239,68,68,.15);color:#FCA5A5}
 
 .ev-slip-summary{padding-top:8px;border-top:1px solid var(--hair);display:flex;flex-direction:column;gap:6px}
@@ -906,7 +906,7 @@ a{color:inherit;text-decoration:none}
  * hardcoded FD/DK/PIN abbreviations. Adding a book server-side no longer needs
  * a matching CSS rule here. */
 .pp-books-strip{display:flex;align-items:center;gap:8px;margin-bottom:18px;flex-wrap:wrap}
-.pp-book-logo{font-size:11px;font-weight:600;letter-spacing:.02em;padding:5px 10px;border-radius:6px;background:rgba(255,255,255,.06);color:var(--text-2)}
+.pp-book-logo{font-size:11px;font-weight:600;letter-spacing:.02em;padding:5px 10px;border-radius:var(--r-sm);background:rgba(255,255,255,.06);color:var(--text-2)}
 .pp-books-plus{font-size:12px;color:var(--text-3);margin-left:4px}
 
 /* The primary conversion button. Was a three-stop peach -> lilac -> blue
@@ -930,7 +930,7 @@ a{color:inherit;text-decoration:none}
 .pp-card-foot{display:flex;justify-content:space-between;align-items:center;padding-top:18px;border-top:1px solid var(--hair);color:var(--text-3);font-size:12px;gap:12px;flex-wrap:wrap}
 .pp-trust{display:inline-flex;align-items:center;gap:6px}
 .pp-pay{display:inline-flex;gap:6px}
-.pp-pay-chip{font-size:9.5px;font-weight:800;letter-spacing:.05em;background:#0a0a12;border:1px solid var(--hair);padding:4px 7px;border-radius:5px;color:var(--text-2)}
+.pp-pay-chip{font-size:9.5px;font-weight:800;letter-spacing:.05em;background:#0a0a12;border:1px solid var(--hair);padding:4px 7px;border-radius:var(--r-sm);color:var(--text-2)}
 .pp-pay-apple{font-family:"Inter",sans-serif}
 
 /* The pricing page's sticky side column (a testimonial card + a stat tile +
@@ -968,7 +968,7 @@ a{color:inherit;text-decoration:none}
 .bd-filters{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;padding:14px 16px;background:linear-gradient(180deg,#13131c,#101019);border:1px solid var(--hair);border-radius:12px;margin-bottom:14px}
 .bd-f{display:flex;flex-direction:column;gap:6px;min-width:0}
 .bd-f>span{font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase}
-.bd-f input,.bd-f select{background:#0a0a12;border:1px solid var(--hair);color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:inherit;min-width:130px;transition:border-color .15s}
+.bd-f input,.bd-f select{background:#0a0a12;border:1px solid var(--hair);color:var(--text);border-radius:var(--r-sm);padding:8px 10px;font-size:13px;outline:none;font-family:inherit;min-width:130px;transition:border-color .15s}
 .bd-f input:focus,.bd-f select:focus{border-color:var(--primary)}
 /* A native select (appearance:auto) computes 2px taller than an <input> at the
  * same font-size/padding, because its intrinsic content box includes room for
@@ -990,11 +990,11 @@ a{color:inherit;text-decoration:none}
  * bar. All three are vertically centered (align-self:center) and the same
  * height so they line up on one row; `margin-left:auto` on Clear pushes the
  * whole cluster to the right edge, past the left-aligned filter fields. */
-.bd-clear{background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:0 14px;height:34px;border-radius:8px;font-size:13px;cursor:default;align-self:center;margin-left:auto;display:inline-flex;align-items:center}
+.bd-clear{background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:0 14px;height:34px;border-radius:var(--r-sm);font-size:13px;cursor:default;align-self:center;margin-left:auto;display:inline-flex;align-items:center}
 .bd-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#FCA5A5}
 .bd-badge{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--text-2);background:rgba(30,111,176,.10);border:1px solid rgba(30,111,176,.25);padding:0 12px;height:34px;border-radius:999px;align-self:center;display:inline-flex;align-items:center}
 .bd-pag{display:inline-flex;align-items:center;gap:4px;align-self:center;height:34px}
-.bd-pag-btn{background:#0a0a12;border:1px solid var(--hair);color:var(--text);width:28px;height:28px;border-radius:6px;cursor:default;font-size:14px}
+.bd-pag-btn{background:#0a0a12;border:1px solid var(--hair);color:var(--text);width:28px;height:28px;border-radius:var(--r-sm);cursor:default;font-size:14px}
 .bd-pag-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary-2)}
 .bd-pag-btn:disabled{opacity:.3}
 .bd-pag-num{font-size:12px;color:var(--text-2);padding:0 6px}
@@ -1027,7 +1027,7 @@ a{color:inherit;text-decoration:none}
 .bd-true-odds{color:var(--primary-2);font-weight:600}
 .bd-time{color:var(--text-3);font-size:12px;white-space:nowrap}
 .bd-odds{font-family:"JetBrains Mono",monospace;font-weight:500}
-.bd-odds.is-best{color:var(--green);font-weight:700;background:rgba(34,197,94,.10);padding:2px 7px;border-radius:5px}
+.bd-odds.is-best{color:var(--green);font-weight:700;background:rgba(34,197,94,.10);padding:2px 7px;border-radius:var(--r-sm)}
 .bd-odds.is-plus{color:#86EFAC}
 .bd-odds-empty{color:var(--text-4)}
 .bd-edge-cell{font-family:"JetBrains Mono",monospace;font-weight:700;color:var(--text-4)}
@@ -1050,7 +1050,7 @@ a{color:inherit;text-decoration:none}
  * first fetch is in flight, so a refresh never flashes misleading 0/0 / 0.0%
  * placeholder numbers. */
 @keyframes cpShimmer{0%{background-position:-200px 0}100%{background-position:calc(200px + 100%) 0}}
-.cp-skel{display:inline-block;border-radius:6px;background:#1a1a26;background-image:linear-gradient(90deg,#1a1a26 0px,#24243400 40px,#242434 80px,#1a1a26 120px);background-size:200px 100%;background-repeat:no-repeat;animation:cpShimmer 1.15s ease-in-out infinite}
+.cp-skel{display:inline-block;border-radius:var(--r-sm);background:#1a1a26;background-image:linear-gradient(90deg,#1a1a26 0px,#24243400 40px,#242434 80px,#1a1a26 120px);background-size:200px 100%;background-repeat:no-repeat;animation:cpShimmer 1.15s ease-in-out infinite}
 .bt-card-value .cp-skel{height:22px;width:64px;vertical-align:middle}
 .bt-card-label .cp-skel{height:11px;width:90px}
 
@@ -1065,12 +1065,12 @@ a{color:inherit;text-decoration:none}
 .bt-slip-hd-l{display:flex;flex-direction:column;gap:2px}
 .bt-slip-type{font-size:12.5px;font-weight:700}
 .bt-slip-ts{font-size:11px;color:var(--text-3);font-family:"JetBrains Mono",monospace}
-.bt-slip-badge{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:5px}
+.bt-slip-badge{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:var(--r-sm)}
 .bt-slip-badge.is-win{background:rgba(34,197,94,.14);color:#86EFAC}
 .bt-slip-badge.is-loss{background:rgba(239,68,68,.14);color:#FCA5A5}
 .bt-slip-badge.is-push{background:rgba(251,191,36,.14);color:#FDE68A}
 .bt-slip-badge.is-pending{background:rgba(96,165,250,.14);color:#93C5FD}
-.bt-slip-del{background:transparent;border:1px solid var(--hair-2);color:var(--text-4);width:24px;height:24px;border-radius:6px;cursor:pointer;font-size:12px;line-height:1;display:grid;place-items:center;flex-shrink:0;transition:.15s}
+.bt-slip-del{background:transparent;border:1px solid var(--hair-2);color:var(--text-4);width:24px;height:24px;border-radius:var(--r-sm);cursor:pointer;font-size:12px;line-height:1;display:grid;place-items:center;flex-shrink:0;transition:.15s}
 .bt-slip-del:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:#FCA5A5}
 
 /* Delete-slip confirmation modal (reuses .cp-modal-back / .cp-modal shell). */
@@ -1078,7 +1078,7 @@ a{color:inherit;text-decoration:none}
 .bt-del-icon{width:52px;height:52px;margin:0 auto 14px;border-radius:50%;display:grid;place-items:center;font-size:24px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4)}
 .bt-del-title{margin:0 0 8px;font-size:18px;font-weight:700;color:var(--text)}
 .bt-del-body{margin:0 0 6px;font-size:13.5px;line-height:1.5;color:var(--text-2)}
-.bt-del-error{margin:10px 0 0;font-size:12.5px;color:#FCA5A5;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:8px 10px}
+.bt-del-error{margin:10px 0 0;font-size:12.5px;color:#FCA5A5;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:8px 10px}
 .bt-del-actions{display:flex;gap:10px;justify-content:center;margin-top:20px}
 .bt-del-actions .cp-btn{min-width:118px;padding:10px 16px}
 .bt-del-confirm{background:var(--red,#ef4444);color:#fff;border:1px solid var(--red,#ef4444)}
@@ -1088,12 +1088,12 @@ a{color:inherit;text-decoration:none}
 .bt-slip-legs{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:5px}
 .bt-slip-leg{display:grid;grid-template-columns:18px 1fr auto auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)}
 .bt-slip-leg:last-child{border-bottom:0}
-.bt-leg-i{width:18px;height:18px;background:#0a0a12;border-radius:5px;display:grid;place-items:center;font-size:10px;color:var(--text-3);font-weight:700}
+.bt-leg-i{width:18px;height:18px;background:#0a0a12;border-radius:var(--r-sm);display:grid;place-items:center;font-size:10px;color:var(--text-3);font-weight:700}
 .bt-leg-body{min-width:0}
 .bt-leg-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bt-leg-prop{font-size:11.5px;color:var(--text-3)}
 .bt-leg-pct{font-size:12px;color:var(--text-2);font-family:"JetBrains Mono",monospace}
-.bt-leg-actual{font-size:13px;font-weight:700;font-family:"JetBrains Mono",monospace;padding:2px 8px;border-radius:5px}
+.bt-leg-actual{font-size:13px;font-weight:700;font-family:"JetBrains Mono",monospace;padding:2px 8px;border-radius:var(--r-sm)}
 .bt-leg-actual.leg-hit{background:rgba(34,197,94,.14);color:#86EFAC}
 .bt-leg-actual.leg-miss{background:rgba(239,68,68,.14);color:#FCA5A5}
 .bt-leg-actual.leg-push{background:rgba(251,191,36,.14);color:#FDE68A}
@@ -1141,8 +1141,8 @@ a{color:inherit;text-decoration:none}
 .pnl-chart{margin:0 -4px;touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .pnl-chart svg{display:block;width:100%;-webkit-user-select:none;user-select:none}
 
-.pnl-range{display:inline-flex;gap:2px;background:#0a0a12;border:1px solid var(--hair);padding:3px;border-radius:8px;margin-top:8px}
-.pnl-range-btn{background:transparent;border:0;color:var(--text-3);padding:6px 12px;border-radius:6px;font-weight:600;font-size:11.5px;cursor:default;letter-spacing:.04em;font-family:"JetBrains Mono",monospace}
+.pnl-range{display:inline-flex;gap:2px;background:#0a0a12;border:1px solid var(--hair);padding:3px;border-radius:var(--r-sm);margin-top:8px}
+.pnl-range-btn{background:transparent;border:0;color:var(--text-3);padding:6px 12px;border-radius:var(--r-sm);font-weight:600;font-size:11.5px;cursor:default;letter-spacing:.04em;font-family:"JetBrains Mono",monospace}
 .pnl-range-btn:hover{color:var(--text)}
 .pnl-range-btn.is-on{background:#1f1f2e;color:white}
 /* The Custom range button gets the app's accent blue when active so it reads
@@ -1156,7 +1156,7 @@ a{color:inherit;text-decoration:none}
 .pnl-custom{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;background:#0a0a12;border:1px solid var(--hair);padding:6px 8px;border-radius:10px}
 .pnl-custom-field{display:inline-flex;align-items:center;gap:8px}
 .pnl-custom-field>span{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-family:"JetBrains Mono",ui-monospace,monospace}
-.pnl-custom-input{background:#14141e;border:1px solid var(--hair-2);color:var(--text);border-radius:8px;padding:7px 10px;font-size:12.5px;font-family:"JetBrains Mono",ui-monospace,monospace;outline:none;color-scheme:dark;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease}
+.pnl-custom-input{background:#14141e;border:1px solid var(--hair-2);color:var(--text);border-radius:var(--r-sm);padding:7px 10px;font-size:12.5px;font-family:"JetBrains Mono",ui-monospace,monospace;outline:none;color-scheme:dark;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease}
 .pnl-custom-input:hover{border-color:var(--primary-2)}
 .pnl-custom-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-hi)}
 .pnl-custom-arrow{color:var(--text-4);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
@@ -1175,7 +1175,7 @@ a{color:inherit;text-decoration:none}
 .obs-mult thead th,.obs-heat thead th{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);font-weight:600;text-align:left;padding:10px 14px;border-bottom:1px solid var(--hair);white-space:nowrap}
 .obs-mult tbody td,.obs-heat tbody td{padding:8px 14px;border-bottom:1px solid var(--hair)}
 .obs-th-c{text-align:center!important}
-.obs-mult-cell{display:flex;flex-direction:column;align-items:center;padding:6px 10px;border-radius:6px;min-width:90px}
+.obs-mult-cell{display:flex;flex-direction:column;align-items:center;padding:6px 10px;border-radius:var(--r-sm);min-width:90px}
 .obs-mult-n{font-size:10px;color:var(--text-3);font-family:"JetBrains Mono",monospace;margin-top:2px}
 
 /* Heatmap */
@@ -1189,7 +1189,7 @@ a{color:inherit;text-decoration:none}
 
 .obs-feed-filters{display:flex;gap:24px;margin-bottom:14px;flex-wrap:wrap}
 .an-feed-count{font-weight:400;color:var(--text-3);font-size:13px;margin-left:6px}
-.obs-pill{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:5px;display:inline-block}
+.obs-pill{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:var(--r-sm);display:inline-block}
 
 /* ─────────── density overrides: tighten dead space, fill standard screens ─────────── */
 /* Strategy: scale containers with viewport. Landing sections use fluid widths
@@ -1235,7 +1235,7 @@ a{color:inherit;text-decoration:none}
 .ev-prefs-save{
   margin-top:8px;width:100%;
   background:var(--primary);
-  color:white;border:0;border-radius:8px;
+  color:white;border:0;border-radius:var(--r-sm);
   padding:10px;font-size:13px;font-weight:700;letter-spacing:.02em;
   cursor:pointer;white-space:nowrap;
   box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 6px 14px -6px rgba(30,111,176,.55);
@@ -1257,7 +1257,7 @@ a{color:inherit;text-decoration:none}
 .bt-slip-place{
   margin-top:auto;width:100%;
   background:var(--primary);
-  color:white;border:0;border-radius:8px;
+  color:white;border:0;border-radius:var(--r-sm);
   padding:9px 12px;font-size:12.5px;font-weight:700;letter-spacing:.02em;
   cursor:pointer;white-space:nowrap;
   box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 6px 14px -6px rgba(30,111,176,.55);
@@ -1283,7 +1283,7 @@ a{color:inherit;text-decoration:none}
    restyled betting errors. */
 .bt-place-note{margin:8px 0 0;font-size:11.5px;color:#94a3b8;line-height:1.5}
 .bt-place-error{margin:8px 0 0;font-size:12.5px;color:#FCA5A5;background:rgba(239,68,68,.1);
-  border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:7px 9px;line-height:1.5}
+  border:1px solid rgba(239,68,68,.25);border-radius:var(--r-sm);padding:7px 9px;line-height:1.5}
 
 /* ─────────── Backtest cards: 3-up grid, bigger, more legible ─────────── */
 .bt-slips-grid{
@@ -1334,7 +1334,7 @@ a{color:inherit;text-decoration:none}
 .bt-slip-ev{
   font-family:"JetBrains Mono",monospace;
   font-size:11.5px;font-weight:800;letter-spacing:.04em;
-  padding:4px 9px;border-radius:6px;
+  padding:4px 9px;border-radius:var(--r-sm);
   white-space:nowrap;
 }
 .bt-slip-ev.is-pos{color:#86EFAC;background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.40)}
@@ -1356,7 +1356,7 @@ a{color:inherit;text-decoration:none}
   color:var(--primary-2);
   font-family:"JetBrains Mono",monospace;
   padding:2px 7px;
-  border-radius:5px;
+  border-radius:var(--r-sm);
   background:rgba(30,111,176,.10);
   border:1px solid rgba(30,111,176,.22);
   min-width:50px;text-align:center;
@@ -1405,7 +1405,7 @@ a{color:inherit;text-decoration:none}
   color:var(--text);
   font-size:11px;
   background:rgba(255,255,255,.06);
-  padding:2px 7px;border-radius:4px;
+  padding:2px 7px;border-radius:var(--r-sm);
   flex-shrink:0;   /* the league pill is short and fixed — only the prop name shrinks */
 }
 /* The prop NAME is the only part of this row that may be shortened. Without
@@ -1415,7 +1415,7 @@ a{color:inherit;text-decoration:none}
  * entirely on narrow cards while a long prop name ("Pts+Rebs+Asts") stayed
  * fully rendered. Now the name ellipsises and the line is always visible. */
 .bt-leg-prop-name{color:var(--text);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:13px;padding:3px 8px;border-radius:5px;margin-left:auto;flex-shrink:0}
+.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:13px;padding:3px 8px;border-radius:var(--r-sm);margin-left:auto;flex-shrink:0}
 .bt-leg-side-over{color:#86EFAC;background:rgba(34,197,94,.16)}
 .bt-leg-side-under{color:#93C5FD;background:rgba(96,165,250,.16)}
 
@@ -1429,7 +1429,7 @@ a{color:inherit;text-decoration:none}
    * within the same card. Measured ragged by 9-18px before this. */
   min-width:71px;
   padding:6px 12px;
-  border-radius:7px;
+  border-radius:var(--r-sm);
   font-size:15px;
   font-weight:800;
   text-align:center;
