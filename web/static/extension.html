@@ -45,7 +45,11 @@
   :where(a, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
   ol { padding-left: 22px; }
   li { margin-bottom: 14px; }
-  code { background: #0a1626; border: 1px solid var(--line); border-radius: 8px;
+  /* 5px, deliberately below the 8px scale step: this is inline code inside a
+     ~20px line box, where 8px is nearly half the height and renders a pill.
+     `chrome://extensions` then reads as a badge rather than as literal text you
+     are meant to type. Chips take 8px; inline code is not a chip. */
+  code { background: #0a1626; border: 1px solid var(--line); border-radius: 5px;
          padding: 1px 6px; font-size: 13px; font-family: ui-monospace, SFMono-Regular, monospace; }
   .note { border-left: 3px solid var(--line2); padding: 2px 0 2px 14px; color: var(--muted);
           font-size: 14px; margin: 28px 0; }
