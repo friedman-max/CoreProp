@@ -671,9 +671,22 @@ The trap that bit Phase 1: flattening these to a solid `background` without rais
 Double the class on each state rule so it beats the hover:
 
 ```css
-.ev-prefs-save.ev-prefs-save-saved{background:#16a34a}
-.ev-prefs-save.ev-prefs-save-error{background:#dc2626}
+.ev-prefs-save.ev-prefs-save-saved,
+.ev-prefs-save.ev-prefs-save-saved:hover:not(:disabled){background:#16a34a}
+.ev-prefs-save.ev-prefs-save-error,
+.ev-prefs-save.ev-prefs-save-error:hover:not(:disabled){background:#dc2626}
 ```
+
+**ERRATUM — an earlier draft of this plan said to double the class and stop
+there. That does not work, and it was measured failing.** The hover rule is
+`.ev-prefs-save:hover:not(:disabled)`, which is **(0,3,0)**: `:hover` counts as
+a class *and* so does the `:disabled` inside `:not()` (`:not()` itself adds
+nothing, but its argument does). Doubling the class reaches only **(0,2,0)** and
+still loses, so the doubled-class-only form computes `#195F97` on hover — it
+ships the exact regression it was written to prevent. Each state therefore needs
+its own `:hover:not(:disabled)` selector at (0,4,0), as above. Both selectors are
+load-bearing; say so at the rule. **Phase 2b inherits this trap** on
+`.bt-slip-place-install` and on any shared state classes.
 
 Do the same for the `.bt-slip-place` states (`-queued`, `-error`, `-sending`). Leave `-install` alone — Phase 2b handles it, and note that its `:hover` currently *lightens* against the hover-darkens rule.
 
