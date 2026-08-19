@@ -1177,7 +1177,11 @@ a{color:inherit;text-decoration:none}
 .bt-slip-badge.is-loss{background:rgba(239,68,68,.14);color:#FCA5A5}
 .bt-slip-badge.is-push{background:rgba(251,191,36,.14);color:#FDE68A}
 .bt-slip-badge.is-pending{background:rgba(96,165,250,.14);color:#93C5FD}
-.bt-slip-del{background:transparent;border:1px solid var(--hair-2);color:var(--text-4);width:24px;height:24px;border-radius:var(--r-sm);cursor:pointer;font-size:12px;line-height:1;display:grid;place-items:center;flex-shrink:0;transition:.15s}
+/* --text-3, not --text-4: this is an interactive control's icon, not a
+ * decorative glyph. --text-4 put the resting ✕ at 2.21:1, under the 3:1 WCAG
+ * 1.4.11 floor for non-text UI, and only the hover state cleared it — a control
+ * you can't see until you point at it. --text-3 is 5.66:1 on this surface. */
+.bt-slip-del{background:transparent;border:1px solid var(--hair-2);color:var(--text-3);width:24px;height:24px;border-radius:var(--r-sm);cursor:pointer;font-size:12px;line-height:1;display:grid;place-items:center;flex-shrink:0;transition:.15s}
 .bt-slip-del:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:#FCA5A5}
 
 /* Delete-slip confirmation modal (reuses .cp-modal-back / .cp-modal shell). */

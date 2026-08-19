@@ -265,13 +265,25 @@ def test_selected_and_logged_bars_are_both_3px():
 
 
 # --text-4 is 2.3:1 — decorative/disabled glyphs only, never readable text.
-# These six are single-glyph decorations: a middot, two em dashes, a close X
-# (which carries an aria-label), an arrow, and an empty heat cell.
+# These five are single-glyph decorations: a middot, two em dashes, an arrow,
+# and an empty heat cell. Each was checked against its markup.
+#
+# .bt-slip-del is deliberately NOT here. Its ✕ is an interactive control's icon,
+# which WCAG 1.4.11 holds to 3:1, and --text-4 left it at 2.21:1 at rest — only
+# hover cleared it. It uses --text-3 now, so this test also pins that fix.
+#
+# Two caveats on the entries that remain:
+#   .obs-heat-cell.is-empty has no markup anywhere (dead CSS) — the entry is a
+#     permission, not a requirement, and keeps the test stable if the observatory
+#     heat table is ever wired up.
+#   .bd-edge-cell is only decorative because .bd-edge-cell.is-edge overrides the
+#     "+EV" case to --green. If that override is ever removed, real text would
+#     render at 2.10:1 and this test would NOT catch it, because the allowlist
+#     matches by substring.
 TEXT4_ALLOWED = (
     ".ev-meta-dot",
     ".bd-odds-empty",
     ".bd-edge-cell",
-    ".bt-slip-del",
     ".pnl-custom-arrow",
     ".obs-heat-cell.is-empty",
 )
@@ -280,7 +292,7 @@ TEXT4_ALLOWED = (
 def test_text4_is_only_on_decorative_glyphs():
     violations = []
     for selector, decls in rules(style_block(INDEX)):
-        if "var(--text-4)" not in squash(decls).replace(" ", ""):
+        if "var(--text-4)" not in squash(decls):   # squash already strips whitespace
             continue
         if any(allowed in selector for allowed in TEXT4_ALLOWED):
             continue
