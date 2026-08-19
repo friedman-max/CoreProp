@@ -11,6 +11,17 @@ const _RANGE_DAYS = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365 };
 // hardcoded as 54.08 — the pre-37.5x value — which tinted a 54.1%-54.6% hit
 // rate green when it is EV-NEGATIVE. The fallback recomputes from 37.5x rather
 // than restating a literal, so it can't silently go stale either.
+// Chart gutters, shared by PnLChart and ReliabilityChart — they were declared
+// identically in both and had to be edited in lockstep. Prefixed because these
+// bundles are plain global scripts with no module scope, so a bare `padL` would
+// be a collision risk across files.
+//
+// padL=56 is sized for the widest right-anchored Y-axis label, drawn at
+// x={padL-10}; shrink it and the labels clip. The X tick text sits at y={H-10}
+// and the axis caption at y={H-26}, so changing b without moving those detaches
+// them from the axis.
+const AN_CHART_PAD = { l: 56, r: 28, t: 18, b: 34 };
+
 const AN_LEG_BE_PCT = typeof CP_LEG_BE_6_POWER_PCT === "number"
   ? CP_LEG_BE_6_POWER_PCT
   : Math.pow(1 / 37.5, 1 / 6) * 100;
@@ -365,7 +376,7 @@ function PnLChart({ series }) {
 
   if (!series.length) return <div ref={ref} className="pnl-chart" />;
 
-  const padL = 56, padR = 28, padT = 18, padB = 34;
+  const { l: padL, r: padR, t: padT, b: padB } = AN_CHART_PAD;
   const W = size.w, H = size.h;
   // X is positioned by real timestamp, not by index, so gaps between slips
   // map to real time on the x-axis.
@@ -439,7 +450,7 @@ function PnLChart({ series }) {
         {/* Y grid */}
         {yTicks.map((v, i) => (
           <g key={i}>
-            <line x1={padL} x2={W - padR} y1={ys(v)} y2={ys(v)} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+            <line x1={padL} x2={W - padR} y1={ys(v)} y2={ys(v)} stroke="var(--hair)" strokeWidth="1" />
             <text x={padL - 10} y={ys(v) + 4} fill="#9ca3af" fontSize="11.5" textAnchor="end" fontFamily="JetBrains Mono,ui-monospace,monospace">
               {v > 0 ? "+" : ""}{v.toFixed(1)}u
             </text>
@@ -493,7 +504,7 @@ function ReliabilityChart({ points }) {
     return () => ro.disconnect();
   }, []);
 
-  const padL = 56, padR = 28, padT = 18, padB = 34;
+  const { l: padL, r: padR, t: padT, b: padB } = AN_CHART_PAD;
   const W = size.w, H = size.h;
   // Fixed 0–100% axes on both sides so the diagonal is a true 45° reference
   // regardless of which prob range the window's legs fall in.
@@ -521,8 +532,8 @@ function ReliabilityChart({ points }) {
         {/* Grid + axis ticks */}
         {ticks.map((t, i) => (
           <g key={i}>
-            <line x1={sx(t)} x2={sx(t)} y1={padT} y2={H - padB} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
-            <line x1={padL} x2={W - padR} y1={sy(t)} y2={sy(t)} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+            <line x1={sx(t)} x2={sx(t)} y1={padT} y2={H - padB} stroke="var(--hair)" strokeWidth="1" />
+            <line x1={padL} x2={W - padR} y1={sy(t)} y2={sy(t)} stroke="var(--hair)" strokeWidth="1" />
             <text x={sx(t)} y={H - 10} fill="#9ca3af" fontSize="11.5" textAnchor="middle" fontFamily="JetBrains Mono,ui-monospace,monospace">{(t * 100).toFixed(0)}%</text>
             <text x={padL - 10} y={sy(t) + 4} fill="#9ca3af" fontSize="11.5" textAnchor="end" fontFamily="JetBrains Mono,ui-monospace,monospace">{(t * 100).toFixed(0)}%</text>
           </g>
