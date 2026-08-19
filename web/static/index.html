@@ -819,7 +819,13 @@ a{color:inherit;text-decoration:none}
  * :checked state. Matches the accent (--primary) with a drawn checkmark; the
  * green-devils variant (.ev-auto-gd) uses the green accent. */
 .ev-auto input{position:absolute;opacity:0;width:0;height:0;margin:0;pointer-events:none}
-.ev-check{width:16px;height:16px;flex-shrink:0;border:1.5px solid var(--hair-2);border-radius:var(--r-sm);background:#0a0a12;position:relative;transition:background .15s,border-color .15s}
+/* 5px, deliberately off the radius scale: this box is 16px square, so --r-sm
+ * (8px) is exactly half its side and renders a perfect circle. It fronts two
+ * <input type="checkbox"> toggles, and a circular checkbox reads as a radio
+ * button — an affordance change, not a softening. Same rule as the decorative
+ * bars/keys: too small for the scale's floor. Exempted in
+ * tests/api_tests/test_css_tokens.py::RADIUS_EXEMPT. */
+.ev-check{width:16px;height:16px;flex-shrink:0;border:1.5px solid var(--hair-2);border-radius:5px;background:#0a0a12;position:relative;transition:background .15s,border-color .15s}
 .ev-check::after{content:"";position:absolute;left:4.5px;top:1.5px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg) scale(0);transform-origin:center;transition:transform .15s ease}
 .ev-auto input:checked ~ .ev-check{background:var(--primary);border-color:var(--primary)}
 .ev-auto input:checked ~ .ev-check::after{transform:rotate(45deg) scale(1)}
