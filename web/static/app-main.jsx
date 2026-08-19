@@ -255,10 +255,17 @@ function App() {
 // Density + halo overrides.
 //
 // This sheet is appended to <head> LAST, after index.html's <style> block, so it
-// wins every equal-specificity tie against it. That is load-bearing in both
-// directions: it is why the hover rule below beats index.html's own
-// `.ev-row-data:hover`, and it is why every `.is-logged` / `.is-sel:hover` tint
-// over there has to carry `!important` — this rule is (0,4,0) and outranks them.
+// wins every equal-specificity tie against that file. Both halves of that matter
+// for the +EV row tints over there, and for different reasons:
+//   * The hover rule below is `.app:not(.tint-on) .ev-row-data:hover` = (0,4,0)
+//     — three classes (`.tint-on` inside `:not()` counts) plus `:hover`. It
+//     outranks `.is-logged:hover` and `.is-sel:hover` (0,3,0) on specificity
+//     alone, order irrelevant.
+//   * It TIES `.is-logged.is-sel:hover` at (0,4,0) — and there the "appended
+//     last" part decides it, in this sheet's favour.
+// Which is why every one of those tints carries `!important`; that is the only
+// thing holding them. Adding a selector here means checking what it silently
+// outranks in index.html, because nothing tests hover.
 //
 // The selectors are coupled to ev-page.jsx's class names (`.ev-row`,
 // `.ev-row-data`) and to index.html's `.ev-row` padding. `padding-top` /

@@ -690,10 +690,23 @@ function EVPage() {
                         the airy identity line owns the full row). Kept anyway —
                         harmless, and still useful to assistive tech. */}
                     <span className="ev-player-n" title={b.player}>{b.player}</span>
-                    {/* borderRadius is the STRING "var(--r-sm)": React appends
-                        px to numeric style values, so a bare token breaks. There
-                        is no .ev-gd CSS rule, so this inline value is the only
-                        source and no test can see it. */}
+                    {/* borderRadius is the STRING "var(--r-sm)", and there is no
+                        .ev-gd CSS rule, so this inline value is the only source
+                        of the badge's corner and no test can see it. Three ways
+                        to get it wrong, browser-verified, because the earlier
+                        note here named the wrong one:
+                          - bare `var(--r-sm)`, unquoted, is not valid JS at all
+                            ("Unexpected var") and ./build.sh fails loudly — the
+                            safe failure;
+                          - a UNITLESS string ("8") is rejected by the CSS parser,
+                            so the declaration never lands and border-radius falls
+                            back to its initial 0;
+                          - a TYPO'd token ("var(--typoo)") does land, but is
+                            invalid at computed-value time and also computes 0px.
+                        The last two are the dangerous pair: both silently square
+                        the badge with nothing failing anywhere. A plain NUMBER
+                        (8) is fine — React appends px to numeric style values —
+                        it just hardcodes the radius off the scale. */}
                     {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: "var(--r-sm)", background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>GD</span>}
                   </div>
                   {/* Meta line reads "LEAGUE Prop SIDE line · time", so .ev-side

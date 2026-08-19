@@ -803,7 +803,9 @@ a{color:inherit;text-decoration:none}
 .ev-table{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);overflow:hidden}
 /* Airy row: one flex line with an identity/meta zone that grows and a fixed
  * right zone for the hero true% + add button. This replaced a 9-track grid; the
- * 9 columns now live as two stacked lines inside .ev-row-main (see ev-page.jsx).
+ * 9 columns now live as THREE stacked lines inside .ev-row-main — .ev-player,
+ * .ev-row-meta, .ev-books (see ev-page.jsx, whose comment says three; this one
+ * said two and was simply wrong).
  * Padding stays on --row-px — and the copy in the density-overrides block below
  * is the one that actually wins, so both must carry it. */
 .ev-row{
@@ -900,11 +902,14 @@ a{color:inherit;text-decoration:none}
  * regardless; it is harmless and still useful to screen readers. */
 .ev-player{display:flex;align-items:flex-start;gap:8px;min-width:0}
 .ev-player-n{font-weight:600;letter-spacing:-.005em;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.3;overflow-wrap:anywhere}
-/* There is deliberately no per-row LOGGED badge. It lived inside .ev-player as
- * a flex-shrink:0 chip, which on a phone (PLAYER track is ~100px at the 620px
- * row min-width) consumed most of the cell and pushed the player name out on
- * top of the LEAGUE column. The red row treatment below is the status now, and
- * .ev-legend in the meta row is what tells the user red = logged. */
+/* There is deliberately no per-row LOGGED badge. It lived inside .ev-player as a
+ * flex-shrink:0 chip, and back when the row was a 9-track grid with a 620px
+ * minimum on phones the PLAYER track was only ~100px wide, so the chip consumed
+ * most of the cell and pushed the player name out on top of the LEAGUE column.
+ * Neither the track nor the 620px minimum exists any more — that is history, not
+ * a live constraint — but the conclusion still holds on its own terms: the red
+ * row treatment below is the status, .ev-legend in the meta row is what tells
+ * the user red = logged, and a badge would only repeat both. */
 .ev-sharp{font-size:9px;font-weight:800;letter-spacing:.10em;background:rgba(96,165,250,.14);color:#93C5FD;padding:2px 6px;border-radius:var(--r-sm);margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
 
 /* Logged-bet row: bet is already in this user's backtest, so it will not
@@ -1489,11 +1494,12 @@ a{color:inherit;text-decoration:none}
  *
  * `background-color`, NOT the `background` shorthand — but no longer for the
  * reason this comment used to give. It said the shorthand would beat the state
- * classes' background-IMAGE gradient; the state fills are flat now and hold
- * their own ground by specificity (see below). It stays `background-color`
- * because the shorthand would also wipe the `background-image` off
- * .bt-slip-place-install's sibling pattern and there is no reason to widen what
- * a hover touches.
+ * classes' background-IMAGE gradient; the state fills are flat now and defend
+ * themselves by specificity instead (see below), so for THIS button the choice
+ * has stopped mattering. It stays because a hover should touch the narrowest
+ * thing that produces the effect, and because the parallel rule on
+ * .bt-slip-place still genuinely needs it — .bt-slip-place-install is an <a>,
+ * cannot be :disabled, and is still a gradient.
  *
  * :not(:disabled) because this button is disabled while prefs load and while
  * saving — a hover response there advertises a click that does nothing. (The
@@ -1560,7 +1566,13 @@ a{color:inherit;text-decoration:none}
 .bt-slip-place.bt-slip-place-error,
 .bt-slip-place.bt-slip-place-error:hover:not(:disabled){background:#dc2626}
 /* In-flight state needs to look distinct from idle, or a slow connection reads
-   as an unresponsive button and the user clicks again. */
+   as an unresponsive button and the user clicks again.
+   Side effect of the doubled class, worth knowing because it is a real (small)
+   behaviour change: `cursor:progress` here was DEAD. At (0,1,0) it lost to
+   .bt-slip-place:disabled's `cursor:default` at (0,2,0), and this button is
+   always disabled while sending — measured, the old rule computed `default`, the
+   doubled one computes `progress`. That is what the declaration was written to
+   do, so it is kept rather than dropped. */
 .bt-slip-place.bt-slip-place-sending,
 .bt-slip-place.bt-slip-place-sending:hover:not(:disabled){background:#4b5563;cursor:progress}
 /* Rendered as an <a> to the install page when no extension is detected. Left on
