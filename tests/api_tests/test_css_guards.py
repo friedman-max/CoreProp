@@ -10,6 +10,7 @@ invariants live in test_css_tokens.py.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from tests.api_tests.css_helpers import (
     APP_MAIN_DIST,
@@ -81,49 +82,107 @@ def test_primary_hi_never_backs_inherited_text() -> None:
 
 
 def test_no_blurred_decorative_orbs() -> None:
-    """A glow orb is `border-radius:50%` plus a blur or a radial-gradient.
+    """A glow orb is a round element plus a blur or a radial-gradient background.
 
-    Matching a bare `filter:blur(` substring would flag `backdrop-filter:blur()`
-    on the sticky nav and the modal scrim, which are legitimate material blurs
-    on full-bleed surfaces, not decoration. So the matcher requires the round +
-    glow *pair* instead. Zero today; this guards against re-adding the removed
-    `.lp-orb` discs.
+    Both halves are narrower than they look, and both narrowings are deliberate:
+
+    * Round is three forms, not one: `50%`, `100%`, and a `9{3,}px` pill radius.
+      Matching `border-radius:50%` alone silently missed `100%` and `9999px` —
+      the latter is exactly what a `rounded-full`-style paste produces — so
+      neither miss needed an intent to evade.
+    * The glow half is property-scoped and blur is prefix-guarded. A bare
+      `filter:blur(` substring would flag `backdrop-filter:blur()` on the sticky
+      nav and the modal scrim, which are legitimate material blurs on full-bleed
+      surfaces; a radial-gradient matched anywhere in the rule would flag a
+      round element using one as a `mask-image`, a real non-decorative
+      technique. Both are false positives, which is the failure direction that
+      gets a guard weakened rather than obeyed.
+
+    Still not caught, so nobody reads this as airtight: other round spellings
+    (`9999rem`, `100vw`), and a gradient reached through a custom property
+    (`--orb:radial-gradient(…)` + `background:var(--orb)`), whose declared
+    property is `--orb` rather than a background.
+
+    Zero today; this guards against re-adding the removed `.lp-orb` discs.
     """
     violations = []
     for selector, decls in rules(style_block(INDEX)):
         if is_minigame(selector):          # .lp-game-flash is exactly this pair, and stays
             continue
         body = squash(decls)
-        round_ = "border-radius:50%" in body
-        glow = re.search(r"(?<!backdrop-)filter:blur\(", body) or "radial-gradient(" in body
-        if round_ and glow:
-            violations.append(selector)
-    assert not violations, f"blurred decorative orbs found: {violations}"
+        if not re.search(r"border-radius:(50|100)%|border-radius:9{3,}px", body):
+            continue
+        backgrounds = [d for d in declarations(decls)
+                       if d.partition(":")[0].strip().lower().startswith("background")]
+        why = []
+        if re.search(r"(?<!backdrop-)filter:blur\(", body):
+            why.append("filter:blur()")
+        if any("radial-gradient(" in squash(d) for d in backgrounds):
+            why.append("radial-gradient background")
+        if why:
+            violations.append(f"{selector} -> round + {' + '.join(why)}")
+    assert not violations, (
+        "blurred decorative orbs found:\n  " + "\n  ".join(violations)
+    )
 
 
 def test_no_gradient_clipped_text() -> None:
-    """Zero instances today; regression guard."""
-    violations = [
-        selector
-        for selector, decls in rules(style_block(INDEX))
-        if "background-clip:text" in squash(decls)
-    ]
-    assert not violations, f"gradient-clipped text found: {violations}"
+    """Zero instances today; regression guard.
+
+    Matched on the squashed declaration, so the `-webkit-background-clip:text`
+    spelling is caught by the same substring.
+    """
+    violations = []
+    for selector, decls in rules(style_block(INDEX)):
+        for decl in declarations(decls):
+            if "background-clip:text" in squash(decl):
+                violations.append(f"{selector} -> {decl}")
+    assert not violations, (
+        "gradient-clipped text found:\n  " + "\n  ".join(violations)
+    )
 
 
 def _root_token(css: str, name: str) -> str:
-    """Read a custom property's value out of the :root block.
+    """Read a custom property's value: the FIRST definition in the sheet.
 
-    Scoped to :root by fact, not by parsing: every custom-property *definition*
-    in both index.html and extension.html is inside :root today, so the first
-    match is that one. Requiring the `:` immediately after the name is what keeps
-    `--bg` off `--bg-2` and `--text` off `--text-3`. Redefining a token in a
-    later rule (a theme override, a @media block) would need this to take the
-    :root block explicitly.
+    That is :root's value for every name this helper is *asked for* — the palette
+    tokens the two callers below pass are each defined once, in :root, and :root
+    is the first rule in both files. Requiring the `:` immediately after the name
+    is what keeps `--bg` off `--bg-2` and `--text` off `--text-3`.
+
+    It is NOT a general :root reader, and the caveat is live rather than
+    theoretical: index.html already defines custom properties outside :root —
+    `.lp` sets --lp-gap/--lp-max, and `@media (min-width:1400px)` overrides
+    --lp-max further down. For a token with that shape, first-match-wins returns
+    whichever definition happens to come first in the file, so asking for one
+    means extracting the :root block properly instead.
     """
     m = re.search(rf"{re.escape(name)}\s*:\s*([^;}}]+)", css)
-    assert m, f"{name} not found in :root"
+    assert m, f"{name} is not defined anywhere in this stylesheet"
     return m.group(1).strip().lower()
+
+
+def _accent_literal(path: Path) -> str:
+    """TWEAK_DEFAULTS.accent, from either the source or the minified bundle.
+
+    Anchored on `TWEAK_DEFAULTS` because the key search is a substring match:
+    `accent` has no word boundary in front of it, so an unanchored pattern takes
+    the first accent-ish key in the file — `subaccent:` matches — and a
+    theme-preset object added above TWEAK_DEFAULTS would let a real drift in the
+    value that actually ships go undetected.
+
+    A window from the name rather than a match on `TWEAK_DEFAULTS\\s*=\\s*\\{`:
+    app-main.jsx has an `/*EDITMODE-BEGIN*/` comment between the `=` and the `{`.
+    The value pattern is `[^"']+` rather than a hex class so that a switch to a
+    non-hex colour fails as a *mismatch* against :root, which names the culprit,
+    instead of as a bare "not found".
+    """
+    text = path.read_text(encoding="utf-8")
+    i = text.find("TWEAK_DEFAULTS")           # the name survives minification
+    assert i != -1, f"TWEAK_DEFAULTS not found in {path.name}"
+    m = re.search(r"[\"']?accent[\"']?\s*:\s*[\"']([^\"']+)[\"']", text[i:i + 400])
+    assert m, f"TWEAK_DEFAULTS.accent not found in {path.name}"
+    return m.group(1)
 
 
 def test_accent_agrees_in_all_three_copies() -> None:
@@ -137,18 +196,10 @@ def test_accent_agrees_in_all_three_copies() -> None:
     prevent, and it has happened before.
     """
     token = _root_token(style_block(INDEX), "--primary")
-
-    jsx = APP_MAIN_JSX.read_text(encoding="utf-8")
-    # The bundle is minified to a bare `accent:` where the source has `"accent":`.
-    pattern = r"[\"']?accent[\"']?\s*:\s*[\"']([#0-9a-fA-F]+)[\"']"
-    jsx_m = re.search(pattern, jsx)
-    assert jsx_m, "TWEAK_DEFAULTS.accent not found in app-main.jsx"
-
-    dist_m = re.search(pattern, APP_MAIN_DIST.read_text(encoding="utf-8"))
-    assert dist_m, "accent literal not found in dist/app-main.js"
-
-    assert token == jsx_m.group(1).lower() == dist_m.group(1).lower(), (
-        f"accent disagrees: :root={token} jsx={jsx_m.group(1)} dist={dist_m.group(1)}"
+    jsx = _accent_literal(APP_MAIN_JSX)
+    dist = _accent_literal(APP_MAIN_DIST)
+    assert token == jsx.lower() == dist.lower(), (
+        f"accent disagrees: :root={token} jsx={jsx} dist={dist}"
     )
 
 
@@ -171,6 +222,7 @@ def test_extension_palette_mirror_matches() -> None:
         ("--muted", "--text-3"),
         ("--accent", "--primary-2"),
     ):
-        assert _root_token(ext_css, ext_name) == _root_token(index_css, index_name), (
-            f"extension.html {ext_name} != index.html {index_name}"
+        ext, idx = _root_token(ext_css, ext_name), _root_token(index_css, index_name)
+        assert ext == idx, (
+            f"extension.html {ext_name}={ext} != index.html {index_name}={idx}"
         )
