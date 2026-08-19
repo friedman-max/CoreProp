@@ -108,7 +108,7 @@
    * --radius-sm 10→12px). ios/CoreProp/Theme/Theme.swift carries the same
    * 14/10/8 triple and is deliberately still on the old values — Phase 4 of the
    * modernization ports this scale there. No test pins that mirror. */
-  --r-xl:      20px;   /* .pp-card, .pp-card-glow, .lp-cta-card only */
+  --r-xl:      20px;   /* the pricing hero only: .pp-card + its derived glow ring */
   --r-lg:      16px;   /* cards, panels, table wrappers, modals */
   --r-md:      12px;   /* inputs, inner tiles, menus, row action buttons */
   --r-sm:      8px;    /* small chips, badges, skeletons, icon buttons */
@@ -516,7 +516,11 @@ a{color:inherit;text-decoration:none}
 
 /* CTA */
 .lp-cta{max-width:var(--lp-max);margin:0 auto;padding:0 22px var(--lp-gap)}
-.lp-cta-card{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-xl);padding:clamp(36px,4.5vw,56px) 24px;text-align:center}
+/* --r-lg, not --r-xl. On the page this sits directly under the 16px "In the
+ * app" cards and beside .lp-books / .lp-cov-grid / .lp-step / .lp-method-card,
+ * all 16px — so as the landing page's own hero it is a peer of those cards, not
+ * of the pricing hero. --r-xl's two consumers are .pp-card and .pp-card-glow. */
+.lp-cta-card{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-lg);padding:clamp(36px,4.5vw,56px) 24px;text-align:center}
 .lp-cta-card .lp-h2-sub{margin:0 auto 22px}
 
 /* FOOTER */
@@ -735,7 +739,14 @@ a{color:inherit;text-decoration:none}
  * than the text inputs beside it and dragged its own "LEAGUE" / "SIDE" label
  * 3px down out of line with "PROP TYPE" / "MIN TRUE %". Vertical padding is
  * dropped in favour of flex centring so the height is exact at any font-size. */
-.ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);height:34px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-pill);font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
+/* --r-sm, not --r-pill. Pill chips are the more modern shape in isolation, but
+ * this chip shares one wrapping tile with .ev-stepper (--r-sm), .ev-clear
+ * (--r-sm) and .cp-input-sm (--r-md). Pilling only the chip put four corner
+ * treatments in one bar, with a pill sitting directly against an 8px Clear at
+ * 375px — less consistent than the 8/10/8/8 it replaced. Matching .ev-stepper
+ * keeps the bar one family. Pilling the other three instead would drag
+ * .cp-input-sm's shape across the whole app. */
+.ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);height:34px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-sm);font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
 .ev-chip:hover{border-color:var(--hair-2);color:var(--text)}
 .ev-chip.is-on{background:var(--primary);border-color:var(--primary);color:white}
 .ev-stepper{display:flex;align-items:center;background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-sm);overflow:hidden}
@@ -1374,7 +1385,10 @@ a{color:inherit;text-decoration:none}
 .ev-prefs-save{
   margin-top:8px;width:100%;
   background:var(--primary);
-  color:white;border:0;border-radius:var(--r-sm);
+  /* --r-md to match .cp-btn-save, the other full-width primary CTA in this
+   * sidebar. The two stack directly adjacent, so 8px against 12px read as a
+   * mistake once the glows that used to distract from it were removed. */
+  color:white;border:0;border-radius:var(--r-md);
   padding:10px;font-size:13px;font-weight:700;letter-spacing:.02em;
   cursor:pointer;white-space:nowrap;
   transition:transform .08s ease, background .2s ease;
