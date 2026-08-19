@@ -674,32 +674,51 @@ function EVPage() {
                 style={{ animationDelay: (i * 14) + "ms" }}
                 title={b.inBacktest ? "Already logged — won't be picked for new slips" : undefined}
               >
-                <span className="ev-player">
-                  {/* No LOGGED badge here: it was `flex-shrink:0` inside the
-                      PLAYER cell, so on a phone it ate most of a ~100px track
-                      and pushed the player name out over the LEAGUE column.
-                      The red row treatment carries the status instead, and
-                      .ev-legend below the meta row explains what red means. */}
-                  {/* title = the desktop escape hatch for the ellipsis; on
-                      phones the name wraps instead (see the 560px block in
-                      index.html) because touch devices have no hover. */}
-                  <span className="ev-player-n" title={b.player}>{b.player}</span>
-                  {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 6, background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>GD</span>}
-                </span>
-                <span><LeaguePill league={b.league} /></span>
-                <span className="ev-prop">{b.prop}</span>
-                <span className="ev-line">{b.line}</span>
-                <span className={"ev-side " + (b.side === "OVER" ? "is-over" : "is-under")}>{b.side}</span>
-                <span>
+                {/* Identity zone. The nine grid columns this replaced are now
+                    three stacked lines that own the full row width; the row's
+                    only other child is the fixed right zone below. */}
+                <div className="ev-row-main">
+                  <div className="ev-player">
+                    {/* No LOGGED badge here: it was `flex-shrink:0` inside the
+                        PLAYER cell, so on a phone it ate most of a ~100px track
+                        and pushed the player name out over the LEAGUE column.
+                        The red row treatment carries the status instead, and
+                        .ev-legend below the meta row explains what red means. */}
+                    {/* title = the desktop escape hatch for the ellipsis; on
+                        phones the name wraps instead (see the 560px block in
+                        index.html) because touch devices have no hover. */}
+                    <span className="ev-player-n" title={b.player}>{b.player}</span>
+                    {/* borderRadius is the STRING "var(--r-sm)": React appends
+                        px to numeric style values, so a bare token breaks. There
+                        is no .ev-gd CSS rule, so this inline value is the only
+                        source and no test can see it. */}
+                    {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: "var(--r-sm)", background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>GD</span>}
+                  </div>
+                  {/* Meta line reads "LEAGUE Prop SIDE line · time", so .ev-side
+                      precedes .ev-line ("OVER 25.5"). The dot separator keeps
+                      --text-4 and stays a bare glyph — it is on TEXT4_ALLOWED
+                      precisely because it is decorative, not read. */}
+                  <div className="ev-row-meta">
+                    <LeaguePill league={b.league} />
+                    <span className="ev-prop">{b.prop}</span>
+                    <span className={"ev-side " + (b.side === "OVER" ? "is-over" : "is-under")}>{b.side}</span>
+                    <span className="ev-line">{b.line}</span>
+                    <span className="ev-meta-dot">·</span>
+                    <span className="ev-time">{fmtGameTime(b.startTime)}</span>
+                  </div>
+                  <div className="ev-books">
+                    {b.books.map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}
+                  </div>
+                </div>
+                {/* Right zone: the true% is the hero number of the row. The add
+                    button is a <span> with no onClick — the row's own onClick is
+                    the only trigger, so the whole row stays one hit target. */}
+                <div className="ev-row-side">
                   <TruePct value={b.truePct} />
-                </span>
-                <span className="ev-books">
-                  {b.books.map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}
-                </span>
-                <span className="ev-time">{fmtGameTime(b.startTime)}</span>
-                <span className="ev-add">
-                  <span className={"ev-add-btn " + (isSel ? "is-sel" : "")}>{isSel ? "✓" : "+"}</span>
-                </span>
+                  <span className="ev-add">
+                    <span className={"ev-add-btn " + (isSel ? "is-sel" : "")}>{isSel ? "✓" : "+"}</span>
+                  </span>
+                </div>
               </div>
             );
           })}
