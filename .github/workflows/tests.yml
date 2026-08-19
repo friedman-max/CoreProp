@@ -35,3 +35,29 @@ jobs:
           SUPABASE_ANON_KEY: ci-anon-key
         run: |
           python -m pytest tests/ -q --tb=short
+
+  bundles:
+    # Layer 2 of the bundle-freshness guard: catches a .jsx edited with
+    # ./build.sh never run. The pytest stamp test cannot see that case — dist/
+    # and the stamps are both unchanged — and Render's build env is pip-only, so
+    # a stale committed bundle ships a silent no-op to production. Compiling is
+    # the only way to detect it, hence a node job. GitHub runners have node;
+    # build.sh pins esbuild via `npx --yes esbuild@0.28.1`.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Rebuild the bundles
+        run: ./build.sh
+
+      - name: Fail if the committed output differs
+        # index.html and sw.js are in scope because build.sh stamps the
+        # cache-bust id into both; a rebuild that moves the digest must have
+        # been committed with them.
+        run: git diff --exit-code web/static/dist web/static/index.html web/static/sw.js

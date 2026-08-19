@@ -8,12 +8,17 @@ bundle is from the SAME build, so a mixed set renders a blank page.
 This catches a rebuild committed without its stamps, a hand-edited bundle, and a
 partial dist/ commit. It CANNOT catch a .jsx edited with ./build.sh never run —
 dist/ and the stamps are both unchanged then, and this test still passes. That
-case needs the node CI job (see .github/workflows/tests.yml).
+case needs layer 2, the `bundles` job in .github/workflows/tests.yml, which
+rebuilds on a node runner and diffs dist/ + the two stamped files.
 
 Note the glob is all of dist/*.js — 11 files, including the orphan auth-page.js
 — and NOT build.sh's 10-entry FILES array, because build.sh's own
 `cat "$OUT_DIR"/*.js` hashes everything in the directory. Using FILES would
-produce a different digest.
+produce a different digest. The flip side: auth-page.jsx is not in FILES, so
+./build.sh never recompiles it and neither layer can tell whether
+dist/auth-page.js still matches it. It is in sync as of this commit, and nothing
+loads it (no index.html script tag, no route), so it is dead weight that only
+feeds the digest — but do not assume the guard covers it.
 """
 from __future__ import annotations
 

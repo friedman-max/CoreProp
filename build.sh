@@ -61,7 +61,16 @@ done
 # the SW's activate() purges every prior build's cached bundles, so an offline
 # visit can never serve a mixed-version set. Run on every ./build.sh — no manual
 # bumping (the old ?v=14d4eaeb went stale exactly this way).
-BUILD_ID=$(cat "$OUT_DIR"/*.js | shasum | cut -c1-10)
+# LC_ALL=C so the glob expands in byte order, matching Python's sorted() in
+# tests/api_tests/test_build_stamp.py, which recomputes this same digest and
+# asserts it equals the stamps below. A UTF-8 locale collates by dictionary
+# rules instead (glibc ignores punctuation; macOS folds case), so the shell's
+# order and Python's agree only by luck for the current filenames — add a bundle
+# where a hyphen is the discriminating character (page-x.js vs pagex.js) and the
+# two silently disagree, surfacing as a spurious stamp-test failure rather than
+# as anything that points here. Scoped to this command substitution's subshell
+# so the perl stamping below keeps the ambient locale.
+BUILD_ID=$( export LC_ALL=C; cat "$OUT_DIR"/*.js | shasum | cut -c1-10 )
 perl -i -pe "s{(/static/dist/[a-z0-9-]+\.js\?v=)[a-z0-9]+}{\${1}$BUILD_ID}g" "$SRC_DIR/index.html"
 perl -i -pe "s{(coreprop-shell-)[A-Za-z0-9]+}{\${1}$BUILD_ID}" "$SRC_DIR/sw.js"
 echo "Cache-bust id: $BUILD_ID (stamped into index.html ?v= and sw.js CACHE)"
