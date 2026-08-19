@@ -720,7 +720,7 @@ a{color:inherit;text-decoration:none}
  * below) — this used to hardcode 16px, which was correct only back when the
  * padding was a flat 18px and left every selected row 6px out of alignment at
  * wide viewports. Mirrors what .is-logged does for its 3px border. */
-.ev-row-data.is-sel{background:linear-gradient(90deg,rgba(30,111,176,.10),rgba(30,111,176,.02));border-left:2px solid var(--primary);padding-left:calc(clamp(18px,2vw,24px) - 2px)}
+.ev-row-data.is-sel{border-left:2px solid var(--primary);background:var(--primary-hi);padding-left:calc(clamp(18px,2vw,24px) - 2px)}
 .ev-row:last-child{border-bottom:0}
 .ev-th-sort{display:inline-flex;align-items:center;gap:5px;color:var(--primary-2)}
 .ev-arrow{font-size:10px}
@@ -1108,7 +1108,7 @@ a{color:inherit;text-decoration:none}
 .pnl-range-btn.is-on{background:#1f1f2e;color:white}
 /* The Custom range button gets the app's purple when active so it reads as the
  * special "opens a picker" option and ties visually to the picker's focus ring. */
-.pnl-range-btn.is-custom.is-on{background:linear-gradient(180deg,var(--primary-2),var(--primary));color:#fff;box-shadow:0 1px 0 rgba(255,255,255,.22) inset}
+.pnl-range-btn.is-custom.is-on{background:var(--primary);color:#fff}
 
 /* Custom date-range picker — matches the segmented range control above it (same
  * inset panel + radius) with two rounded date fields and the purple focus ring
