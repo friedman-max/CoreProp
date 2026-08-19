@@ -821,6 +821,12 @@ a{color:inherit;text-decoration:none}
 .ev-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
 .ev-row-side{display:flex;align-items:center;gap:var(--s-3);flex-shrink:0}
 .ev-row-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12.5px;color:var(--text-3)}
+/* Wrap units inside the meta line. Each keeps a pair that reads as one thing
+ * from being split across a wrap: the bet itself (SIDE + line) and the game
+ * time with its leading separator. Without these, 375px split UNDER from 1.5 in
+ * every row measured and orphaned the separator in two thirds of them. */
+.ev-bet{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.ev-when{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 /* Each line inside the identity zone must be allowed to shrink below its own
  * content width, or a long value (e.g. a full player name, or the
  * "Hits+Runs+RBIs" prop) pushes .ev-row-main wider than the row and squeezes the
@@ -833,6 +839,11 @@ a{color:inherit;text-decoration:none}
  * by accident. */
 @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .ev-row-data{animation:fadeUp .35s ease both}
+/* DEAD for every default user: app-main.jsx injects
+ * `.app:not(.tint-on) .ev-row-data:hover` at (0,4,0) into <head>, and tableTint
+ * defaults to "off" so that selector always matches. This (0,2,0) rule only
+ * renders with the dev tweaks panel's row-tint switched on. Editing it to change
+ * the hover look does nothing — that lives in app-main.jsx. */
 .ev-row-data:hover{background:rgba(30,111,176,.05)}
 /* Selected row: the 3px accent border must be subtracted from the row's own
  * horizontal padding, or the whole row's content shifts right relative to every
@@ -901,7 +912,7 @@ a{color:inherit;text-decoration:none}
  * and this rule also sets overflow:visible. title={b.player} stays in the JSX
  * regardless; it is harmless and still useful to screen readers. */
 .ev-player{display:flex;align-items:flex-start;gap:8px;min-width:0}
-.ev-player-n{font-weight:600;letter-spacing:-.005em;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.3;overflow-wrap:anywhere}
+.ev-player-n{font-weight:600;letter-spacing:-.005em;line-height:1.3;overflow-wrap:anywhere}
 /* There is deliberately no per-row LOGGED badge. It lived inside .ev-player as a
  * flex-shrink:0 chip, and back when the row was a 9-track grid with a 620px
  * minimum on phones the PLAYER track was only ~100px wide, so the chip consumed
@@ -923,11 +934,14 @@ a{color:inherit;text-decoration:none}
  * --red-hi (.10) was the other candidate and was rejected: it would materially
  * weaken a signal that means "already logged, won't be picked."
  *
- * !important is load-bearing: app-main.jsx appends a runtime <style> to <head>
- * carrying `.app:not(.tint-on) .ev-row-data:hover{background:...}` at (0,4,0),
- * which outranks these (0,2,0)/(0,3,0) tints. Do not drop it while
- * reformatting — the only symptom is that logged rows go grey under the cursor,
- * and nothing tests hover. */
+ * !important is load-bearing on the three :hover / .is-sel rules ONLY:
+ * app-main.jsx appends a runtime <style> to <head> carrying
+ * `.app:not(.tint-on) .ev-row-data:hover{background:...}` at (0,4,0), which
+ * outranks them. Drop one and logged rows go grey under the cursor, with nothing
+ * testing hover. It is measurably INERT on the two rest-state rules below
+ * (.is-logged and .is-logged.is-sel) — the only (0,4,0) competitor is
+ * :hover-scoped, so nothing can outrank a rest tint — but it is kept for
+ * symmetry so the family reads as one decision rather than four. */
 .ev-row-data.is-logged{
   background:rgba(239,68,68,.16) !important;
   border-left:3px solid var(--red);
@@ -935,16 +949,27 @@ a{color:inherit;text-decoration:none}
   padding-left:calc(var(--row-px) - 3px);
 }
 .ev-row-data.is-logged:hover{background:rgba(239,68,68,.22) !important}
-/* The meta line is in here too, not just the name/prop/line. It is --text-3,
- * which measures 4.58:1 over the resting .16 tint but only 4.22:1 over the .22
- * hover, 3.97:1 over the .26 selected and 3.61:1 over the .32 selected-hover —
- * i.e. the game time fell under AA on three of the four logged states. #FECACA
- * holds 8.5-10.7:1 across all four, and a logged row reading wholly in the
- * logged colour is the right result anyway. Measured over
- * #FECACA/--text-3 on rgba(239,68,68,a) over --card. */
+/* Every element in a logged row that carries text needs listing here BY NAME —
+ * colouring the .ev-row-meta container does nothing for its children. A
+ * declaration that matches an element always beats an inherited value, whatever
+ * the ancestor selector's specificity, and .ev-time sets its own
+ * color:var(--text-3). A first attempt at this fix set only .ev-row-meta and
+ * rendered nothing: .ev-row-meta computed #FECACA while .ev-time stayed
+ * rgb(138,138,155).
+ *
+ * Why it matters: --text-3 over the tint over --card measures 4.58:1 at the
+ * resting .16 but 4.22:1 at the .22 hover, 3.97:1 at the .26 selected and
+ * 3.61:1 at the .32 selected-hover — three of the four logged states under AA.
+ * Flattening the tint is right, but it deepened the fill under the game time
+ * from the old gradient's ~.12 (4.82:1, passing) to .16-.32, so desktop
+ * regressed until this landed. #FECACA holds 8.5-10.7:1 across all four.
+ *
+ * .ev-side, .cp-book and .cp-odd-n set their own colours too and will need the
+ * same treatment if they are ever meant to follow the logged tint. */
 .ev-row-data.is-logged .ev-player-n,
 .ev-row-data.is-logged .ev-prop,
 .ev-row-data.is-logged .ev-line,
+.ev-row-data.is-logged .ev-time,
 .ev-row-data.is-logged .ev-row-meta{color:#FECACA}
 .ev-row-data.is-logged.is-sel{
   background:rgba(239,68,68,.26) !important;
@@ -1060,7 +1085,12 @@ a{color:inherit;text-decoration:none}
  * background:var(--primary-hi), and that explicit colour is what makes it pass
  * test_primary_hi_never_backs_inherited_text. Do not drop it. */
 .ev-leg{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-3);background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-md);animation:fadeUp .25s ease both}
-.ev-leg-i{width:18px;height:18px;background:var(--primary-hi);color:var(--primary-2);border-radius:var(--r-md);display:grid;place-items:center;font-size:10px;font-family:"JetBrains Mono",monospace;font-weight:700;flex-shrink:0}
+/* 50%, not --r-md: an 18px box clamps --r-md's 12px to 9px, so this only
+ * renders as a circle by accident and would silently become a rounded square if
+ * the token ever dropped below 9px. .lp-why-n and .lp-step-n are the same
+ * numbered chip with the same --primary-hi/--primary-2 pair and both use 50%
+ * explicitly — RADIUS_LITERAL_OK permits it. */
+.ev-leg-i{width:18px;height:18px;background:var(--primary-hi);color:var(--primary-2);border-radius:50%;display:grid;place-items:center;font-size:10px;font-family:"JetBrains Mono",monospace;font-weight:700;flex-shrink:0}
 .ev-leg-body{flex:1;min-width:0}
 .ev-leg-n{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-leg-p{font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1913,16 +1943,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=c04156bbba"></script>
-<script src="/static/dist/tweaks-panel.js?v=c04156bbba"></script>
-<script src="/static/dist/components.js?v=c04156bbba"></script>
-<script src="/static/dist/landing.js?v=c04156bbba"></script>
-<script src="/static/dist/ev-page.js?v=c04156bbba"></script>
-<script src="/static/dist/page-boards.js?v=c04156bbba"></script>
-<script src="/static/dist/page-backtest.js?v=c04156bbba"></script>
-<script src="/static/dist/page-analytics.js?v=c04156bbba"></script>
-<script src="/static/dist/pricing.js?v=c04156bbba"></script>
-<script src="/static/dist/app-main.js?v=c04156bbba"></script>
+<script src="/static/dist/api.js?v=3815cc7812"></script>
+<script src="/static/dist/tweaks-panel.js?v=3815cc7812"></script>
+<script src="/static/dist/components.js?v=3815cc7812"></script>
+<script src="/static/dist/landing.js?v=3815cc7812"></script>
+<script src="/static/dist/ev-page.js?v=3815cc7812"></script>
+<script src="/static/dist/page-boards.js?v=3815cc7812"></script>
+<script src="/static/dist/page-backtest.js?v=3815cc7812"></script>
+<script src="/static/dist/page-analytics.js?v=3815cc7812"></script>
+<script src="/static/dist/pricing.js?v=3815cc7812"></script>
+<script src="/static/dist/app-main.js?v=3815cc7812"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

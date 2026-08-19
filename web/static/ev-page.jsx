@@ -725,9 +725,17 @@ function EVPage() {
                   <div className="ev-row-meta">
                     <LeaguePill league={b.league} />
                     <span className="ev-prop">{b.prop}</span>
-                    <span className={"ev-side " + (b.side === "OVER" ? "is-over" : "is-under")}>{b.side}</span>
-                    <span className="ev-line">{b.line}</span>
-                    {b.startTime && <><span className="ev-meta-dot" aria-hidden="true">·</span><span className="ev-time">{fmtGameTime(b.startTime)}</span></>}
+                    {/* side+line and dot+time are each ONE wrap unit. Measured at
+                        375px before this: the meta line wrapped to 3 visual lines
+                        in 59/60 rows, "UNDER" and "1.5" landed on different lines
+                        in 60/60, and the separator was orphaned from the time it
+                        separates in 40/60 — reading as a stray bullet. The bet
+                        ("UNDER 1.5") is one token to a reader, so it wraps as one. */}
+                    <span className="ev-bet">
+                      <span className={"ev-side " + (b.side === "OVER" ? "is-over" : "is-under")}>{b.side}</span>
+                      <span className="ev-line">{b.line}</span>
+                    </span>
+                    {b.startTime && <span className="ev-when"><span className="ev-meta-dot" aria-hidden="true">·</span><span className="ev-time">{fmtGameTime(b.startTime)}</span></span>}
                   </div>
                   <div className="ev-books">
                     {b.books.map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}

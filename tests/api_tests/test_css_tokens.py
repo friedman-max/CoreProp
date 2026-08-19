@@ -319,9 +319,12 @@ def test_ev_row_state_tints_are_flat():
     The legend swatch is a deliberate miniature of the logged row and must match.
     """
     targets = (
+        ".ev-row-data.is-sel",
+        ".ev-row-data.is-sel:hover",
         ".ev-row-data.is-logged",
         ".ev-row-data.is-logged:hover",
         ".ev-row-data.is-logged.is-sel",
+        ".ev-row-data.is-logged.is-sel:hover",
         ".ev-legend-swatch",
     )
     violations = []
