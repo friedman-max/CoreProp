@@ -797,30 +797,31 @@ a{color:inherit;text-decoration:none}
 
 /* Table */
 .ev-table{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);overflow:hidden}
+/* Airy row: one flex line with an identity/meta zone that grows and a fixed
+ * right zone for the hero true% + add button. This replaced a 9-track grid; the
+ * 9 columns now live as two stacked lines inside .ev-row-main (see ev-page.jsx).
+ * Padding stays on --row-px — and the copy in the density-overrides block below
+ * is the one that actually wins, so both must carry it. */
 .ev-row{
-  display:grid;
-  /* Track 8 (GAME) is minmax(86px,.8fr), not a bare .8fr: the timestamp
-   * ("7/30 5:38 PM") is white-space:nowrap at 12px JetBrains Mono, which needs
-   * 86px. As a pure fraction the track shrank below that under ~1250px and the
-   * text ran straight into the "+" button in track 9 (measured -12px of overlap
-   * at 1120px). minmax() lets it still grow on wide screens but never collapse
-   * under its own content. */
-  grid-template-columns:1.5fr .55fr 1.25fr .5fr .6fr .65fr .95fr minmax(86px,.8fr) .45fr;
-  gap:var(--s-3);
-  align-items:center;
-  /* Horizontal padding is --row-px and NOTHING ELSE — see the token's note in
-   * :root. This rule is re-declared in the density-overrides block below, so
-   * editing only this copy is a silent no-op. */
+  display:flex;
+  align-items:flex-start;
+  gap:var(--s-4);
   padding:var(--s-4) var(--row-px);
   border-bottom:1px solid var(--hair);
   font-size:13.5px;
   cursor:default;
   transition:background .12s ease;
 }
-/* Every column cell clips its own content so a long value (e.g. the
- * "Hits+Runs+RBIs" prop) can't spill into the next column and shove the
- * grid out of alignment. */
-.ev-row>span{min-width:0}
+.ev-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.ev-row-side{display:flex;align-items:center;gap:var(--s-3);flex-shrink:0}
+.ev-row-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12.5px;color:var(--text-3)}
+/* Each line inside the identity zone must be allowed to shrink below its own
+ * content width, or a long value (e.g. a full player name, or the
+ * "Hits+Runs+RBIs" prop) pushes .ev-row-main wider than the row and squeezes the
+ * right zone. Flex items default to min-width:auto, so this is not redundant
+ * with .ev-row-main's own min-width:0. This was `.ev-row>span` while the row was
+ * a grid of spans; the direct children are now .ev-row-main / .ev-row-side. */
+.ev-row-main>*{min-width:0}
 /* Row/leg entrance. Defined here, next to its only two consumers — it used to
  * sit in the LANDING block, which is why it survived that block's rewrite only
  * by accident. */
