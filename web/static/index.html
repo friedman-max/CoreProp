@@ -794,6 +794,28 @@ a{color:inherit;text-decoration:none}
 }
 .ev-pulse{color:var(--green);font-style:normal;font-weight:600}
 
+/* Backtest page auto-place strip — the discoverable entry point. Red when
+ * armed, matching the panel: "on" means real money can leave. */
+.bt-ap-strip{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:9px 12px;margin:0 0 12px;border-radius:var(--r-md,10px);
+  background:rgba(255,255,255,.03);border:1px solid var(--hair);
+  font-size:12.5px;color:var(--text-2);
+}
+.bt-ap-strip.is-armed{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.45);color:#FECACA}
+/* --text-3, not --text-4: the 2.3:1 token is guarded to decorative glyphs
+ * only (tests/api_tests/test_css_tokens.py), and while this dot is
+ * aria-hidden it still signals armed state, so it should be legible. */
+.bt-ap-dot{width:8px;height:8px;border-radius:50%;background:var(--text-3);flex-shrink:0}
+.bt-ap-strip.is-armed .bt-ap-dot{background:var(--red)}
+.bt-ap-txt{flex:1 1 auto;min-width:0}
+.bt-ap-btn{
+  flex-shrink:0;border:1px solid var(--hair);background:rgba(255,255,255,.06);
+  color:var(--text);border-radius:var(--r-sm,8px);padding:6px 12px;
+  font-size:12.5px;font-weight:600;cursor:pointer;min-height:32px;
+}
+.bt-ap-btn:hover{border-color:var(--primary)}
+
 /* ───────── Auto-place panel ─────────
  * The arming UI for real-money auto-submission. Sized mobile-first: the whole
  * point of this control is that it is reachable from the installed PWA, where
@@ -1829,16 +1851,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=2439472991"></script>
-<script src="/static/dist/tweaks-panel.js?v=2439472991"></script>
-<script src="/static/dist/components.js?v=2439472991"></script>
-<script src="/static/dist/landing.js?v=2439472991"></script>
-<script src="/static/dist/ev-page.js?v=2439472991"></script>
-<script src="/static/dist/page-boards.js?v=2439472991"></script>
-<script src="/static/dist/page-backtest.js?v=2439472991"></script>
-<script src="/static/dist/page-analytics.js?v=2439472991"></script>
-<script src="/static/dist/pricing.js?v=2439472991"></script>
-<script src="/static/dist/app-main.js?v=2439472991"></script>
+<script src="/static/dist/api.js?v=e6e5dd2bda"></script>
+<script src="/static/dist/tweaks-panel.js?v=e6e5dd2bda"></script>
+<script src="/static/dist/components.js?v=e6e5dd2bda"></script>
+<script src="/static/dist/landing.js?v=e6e5dd2bda"></script>
+<script src="/static/dist/ev-page.js?v=e6e5dd2bda"></script>
+<script src="/static/dist/page-boards.js?v=e6e5dd2bda"></script>
+<script src="/static/dist/page-backtest.js?v=e6e5dd2bda"></script>
+<script src="/static/dist/page-analytics.js?v=e6e5dd2bda"></script>
+<script src="/static/dist/pricing.js?v=e6e5dd2bda"></script>
+<script src="/static/dist/app-main.js?v=e6e5dd2bda"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

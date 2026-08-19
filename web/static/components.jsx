@@ -145,6 +145,7 @@ function AutoPlacePanel({ onClose }) {
       });
       setMode(nextMode);
       setConfirmLive(false);
+      window.dispatchEvent(new CustomEvent("cp:auto-place-changed"));
       setOkMsg(nextMode === "off" ? "Auto-place disarmed."
              : nextMode === "paper" ? "Armed in paper mode — nothing is submitted."
              : "Armed LIVE. Real money will be staked.");
@@ -167,7 +168,8 @@ function AutoPlacePanel({ onClose }) {
         <div className={"ap-state " + (armed ? "is-on" : "")}>
           {status === null ? "Loading…"
             : armed ? `Armed · ${status.mode} · $${status.stake} per slip`
-            : `Not armed${status.blocked_reason ? " — " + status.blocked_reason : ""}`}
+            : `Not armed${status.blocked_reason && status.blocked_reason !== "not armed"
+                             ? " — " + status.blocked_reason : ""}`}
         </div>
 
         {status && status.spent_today !== null && (
@@ -255,6 +257,14 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app", l
   };
 
   // Close the profile dropdown on any outside click or Escape.
+  // Any page can ask for the auto-place panel (the Backtest page's strip does),
+  // so the control is not reachable only through the avatar dropdown.
+  useEffect(() => {
+    const open = () => setAutoPlaceOpen(true);
+    window.addEventListener("cp:open-auto-place", open);
+    return () => window.removeEventListener("cp:open-auto-place", open);
+  }, []);
+
   useEffect(() => {
     if (!menuOpen) return;
     const onDown = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
