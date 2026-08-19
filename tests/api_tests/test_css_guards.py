@@ -9,7 +9,12 @@ invariants live in test_css_tokens.py.
 """
 from __future__ import annotations
 
+import re
+
 from tests.api_tests.css_helpers import (
+    APP_MAIN_DIST,
+    APP_MAIN_JSX,
+    EXTENSION,
     INDEX,
     declarations,
     gradient_declarations,
@@ -73,3 +78,99 @@ def test_primary_hi_never_backs_inherited_text() -> None:
         "--primary-hi behind text that inherits its color (4.45:1 < AA 4.5:1); "
         "use --primary-lo:\n  " + "\n  ".join(violations)
     )
+
+
+def test_no_blurred_decorative_orbs() -> None:
+    """A glow orb is `border-radius:50%` plus a blur or a radial-gradient.
+
+    Matching a bare `filter:blur(` substring would flag `backdrop-filter:blur()`
+    on the sticky nav and the modal scrim, which are legitimate material blurs
+    on full-bleed surfaces, not decoration. So the matcher requires the round +
+    glow *pair* instead. Zero today; this guards against re-adding the removed
+    `.lp-orb` discs.
+    """
+    violations = []
+    for selector, decls in rules(style_block(INDEX)):
+        if is_minigame(selector):          # .lp-game-flash is exactly this pair, and stays
+            continue
+        body = squash(decls)
+        round_ = "border-radius:50%" in body
+        glow = re.search(r"(?<!backdrop-)filter:blur\(", body) or "radial-gradient(" in body
+        if round_ and glow:
+            violations.append(selector)
+    assert not violations, f"blurred decorative orbs found: {violations}"
+
+
+def test_no_gradient_clipped_text() -> None:
+    """Zero instances today; regression guard."""
+    violations = [
+        selector
+        for selector, decls in rules(style_block(INDEX))
+        if "background-clip:text" in squash(decls)
+    ]
+    assert not violations, f"gradient-clipped text found: {violations}"
+
+
+def _root_token(css: str, name: str) -> str:
+    """Read a custom property's value out of the :root block.
+
+    Scoped to :root by fact, not by parsing: every custom-property *definition*
+    in both index.html and extension.html is inside :root today, so the first
+    match is that one. Requiring the `:` immediately after the name is what keeps
+    `--bg` off `--bg-2` and `--text` off `--text-3`. Redefining a token in a
+    later rule (a theme override, a @media block) would need this to take the
+    :root block explicitly.
+    """
+    m = re.search(rf"{re.escape(name)}\s*:\s*([^;}}]+)", css)
+    assert m, f"{name} not found in :root"
+    return m.group(1).strip().lower()
+
+
+def test_accent_agrees_in_all_three_copies() -> None:
+    """`--primary`, TWEAK_DEFAULTS.accent in the .jsx, AND in the committed bundle.
+
+    An effect writes TWEAK_DEFAULTS.accent back as an *inline* style on
+    document.documentElement, which beats the stylesheet. dist/app-main.js is
+    what the browser actually runs and carries its own copy of the literal, so a
+    .jsx-only assertion would pass while a stale bundle keeps writing the old
+    accent everywhere. That is exactly the failure CLAUDE.md's rule exists to
+    prevent, and it has happened before.
+    """
+    token = _root_token(style_block(INDEX), "--primary")
+
+    jsx = APP_MAIN_JSX.read_text(encoding="utf-8")
+    # The bundle is minified to a bare `accent:` where the source has `"accent":`.
+    pattern = r"[\"']?accent[\"']?\s*:\s*[\"']([#0-9a-fA-F]+)[\"']"
+    jsx_m = re.search(pattern, jsx)
+    assert jsx_m, "TWEAK_DEFAULTS.accent not found in app-main.jsx"
+
+    dist_m = re.search(pattern, APP_MAIN_DIST.read_text(encoding="utf-8"))
+    assert dist_m, "accent literal not found in dist/app-main.js"
+
+    assert token == jsx_m.group(1).lower() == dist_m.group(1).lower(), (
+        f"accent disagrees: :root={token} jsx={jsx_m.group(1)} dist={dist_m.group(1)}"
+    )
+
+
+def test_extension_palette_mirror_matches() -> None:
+    """extension.html restates the palette under different names.
+
+    It is deliberately standalone (no React, no shared stylesheet) so it still
+    renders for an expired session, which means it cannot read :root — its own
+    comment says "Keep these values in step with those tokens" and nothing
+    enforced that until now. Radii are deliberately NOT asserted: they are
+    hand-copied numbers, and pinning them would make a future scale change fail
+    in two places instead of one.
+    """
+    index_css = style_block(INDEX)
+    ext_css = style_block(EXTENSION)
+    for ext_name, index_name in (
+        ("--bg", "--bg"),
+        ("--panel", "--card"),
+        ("--fg", "--text"),
+        ("--muted", "--text-3"),
+        ("--accent", "--primary-2"),
+    ):
+        assert _root_token(ext_css, ext_name) == _root_token(index_css, index_name), (
+            f"extension.html {ext_name} != index.html {index_name}"
+        )
