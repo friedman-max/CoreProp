@@ -545,7 +545,7 @@ unchanged.
 
     ```
     .ev-row-data.is-sel           { border-left:3px solid var(--primary);
-                                    background:var(--primary-hi);
+                                    background:var(--primary-lo);
                                     padding-left:calc(var(--row-px) - 3px) }
     .ev-row-data.is-logged        { border-left:3px solid var(--red);
                                     background:var(--red-hi) !important;
@@ -553,6 +553,15 @@ unchanged.
     .ev-row-data.is-logged.is-sel { border-left:3px solid var(--red);
                                     background:rgba(239,68,68,.20) !important }
     ```
+
+    `--primary-lo` (`rgba(30,111,176,.10)`) is a token added in Phase 1
+    specifically for row-level accent tints. **Do not substitute
+    `--primary-hi`** here: at `.22` it is inherited by `.ev-time`'s `--text-3`
+    and measures 4.45:1, under the AA floor — `--primary-hi` is for focus rings
+    and badges, where an explicit `--primary-2` sits on top. `.10` is exactly
+    the most-tinted stop of the gradient being replaced, so the flat fill holds
+    the identical 5.03:1 worst case. Enforced by
+    `test_primary_hi_never_backs_inherited_text`.
 
     The hover variants (745-747) flatten the same way — one step deeper alpha, no
     gradient. **Keep the `!important`** on the logged backgrounds: at (0,3,0)
