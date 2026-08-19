@@ -262,3 +262,29 @@ def test_selected_and_logged_bars_are_both_3px():
             for decl in declarations(decls):
                 if decl.partition(":")[0].strip().lower() == "border-left":
                     assert "3px" in decl, f"{selector} left bar should be 3px: {decl.strip()}"
+
+
+# --text-4 is 2.3:1 — decorative/disabled glyphs only, never readable text.
+# These six are single-glyph decorations: a middot, two em dashes, a close X
+# (which carries an aria-label), an arrow, and an empty heat cell.
+TEXT4_ALLOWED = (
+    ".ev-meta-dot",
+    ".bd-odds-empty",
+    ".bd-edge-cell",
+    ".bt-slip-del",
+    ".pnl-custom-arrow",
+    ".obs-heat-cell.is-empty",
+)
+
+
+def test_text4_is_only_on_decorative_glyphs():
+    violations = []
+    for selector, decls in rules(style_block(INDEX)):
+        if "var(--text-4)" not in squash(decls).replace(" ", ""):
+            continue
+        if any(allowed in selector for allowed in TEXT4_ALLOWED):
+            continue
+        violations.append(selector.strip())
+    assert not violations, (
+        "--text-4 (2.3:1) used on readable text: " + ", ".join(violations)
+    )

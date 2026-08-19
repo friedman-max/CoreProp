@@ -241,7 +241,11 @@ a{color:inherit;text-decoration:none}
   transition:border-color .15s ease, box-shadow .15s ease;
   font-family:inherit;
 }
-.cp-input::placeholder{color:var(--text-4)}
+/* --text-3, not --text-4. Placeholder text IS text a user reads — in the +EV
+ * prop search it is the only hint of what to type. --text-4 measures 2.21:1 on
+ * this input's #0e0e16 fill; --text-3 clears AA at 5.66:1. Same correction
+ * already applied to .lp-foot-disc and .pp-respo. */
+.cp-input::placeholder{color:var(--text-3)}
 .cp-input:focus{border-color:var(--primary);box-shadow:var(--ring)}
 .cp-input-sm{padding:8px 10px;font-size:13px}
 
