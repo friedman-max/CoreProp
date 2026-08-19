@@ -985,10 +985,17 @@ Expected: **no output** — every ring now goes through `--ring`.
 Give `.cp-btn` and its size variants consistent heights of 32 / 38 / 44px, using the spacing scale for the vertical padding and keeping the existing pill shape and font sizes:
 
 ```css
-.cp-btn-sm{padding:var(--s-2) 14px;font-size:13px}    /* ~32px */
-.cp-btn{padding:10px var(--s-4);font-size:14px}        /* ~38px */
-.cp-btn-lg{padding:13px 22px;font-size:15px}           /* ~44px */
+.cp-btn-sm{padding:var(--s-2) 14px;font-size:13px}    /* 34px */
+.cp-btn{padding:10px var(--s-4);font-size:14px}        /* 39px */
+.cp-btn-lg{padding:13px 22px;font-size:15px}           /* 46px */
 ```
+
+The measured boxes are **34 / 39 / 46px**, not the 32/38/44 an earlier draft of
+this plan claimed — that draft's comments didn't match the CSS beside them. Keep
+the CSS and the real numbers: 34px is the better landing anyway, because it puts
+`.cp-btn-sm` on the same baseline as `.cp-input-sm` and the 34px filter-bar
+controls, so a small button beside an input matches natively instead of being
+flex-stretched.
 
 **Filter-bar buttons are exempt from this scale.** The 34px filter-bar height is a load-bearing alignment contract: `.bd-clear`, `.ev-clear` and the pager buttons sit beside the 34px `.bd-badge`, `.bd-pag` and `.bd-f select`, so pulling them to 32px or 38px visibly breaks the row. Leave their heights at 34px and only change their radius/colors.
 
