@@ -658,17 +658,6 @@ function EVPage() {
 
         {/* Table */}
         <div className="ev-table">
-          <div className="ev-row ev-row-hd">
-            <span>PLAYER</span>
-            <span>LEAGUE</span>
-            <span>PROP</span>
-            <span>LINE</span>
-            <span>SIDE</span>
-            <span className="ev-th-sort">TRUE % <span className="ev-arrow">↓</span></span>
-            <span>BOOK ODDS</span>
-            <span>GAME</span>
-            <span></span>
-          </div>
           {bets.map((b, i) => {
             const key = b.id || (b.player + b.prop + b.line);
             const isSel = selected.find(p => p.key === key);

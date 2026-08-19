@@ -120,13 +120,14 @@
   /* Spacing scale. There was none, which is why padding drifted. */
   --s-1:  4px;   --s-2:  8px;   --s-3: 12px;  --s-4: 16px;  --s-5: 20px;
   --s-6: 24px;   --s-8: 32px;   --s-10: 40px; --s-12: 48px;
-  /* Derived: the ONLY definition of the +EV row's horizontal padding. Four
-   * rules must share it (.ev-row, .ev-row-hd, .is-sel, .is-logged) — a stale
-   * literal in one of their calc()s once shipped a 6px misalignment. Six
-   * DECLARATIONS, not four: .ev-row and .ev-row-hd are each written twice (base
-   * rule + an unconditional re-declaration in the density-overrides block that
-   * wins on source order), and .is-sel / .is-logged each subtract their 3px left
-   * bar from it. Both bars are 3px so one compensation value serves both. */
+  /* Derived: the ONLY definition of the +EV row's horizontal padding. Three
+   * rules must share it (.ev-row, .is-sel, .is-logged) — a stale literal in one
+   * of their calc()s once shipped a 6px misalignment. FOUR DECLARATIONS, not
+   * three: .ev-row is written twice (base rule + an unconditional
+   * re-declaration in the density-overrides block that wins on source order),
+   * and .is-sel / .is-logged each subtract their 3px left bar from it. Both bars
+   * are 3px so one compensation value serves both. (A fourth rule, .ev-row-hd,
+   * was pinned here until Phase 2a deleted the header row.) */
   --row-px: clamp(var(--s-5), 2vw, var(--s-6));
 
   /* Elevation. The `0 2px 0 rgba(255,255,255,.03) inset` highlight that used to
@@ -820,10 +821,6 @@ a{color:inherit;text-decoration:none}
  * "Hits+Runs+RBIs" prop) can't spill into the next column and shove the
  * grid out of alignment. */
 .ev-row>span{min-width:0}
-/* Header labels stay on a single line — the grid track flexes, the text
- * never wraps to a second row. */
-.ev-row-hd{padding:var(--s-4) var(--row-px);font-size:10.5px;letter-spacing:.04em;color:var(--text-3);font-weight:600;text-transform:uppercase;background:rgba(255,255,255,.02)}
-.ev-row-hd>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Row/leg entrance. Defined here, next to its only two consumers — it used to
  * sit in the LANDING block, which is why it survived that block's rewrite only
  * by accident. */
@@ -831,8 +828,8 @@ a{color:inherit;text-decoration:none}
 .ev-row-data{animation:fadeUp .35s ease both}
 .ev-row-data:hover{background:rgba(30,111,176,.05)}
 /* Selected row: the 3px accent border must be subtracted from the row's own
- * horizontal padding, or the whole row's content shifts right relative to the
- * header. The padding is `var(--row-px)` — the ONLY definition of it, declared
+ * horizontal padding, or the whole row's content shifts right relative to every
+ * unselected row. The padding is `var(--row-px)` — the ONLY definition of it, declared
  * once in :root precisely so this calc() cannot go stale. It used to hardcode
  * `calc(16px - 2px)` against a flat-18px row, then `calc(clamp(18px,2vw,24px) -
  * 2px)`: the first left every selected row 6px out of alignment at wide
@@ -849,8 +846,6 @@ a{color:inherit;text-decoration:none}
  * flat fill holds the exact worst-case contrast the gradient had. */
 .ev-row-data.is-sel{border-left:3px solid var(--primary);background:var(--primary-lo);padding-left:calc(var(--row-px) - 3px)}
 .ev-row:last-child{border-bottom:0}
-.ev-th-sort{display:inline-flex;align-items:center;gap:5px;color:var(--primary-2)}
-.ev-arrow{font-size:10px}
 
 .ev-player{display:flex;align-items:center;gap:8px;min-width:0}
 .ev-player-n{font-weight:600;letter-spacing:-.005em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1374,12 +1369,11 @@ a{color:inherit;text-decoration:none}
  * column. */
 .bd-tbl thead th{padding:var(--s-3) clamp(var(--s-4),1.4vw,var(--s-5))}
 .bd-tbl tbody td{padding:var(--s-3) clamp(var(--s-4),1.4vw,var(--s-5))}
-/* These two re-declare the base .ev-row / .ev-row-hd padding at the SAME
- * specificity but later in source order, so THESE are the copies that win. Both
- * must carry --row-px, or .is-sel / .is-logged compensate against a value the
- * row does not actually have. */
+/* This re-declares the base .ev-row padding at the SAME specificity but later in
+ * source order, so THIS is the copy that wins. It must carry --row-px, or
+ * .is-sel / .is-logged compensate against a value the row does not actually
+ * have. (A .ev-row-hd copy sat here too until Phase 2a deleted the header row.) */
 .ev-row{padding:var(--s-4) var(--row-px)}
-.ev-row-hd{padding:var(--s-4) var(--row-px)}
 
 /* +EV: Save-preferences button below Min Leg % */
 .ev-prefs-save{
@@ -1779,16 +1773,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=8b18457b39"></script>
-<script src="/static/dist/tweaks-panel.js?v=8b18457b39"></script>
-<script src="/static/dist/components.js?v=8b18457b39"></script>
-<script src="/static/dist/landing.js?v=8b18457b39"></script>
-<script src="/static/dist/ev-page.js?v=8b18457b39"></script>
-<script src="/static/dist/page-boards.js?v=8b18457b39"></script>
-<script src="/static/dist/page-backtest.js?v=8b18457b39"></script>
-<script src="/static/dist/page-analytics.js?v=8b18457b39"></script>
-<script src="/static/dist/pricing.js?v=8b18457b39"></script>
-<script src="/static/dist/app-main.js?v=8b18457b39"></script>
+<script src="/static/dist/api.js?v=89e71a1cab"></script>
+<script src="/static/dist/tweaks-panel.js?v=89e71a1cab"></script>
+<script src="/static/dist/components.js?v=89e71a1cab"></script>
+<script src="/static/dist/landing.js?v=89e71a1cab"></script>
+<script src="/static/dist/ev-page.js?v=89e71a1cab"></script>
+<script src="/static/dist/page-boards.js?v=89e71a1cab"></script>
+<script src="/static/dist/page-backtest.js?v=89e71a1cab"></script>
+<script src="/static/dist/page-analytics.js?v=89e71a1cab"></script>
+<script src="/static/dist/pricing.js?v=89e71a1cab"></script>
+<script src="/static/dist/app-main.js?v=89e71a1cab"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

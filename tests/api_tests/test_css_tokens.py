@@ -223,15 +223,20 @@ def test_no_accent_colored_button_glow():
 
 
 def test_ev_row_horizontal_padding_is_always_row_px():
-    """Four rules must share the +EV row's horizontal padding, or the selected
-    and logged rows fall out of alignment with the header row.
+    """Three rules must share the +EV row's horizontal padding, or the selected
+    and logged rows fall out of alignment with each other.
 
-    .ev-row and .ev-row-hd are each declared TWICE — a base rule and an
-    unconditional re-declaration in the density-overrides block that wins on
-    source order. Editing only the base rule ships a no-op.
+    .ev-row is declared TWICE — a base rule and an unconditional re-declaration
+    in the density-overrides block that wins on source order. Editing only the
+    base rule ships a no-op.
+
+    `.ev-row-hd` used to be pinned here too. Phase 2a deleted the header row: the
+    airy list has no table header, so there is no header for the body rows to
+    align with, and keeping its CSS alive only to satisfy this test would be dead
+    code. The coupling that still matters is row <-> selected <-> logged.
     """
     css = style_block(INDEX)
-    found = {".ev-row": 0, ".ev-row-hd": 0, ".ev-row-data.is-sel": 0, ".ev-row-data.is-logged": 0}
+    found = {".ev-row": 0, ".ev-row-data.is-sel": 0, ".ev-row-data.is-logged": 0}
     stale = []
     for selector, decls in rules(css):
         key = selector.strip()
@@ -247,9 +252,8 @@ def test_ev_row_horizontal_padding_is_always_row_px():
             elif "clamp(" in body or "px" in body:
                 stale.append(f"{key} -> {decl.strip()}")
     assert not stale, "hardcoded +EV row padding remains:\n  " + "\n  ".join(stale)
-    # Both copies of .ev-row / .ev-row-hd must be migrated, not just the base.
+    # Both copies of .ev-row must be migrated, not just the base.
     assert found[".ev-row"] >= 2, f".ev-row: expected both copies, found {found['.ev-row']}"
-    assert found[".ev-row-hd"] >= 2, f".ev-row-hd: expected both copies, found {found['.ev-row-hd']}"
     assert found[".ev-row-data.is-sel"] >= 1
     assert found[".ev-row-data.is-logged"] >= 1
 
