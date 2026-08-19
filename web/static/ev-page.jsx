@@ -684,9 +684,11 @@ function EVPage() {
                         and pushed the player name out over the LEAGUE column.
                         The red row treatment carries the status instead, and
                         .ev-legend below the meta row explains what red means. */}
-                    {/* title = the desktop escape hatch for the ellipsis; on
-                        phones the name wraps instead (see the 560px block in
-                        index.html) because touch devices have no hover. */}
+                    {/* title is no longer an escape hatch for anything: the name
+                        wraps rather than truncating at EVERY width now (Task 5
+                        promoted .ev-player-n out of the 560px media query, since
+                        the airy identity line owns the full row). Kept anyway —
+                        harmless, and still useful to assistive tech. */}
                     <span className="ev-player-n" title={b.player}>{b.player}</span>
                     {/* borderRadius is the STRING "var(--r-sm)": React appends
                         px to numeric style values, so a bare token breaks. There

@@ -304,3 +304,41 @@ def test_text4_is_only_on_decorative_glyphs():
     assert not violations, (
         "--text-4 (2.3:1) used on readable text: " + ", ".join(violations)
     )
+
+
+def test_ev_row_state_tints_are_flat():
+    """The +EV row's logged/selected tints carry no gradient.
+
+    The selected row was flattened in Phase 1 (--primary-lo). The logged row kept
+    a 90deg red gradient on desktop while the mobile block already overrode it
+    with a flat tint — so the same row read two different ways depending on
+    viewport, and on desktop a flat blue selected row sat directly above a
+    gradient red one. Phase 2a promotes the mobile flat values to the base rules
+    and deletes the mobile copies.
+
+    The legend swatch is a deliberate miniature of the logged row and must match.
+    """
+    targets = (
+        ".ev-row-data.is-logged",
+        ".ev-row-data.is-logged:hover",
+        ".ev-row-data.is-logged.is-sel",
+        ".ev-legend-swatch",
+    )
+    violations = []
+    for selector, decls in rules(style_block(INDEX)):
+        if selector.strip() not in targets:
+            continue
+        for decl in declarations(decls):
+            if decl.partition(":")[0].strip().lower().startswith("background") \
+               and "gradient" in squash(decl):
+                violations.append(f"{selector} -> {decl.strip()}")
+    assert not violations, "gradient +EV state tints remain:\n  " + "\n  ".join(violations)
+
+
+def test_no_mobile_ev_row_min_width():
+    """`.ev-row{min-width:620px}` forced horizontal scrolling on phones. The airy
+    row stacks instead, so the rule — and the flat-tint overrides that existed
+    only because the gradient's faded end was unreadable inside that scroll — are
+    gone."""
+    css = style_block(INDEX)
+    assert "min-width:620px" not in squash(css), "the +EV row still forces a 620px scroll"
