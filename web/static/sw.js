@@ -10,7 +10,7 @@
  *
  * Registered at /sw.js (root scope) — see web/app.py::service_worker.
  */
-const CACHE = "coreprop-shell-51f4e70f90";
+const CACHE = "coreprop-shell-c04156bbba";
 
 self.addEventListener("install", () => {
   // Activate immediately; the activate handler claims already-open clients.

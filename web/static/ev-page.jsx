@@ -699,14 +699,22 @@ function EVPage() {
                   {/* Meta line reads "LEAGUE Prop SIDE line · time", so .ev-side
                       precedes .ev-line ("OVER 25.5"). The dot separator keeps
                       --text-4 and stays a bare glyph — it is on TEXT4_ALLOWED
-                      precisely because it is decorative, not read. */}
+                      precisely because it is decorative, not read, which is also
+                      why it carries aria-hidden: it is inside a sentence now, so
+                      a screen reader would otherwise announce the punctuation.
+                      Separator and time render as a PAIR or not at all.
+                      start_time is genuinely nullable (web/app.py serializes it
+                      with getattr(p, "start_time", None)) and fmtGameTime returns
+                      an em dash for a falsy value: in the old 9-column grid that
+                      dash sat alone in the GAME column and read as "no data", but
+                      in this sentence "… OVER 25.5 · —" reads as a dangling
+                      separator. No time is better than a stub. */}
                   <div className="ev-row-meta">
                     <LeaguePill league={b.league} />
                     <span className="ev-prop">{b.prop}</span>
                     <span className={"ev-side " + (b.side === "OVER" ? "is-over" : "is-under")}>{b.side}</span>
                     <span className="ev-line">{b.line}</span>
-                    <span className="ev-meta-dot">·</span>
-                    <span className="ev-time">{fmtGameTime(b.startTime)}</span>
+                    {b.startTime && <><span className="ev-meta-dot" aria-hidden="true">·</span><span className="ev-time">{fmtGameTime(b.startTime)}</span></>}
                   </div>
                   <div className="ev-books">
                     {b.books.map(([bk, od], j) => <BookBadge key={j} book={bk} odds={od} />)}
@@ -714,12 +722,14 @@ function EVPage() {
                 </div>
                 {/* Right zone: the true% is the hero number of the row. The add
                     button is a <span> with no onClick — the row's own onClick is
-                    the only trigger, so the whole row stays one hit target. */}
+                    the only trigger, so the whole row stays one hit target.
+                    .ev-add-btn is a DIRECT child: the .ev-add wrapper it used to
+                    sit in existed only to center it inside the old grid's 9th
+                    track, and .ev-row-side (align-items:center) plus the button's
+                    own display:grid do that now. */}
                 <div className="ev-row-side">
                   <TruePct value={b.truePct} />
-                  <span className="ev-add">
-                    <span className={"ev-add-btn " + (isSel ? "is-sel" : "")}>{isSel ? "✓" : "+"}</span>
-                  </span>
+                  <span className={"ev-add-btn " + (isSel ? "is-sel" : "")}>{isSel ? "✓" : "+"}</span>
                 </div>
               </div>
             );

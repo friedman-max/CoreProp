@@ -850,15 +850,30 @@ a{color:inherit;text-decoration:none}
  * until the accent-gradient ban; .10 is that gradient's darkest stop, so the
  * flat fill holds the exact worst-case contrast the gradient had. */
 .ev-row-data.is-sel{border-left:3px solid var(--primary);background:var(--primary-lo);padding-left:calc(var(--row-px) - 3px)}
-/* Selected rows keep their tint under the cursor. Without this there is no
- * .is-sel:hover rule at all, so app-main.jsx's injected
+/* Selected rows keep their tint under the cursor — and go ONE step deeper, so
+ * the cursor is not the only thing that changes. Without any .is-sel:hover rule,
+ * app-main.jsx's injected
  * `.app:not(.tint-on) .ev-row-data:hover{background:rgba(255,255,255,.025)}` at
  * (0,4,0) replaces --primary-lo with a neutral wash — measured, a hovered
  * selected row became byte-identical to a hovered plain row and the only
  * remaining selection cue was the 3px bar. tableTint defaults to "off", so that
  * injected rule is live for every user. !important for the same reason
- * .is-logged carries it; nothing tests hover, so dropping it fails silently. */
-.ev-row-data.is-sel:hover{background:var(--primary-lo) !important}
+ * .is-logged carries it; nothing tests hover, so dropping it fails silently.
+ *
+ * The value is the +.06 step .is-logged already uses (.16 -> .22), applied to the
+ * accent: --primary-lo's .10 -> .16. It is a raw rgba because there is no accent
+ * token at .16 (--primary-lo is .10, --primary-hi is .22) and inventing one for a
+ * single hover state means a fifth entry in css_helpers.ACCENT_VARS; the logged
+ * tints next door are raw rgba for the same reason.
+ *
+ * Contrast checked, because the .is-sel note above is a contrast argument:
+ * --text-3 composited over this tint over --card over --bg measures 4.69:1, so
+ * the hovered row's meta line stays clear of 4.5:1. That is why the step stops
+ * at .16 and does NOT reach --primary-hi's .22, which measures 4.40:1 the same
+ * way. (That method gives 4.97:1 / 4.40:1 for .10 / .22 where the note above
+ * quotes 5.03 / 4.45 — a consistent ~0.06 offset from a different backdrop
+ * assumption; the ordering and the 4.5 verdicts agree.) */
+.ev-row-data.is-sel:hover{background:rgba(30,111,176,.16) !important}
 .ev-row:last-child{border-bottom:0}
 /* The hero number, 20px, scoped to the row. .cp-tp's base 14px (~:336) is the
  * ONLY rule for that class and it also styles the slip-builder legs
@@ -922,6 +937,12 @@ a{color:inherit;text-decoration:none}
   background:rgba(239,68,68,.26) !important;
   border-left:3px solid var(--red);
 }
+/* logged+selected needs its own hover for the same reason .is-sel does, and it
+ * needs it MORE: .is-logged:hover above is (0,3,0) and .is-logged.is-sel is also
+ * (0,3,0) but later in source order, so it wins — measured, a hovered
+ * logged+selected row stayed at exactly .26 and had no hover response at all.
+ * Same +.06 step as every other state here (.26 -> .32), at (0,4,0). */
+.ev-row-data.is-logged.is-sel:hover{background:rgba(239,68,68,.32) !important}
 .ev-prop{color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-line{font-family:"JetBrains Mono",monospace;color:var(--text-2);font-size:13px;white-space:nowrap}
 .ev-side{font-weight:700;font-size:12.5px;letter-spacing:.05em}
@@ -941,10 +962,14 @@ a{color:inherit;text-decoration:none}
 /* 11px mono, scoped: .cp-book's 9.5px base is shared with the slip builder. */
 .ev-row .cp-book{font-size:11px;font-family:"JetBrains Mono",ui-monospace,monospace}
 .ev-time{font-size:12px;color:var(--text-3);font-family:"JetBrains Mono",monospace;white-space:nowrap}
-.ev-add{display:flex;justify-content:center}
 /* 30px, up from 24px: it is the row's only affordance and it has to be
  * comfortably tappable at 375px. Still a <span> with no onClick — the row's own
- * click is the trigger — so this is sizing the target, not adding one. */
+ * click is the trigger — so this is sizing the target, not adding one.
+ *
+ * It used to be wrapped in `.ev-add{display:flex;justify-content:center}`, whose
+ * whole job was centering it inside the 9th grid track. There is no track: it is
+ * a direct child of .ev-row-side (align-items:center) and it is display:grid with
+ * an explicit 30px box, so the wrapper centered nothing. Both are gone. */
 .ev-add-btn{width:30px;height:30px;border-radius:var(--r-md);background:#0a0a12;border:1px solid var(--hair-2);display:grid;place-items:center;color:var(--text-3);font-size:15px;transition:.15s}
 .ev-row-data:hover .ev-add-btn{color:var(--text);border-color:var(--primary)}
 .ev-add-btn.is-sel{background:var(--primary);color:white;border-color:var(--primary)}
@@ -1868,16 +1893,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=51f4e70f90"></script>
-<script src="/static/dist/tweaks-panel.js?v=51f4e70f90"></script>
-<script src="/static/dist/components.js?v=51f4e70f90"></script>
-<script src="/static/dist/landing.js?v=51f4e70f90"></script>
-<script src="/static/dist/ev-page.js?v=51f4e70f90"></script>
-<script src="/static/dist/page-boards.js?v=51f4e70f90"></script>
-<script src="/static/dist/page-backtest.js?v=51f4e70f90"></script>
-<script src="/static/dist/page-analytics.js?v=51f4e70f90"></script>
-<script src="/static/dist/pricing.js?v=51f4e70f90"></script>
-<script src="/static/dist/app-main.js?v=51f4e70f90"></script>
+<script src="/static/dist/api.js?v=c04156bbba"></script>
+<script src="/static/dist/tweaks-panel.js?v=c04156bbba"></script>
+<script src="/static/dist/components.js?v=c04156bbba"></script>
+<script src="/static/dist/landing.js?v=c04156bbba"></script>
+<script src="/static/dist/ev-page.js?v=c04156bbba"></script>
+<script src="/static/dist/page-boards.js?v=c04156bbba"></script>
+<script src="/static/dist/page-backtest.js?v=c04156bbba"></script>
+<script src="/static/dist/page-analytics.js?v=c04156bbba"></script>
+<script src="/static/dist/pricing.js?v=c04156bbba"></script>
+<script src="/static/dist/app-main.js?v=c04156bbba"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same
