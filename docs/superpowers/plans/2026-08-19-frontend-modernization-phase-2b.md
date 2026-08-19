@@ -416,7 +416,7 @@ Run: `python -m pytest tests/api_tests/test_css_guards.py tests/api_tests/test_c
 
 There is no `.env` on this box, so you cannot sign in through the UI. Use Phase 2a's method: serve a harness over HTTP that inlines the real `<style>` block and mounts the real page components from the committed `dist/*.js`, with data proxied from a running `python main.py` (stubbed Supabase + `DISABLE_PERSISTENCE=true DISABLE_AUTO_BACKTEST=true`). Hand-applied classes on a live React page get reconciled away — drive real interactions or use the harness.
 
-- [ ] Boards: all three tabs render; sorting works on each and the active arrow shows; the 402/subscription branch and every `BoardEmptyRow` state string still render; best-odds pills still green.
+- [ ] Boards: all three tabs render; the 402/subscription branch and every `BoardEmptyRow` state string still render; best-odds pills still green. **Sorting is only testable on Combined** — PrizePicks and Sportsbooks render plain `<th>`s with no `sortClass`, which is pre-existing and not something this phase changes.
 - [ ] Backtest: all four outcome cards (win/loss/push/pending) render with **one** left bar each; the leg columns stay aligned across cards (that is what the two `min-width`s protect); delete-modal Escape/Enter still work; the place-slip CTA still opens PrizePicks.
 - [ ] Analytics: both charts render with visible grid lines; the ReliabilityChart's dot `<title>` tooltips still appear on hover; the range buttons and the custom date pair work; the stat grid still shows its column counts at each breakpoint.
 - [ ] Account menu: sign-out hover is red, **Slip alerts hover is not**; the menu's shadow reads as a popover.
