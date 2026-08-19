@@ -665,7 +665,7 @@ a{color:inherit;text-decoration:none}
 .ev-main{padding:22px 22px 80px;min-width:0}
 
 /* Filters */
-.ev-filters{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;padding:18px 20px;background:linear-gradient(180deg,#13131c,#101019);border:1px solid var(--hair);border-radius:var(--r-lg);margin-bottom:14px}
+.ev-filters{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;padding:18px 20px;background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);margin-bottom:14px}
 .ev-filter{display:flex;flex-direction:column;gap:7px;min-width:0}
 .ev-filter-grow{flex:1;min-width:200px}
 .ev-filter label{font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase}
@@ -715,7 +715,7 @@ a{color:inherit;text-decoration:none}
 .ev-pulse{color:var(--green);font-style:normal;font-weight:600}
 
 /* Table */
-.ev-table{background:linear-gradient(180deg,#13131c,#101019);border:1px solid var(--hair);border-radius:var(--r-lg);overflow:hidden}
+.ev-table{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);overflow:hidden}
 .ev-row{
   display:grid;
   /* Track 8 (GAME) is minmax(86px,.8fr), not a bare .8fr: the timestamp
@@ -810,8 +810,13 @@ a{color:inherit;text-decoration:none}
 .ev-row-data:hover .ev-add-btn{color:var(--text);border-color:var(--primary)}
 .ev-add-btn.is-sel{background:var(--primary);color:white;border-color:var(--primary)}
 
-/* Slip */
-.ev-slip{position:sticky;top:65px;height:calc(100vh - 65px);background:linear-gradient(180deg,#13131c,#0e0e16);border-left:1px solid var(--hair);padding:20px 18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto}
+/* Slip.
+ * --bg-2, not --card: this is a full-height rail sitting directly against
+ * .ev-table with only a 1px hairline between them, so painting it --card would
+ * merge the two into one undifferentiated slab. It reads as the recess the
+ * cards sit in. The mobile drawer (.ev-slip.ev-slip-mobile, in the max-width
+ * block) is the opposite case and takes --card — see the note there. */
+.ev-slip{position:sticky;top:65px;height:calc(100vh - 65px);background:var(--bg-2);border-left:1px solid var(--hair);padding:20px 18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto}
 .ev-slip-hd{display:flex;justify-content:space-between;align-items:center}
 .ev-slip-hd h3{margin:0;font-size:15px;font-weight:700}
 .ev-auto{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3);cursor:pointer;user-select:none}
@@ -888,7 +893,7 @@ a{color:inherit;text-decoration:none}
 .pp-card-wrap{position:relative;z-index:1;display:flex;justify-content:center;max-width:620px;margin:0 auto}
 .pp-card-wrap .pp-card{width:100%}
 
-.pp-card{position:relative;background:linear-gradient(180deg,#15151f,#0f0f17);border:1px solid var(--hair-2);border-radius:var(--r-xl);padding:36px 32px 28px;box-shadow:var(--shadow-card);overflow:hidden}
+.pp-card{position:relative;background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-xl);padding:36px 32px 28px;box-shadow:var(--shadow-card);overflow:hidden}
 /* A 1px hairline, not a masked two-tone gradient border. */
 .pp-card-glow{position:absolute;inset:-1px;border-radius:calc(var(--r-xl) + 1px);border:1px solid var(--hair-2);pointer-events:none}
 .pp-card-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
@@ -960,7 +965,7 @@ a{color:inherit;text-decoration:none}
 .pp-faq-h{font-size:22px;font-weight:700;letter-spacing:-.015em;margin:0 0 18px;text-align:center}
 .pp-faq-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 @media (max-width:680px){.pp-faq-grid{grid-template-columns:1fr}}
-.pp-faq details{background:linear-gradient(180deg,#13131c,#0f0f17);border:1px solid var(--hair);border-radius:var(--r-md);padding:14px 18px;transition:border-color .15s}
+.pp-faq details{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);padding:14px 18px;transition:border-color .15s}
 .pp-faq details:hover{border-color:var(--hair-2)}
 .pp-faq details[open]{border-color:rgba(30,111,176,.3)}
 .pp-faq summary{cursor:pointer;font-size:14.5px;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:12px}
@@ -971,7 +976,7 @@ a{color:inherit;text-decoration:none}
 
 /* ═══════════════════════════════════════════ BOARD PAGES (shared) ═══════════════════════════════════════════ */
 .bd-page{padding:18px 22px 60px;max-width:1480px;margin:0 auto}
-.bd-filters{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;padding:14px 16px;background:linear-gradient(180deg,#13131c,#101019);border:1px solid var(--hair);border-radius:var(--r-md);margin-bottom:14px}
+.bd-filters{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;padding:14px 16px;background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);margin-bottom:14px}
 .bd-f{display:flex;flex-direction:column;gap:6px;min-width:0}
 .bd-f>span{font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase}
 .bd-f input,.bd-f select{background:#0a0a12;border:1px solid var(--hair);color:var(--text);border-radius:var(--r-sm);padding:8px 10px;font-size:13px;outline:none;font-family:inherit;min-width:130px;transition:border-color .15s}
@@ -1010,9 +1015,13 @@ a{color:inherit;text-decoration:none}
 .bd-chip:hover{border-color:var(--hair-2);color:var(--text)}
 .bd-chip.is-on{background:var(--primary);border-color:var(--primary);color:white}
 
-.bd-tbl-wrap{background:linear-gradient(180deg,#13131c,#0e0e16);border:1px solid var(--hair);border-radius:var(--r-md);overflow:auto}
+.bd-tbl-wrap{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);overflow:auto}
 .bd-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
-.bd-tbl thead th{position:sticky;top:0;background:#13131c;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);font-weight:600;text-align:left;padding:12px 14px;border-bottom:1px solid var(--hair);white-space:nowrap;z-index:1}
+/* The sticky header needs an opaque fill of its own to hide the rows scrolling
+ * under it, so it must be painted with whatever .bd-tbl-wrap is painted with —
+ * it was the wrapper gradient's top stop (#13131c) and is now the same token.
+ * Changing one without the other puts a visible band across the table head. */
+.bd-tbl thead th{position:sticky;top:0;background:var(--card);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);font-weight:600;text-align:left;padding:12px 14px;border-bottom:1px solid var(--hair);white-space:nowrap;z-index:1}
 .bd-tbl thead th.sortable{cursor:default;user-select:none}
 .bd-tbl thead th.sortable:hover{color:var(--text)}
 .bd-tbl thead th.sortable.is-active{color:var(--primary-2)}
@@ -1042,7 +1051,7 @@ a{color:inherit;text-decoration:none}
 
 /* ═══════════════════════════════════════════ BACKTEST ═══════════════════════════════════════════ */
 .bt-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px}
-.bt-card{background:linear-gradient(180deg,#13131c,#0f0f17);border:1px solid var(--hair);border-radius:var(--r-md);padding:14px 16px;display:flex;flex-direction:column}
+.bt-card{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);padding:14px 16px;display:flex;flex-direction:column}
 /* Reserve two label lines on every card so a wrapping "(sub)" doesn't push
  * one card's value down relative to its neighbors — the values must sit on a
  * common baseline across the row. */
@@ -1061,7 +1070,7 @@ a{color:inherit;text-decoration:none}
 .bt-card-label .cp-skel{height:11px;width:90px}
 
 .bt-slips-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
-.bt-slip{background:linear-gradient(180deg,#15151f,#0e0e16);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
+.bt-slip{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
 .bt-slip::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;opacity:.65}
 .bt-slip.is-win::before{background:linear-gradient(180deg,var(--green),rgba(34,197,94,.2))}
 .bt-slip.is-loss::before{background:linear-gradient(180deg,var(--red),rgba(239,68,68,.2))}
@@ -1113,7 +1122,7 @@ a{color:inherit;text-decoration:none}
 .tone-bad{color:#FCA5A5!important}
 
 /* ═══════════════════════════════════════════ ANALYTICS + OBSERVATORY shared ═══════════════════════════════════════════ */
-.an-panel{background:linear-gradient(180deg,#13131c,#0f0f17);border:1px solid var(--hair);border-radius:var(--r-lg);padding:18px 20px;margin-bottom:14px}
+.an-panel{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);padding:18px 20px;margin-bottom:14px}
 .an-panel-h{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:14px;flex-wrap:wrap}
 .an-panel-h h3{margin:0;font-size:15px;font-weight:700;letter-spacing:-.005em}
 .an-section-sub{font-size:12px;color:var(--text-3)}
@@ -1167,8 +1176,16 @@ a{color:inherit;text-decoration:none}
 .pnl-custom-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-hi)}
 .pnl-custom-arrow{color:var(--text-4);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
 
-/* Calibration curves */
-.cal-curves{background:linear-gradient(180deg,#0c0c14,#0a0a12);border:1px solid var(--hair);border-radius:var(--r-md);padding:18px 18px 12px;margin-bottom:14px;min-height:380px}
+/* Calibration curves.
+ * --bg, not --card: this is a chart *well* nested inside .an-panel, so it has to
+ * stay darker than its own container to read as sunk rather than stacked. Its
+ * old gradient (#0c0c14 -> #0a0a12) already sat below --bg-2, so --bg is the
+ * closest token, not a lightening.
+ * Note: no JSX, bundle or HTML references .cal-curves / .cal-legend* today —
+ * the whole cal-* family is currently unrendered CSS. Flattened rather than
+ * deleted so the rule stays consistent with its neighbours if the calibration
+ * chart comes back; removing the dead family is its own change. */
+.cal-curves{background:var(--bg);border:1px solid var(--hair);border-radius:var(--r-md);padding:18px 18px 12px;margin-bottom:14px;min-height:380px}
 .cal-curves svg{display:block;width:100%}
 .cal-legend{display:flex;flex-wrap:wrap;gap:16px;padding:4px 6px 0;font-family:Inter,system-ui,sans-serif}
 .cal-legend-item{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text-2);font-weight:500}
@@ -1516,10 +1533,14 @@ a{color:inherit;text-decoration:none}
   /* The dropdown: rendered right after .ev-filters, pulled up flush against it
    * (negative top margin over the tile's 14px bottom gap) so it looks like it
    * fell out of the config tile. Same surface + side borders as the tile,
-   * squared top corners, rounded bottom. Hidden until .is-open. */
+   * squared top corners, rounded bottom. Hidden until .is-open.
+   * --card, deliberately NOT the desktop .ev-slip's --bg-2: "same surface as the
+   * tile" is what makes the drawer read as part of .ev-filters, and the join
+   * between them is borderless (border-top:0), so any mismatch shows up as a
+   * seam straight across the phone +EV screen. It must track .ev-filters. */
   .ev-slip.ev-slip-mobile{
     display:none;margin:-14px 0 14px;position:static;height:auto;
-    background:linear-gradient(180deg,#13131c,#0e0e16);
+    background:var(--card);
     border:1px solid var(--hair);border-top:0;
     border-radius:0 0 var(--r-lg) var(--r-lg);
     padding:16px 18px 18px;flex-direction:column;gap:14px;
