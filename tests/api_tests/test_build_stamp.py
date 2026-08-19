@@ -19,6 +19,12 @@ produce a different digest. The flip side: auth-page.jsx is not in FILES, so
 dist/auth-page.js still matches it. It is in sync as of this commit, and nothing
 loads it (no index.html script tag, no route), so it is dead weight that only
 feeds the digest — but do not assume the guard covers it.
+
+Left alone here only because FILES is frozen at 10 entries for this phase, not
+because enrolling it would be risky (it recompiles byte-identical today, so
+adding it would be digest-neutral). The intended follow-up is to delete both
+auth-page.jsx and dist/auth-page.js as dead code, which does move the digest and
+makes the "11 files" above read 10.
 """
 from __future__ import annotations
 
@@ -30,6 +36,7 @@ from tests.api_tests.css_helpers import INDEX, WEB
 
 def _expected_build_id() -> str:
     digest = hashlib.sha1()
+    # Byte order, matching build.sh's LC_ALL=C glob — see the comment there.
     for path in sorted((WEB / "dist").glob("*.js")):
         digest.update(path.read_bytes())
     return digest.hexdigest()[:10]

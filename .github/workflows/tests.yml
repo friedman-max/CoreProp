@@ -42,7 +42,11 @@ jobs:
     # and the stamps are both unchanged — and Render's build env is pip-only, so
     # a stale committed bundle ships a silent no-op to production. Compiling is
     # the only way to detect it, hence a node job. GitHub runners have node;
-    # build.sh pins esbuild via `npx --yes esbuild@0.28.1`.
+    # build.sh pins esbuild to an exact version via `npx --yes`.
+    #
+    # Deliberately unfiltered: a `paths: web/static/**` filter would skip the
+    # job on a build.sh change, which is the one change most able to break the
+    # output. It runs in well under a minute, so the filter would buy nothing.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -60,4 +64,12 @@ jobs:
         # index.html and sw.js are in scope because build.sh stamps the
         # cache-bust id into both; a rebuild that moves the digest must have
         # been committed with them.
-        run: git diff --exit-code web/static/dist web/static/index.html web/static/sw.js
+        #
+        # The porcelain line first because `git diff` only sees tracked files. A
+        # brand-new bundle still fails the job — any new file in dist/ moves the
+        # build id, which re-stamps the two tracked files — but the diff would
+        # name only index.html and sw.js, never the uncommitted dist/*.js that
+        # actually caused it. This prints the culprit.
+        run: |
+          git status --porcelain web/static/dist
+          git diff --exit-code web/static/dist web/static/index.html web/static/sw.js

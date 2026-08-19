@@ -65,11 +65,15 @@ done
 # tests/api_tests/test_build_stamp.py, which recomputes this same digest and
 # asserts it equals the stamps below. A UTF-8 locale collates by dictionary
 # rules instead (glibc ignores punctuation; macOS folds case), so the shell's
-# order and Python's agree only by luck for the current filenames — add a bundle
-# where a hyphen is the discriminating character (page-x.js vs pagex.js) and the
-# two silently disagree, surfacing as a spurious stamp-test failure rather than
-# as anything that points here. Scoped to this command substitution's subshell
-# so the perl stamping below keeps the ambient locale.
+# order and Python's agree only by luck for the current filenames. Add a bundle
+# that collides on case (B.js precedes a.js under C, follows it under
+# en_US.UTF-8) or on punctuation-vs-punctuation (a-b.js/a_b.js swap) and the two
+# silently disagree — surfacing as a spurious stamp-test failure that points
+# nowhere near here. Before deciding this line is unnecessary, note that the
+# obvious fixture (page-x.js vs pagex.js) does NOT diverge on macOS: those two
+# agree in both locales, so a passing test of that pair proves nothing.
+# Scoped to this command substitution's subshell so the perl stamping below
+# keeps the ambient locale.
 BUILD_ID=$( export LC_ALL=C; cat "$OUT_DIR"/*.js | shasum | cut -c1-10 )
 perl -i -pe "s{(/static/dist/[a-z0-9-]+\.js\?v=)[a-z0-9]+}{\${1}$BUILD_ID}g" "$SRC_DIR/index.html"
 perl -i -pe "s{(coreprop-shell-)[A-Za-z0-9]+}{\${1}$BUILD_ID}" "$SRC_DIR/sw.js"
