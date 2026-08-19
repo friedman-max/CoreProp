@@ -1368,4 +1368,46 @@ gh run list --branch main --limit 3
 - CI green, including the new `bundles` job.
 - The six mandatory visual captures reviewed and accepted.
 
-**Next:** Phase 2 (web component/markup work) gets its own plan. It starts with the airy +EV row and must open by re-checking the three deferred items listed under Scope.
+## Accepted trades (decided at Task 13, not defaults)
+
+- **+EV row density drops ~10.7%** — 13.16 → 11.75 rows above the fold at
+  1440×1200, because `.ev-row`'s vertical padding went `13px → --s-4` (16px).
+  **Kept deliberately.** The user chose the "airy list" direction specifically,
+  and roomier rows are the point of it rather than a side effect; `--s-3` (12px)
+  would recover the density but undo the change. Revisit only if the taller rows
+  actually read as wasteful in use.
+- **One radius token spans two perceptual tiers.** At `--r-sm` (8px), elements
+  ≤18px tall read as pills or circles (`.cp-book` book tags, the 18px
+  `.ev-leg-i` / `.bt-leg-i` index squares) while 24-28px elements read as
+  rounded rectangles. Inherent to a five-step scale, not a defect: the numbered
+  leg indices reading as circles suits a step list. `.ev-check` was exempted
+  because the same effect would have made a checkbox look like a radio button.
+- **Semantic-colour surfaces keep their gradients** while every neutral surface
+  is flat, so on desktop a flat blue selected row sits above a still-gradient red
+  logged row. That asymmetry is the spec's intent (Phases 2-3 flatten the ones
+  the visual design reaches) but it is not written as a rule anywhere, and it is
+  the one place the pass looks unfinished. Worth flattening
+  `.ev-row-data.is-logged{,:hover,.is-sel}` to the flat tints the ≤560px block
+  already uses.
+
+## Deferred to Phase 2 (found during Phase 1, needs a `.jsx` edit or a design call)
+
+- `--primary-lo` is not written by `app-main.jsx`'s accent effect, which writes
+  `--primary` and `--primary-hi` as inline styles. Latent only (the tweaks panel
+  needs a host `postMessage`, and the default accent equals the token), but it is
+  a new accent-derived token sitting outside the one place that keeps accent
+  tokens in step.
+- `.bt-card` nested in `.an-panel` is same-tone-on-same-tone, separated by a
+  single 6%-alpha hairline now that flattening removed the tiles' top-edge lift.
+  Not a regression (both carried the identical gradient before) and it reads
+  acceptably, but `--card-2` exists for exactly this.
+- `.bd-tbl thead th`/`.bd-tbl tbody td` right-cluster controls share a *centre*,
+  not a baseline, with the bottom-aligned `.bd-f` columns — a 9.5px offset,
+  pre-existing.
+- `.pp-card-hd` has no flex `gap`, so its tag and pill still collide at 360px and
+  320px. Pre-existing; the collision threshold improved from 414px to 375px.
+- `--shadow-pop`, `--s-1` and `--radius-xs` are defined but unused. `--shadow-pop`
+  is scaffolding the spec assigns to Phase 2's menus/modals; the other two are
+  scale completeness. Use or drop them.
+
+**Next:** Phase 2 (web component/markup work) gets its own plan. It starts with the airy +EV row and must open by re-checking the three deferred items listed under Scope, plus the five above.
