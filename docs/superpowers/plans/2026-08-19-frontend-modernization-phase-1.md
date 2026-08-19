@@ -80,7 +80,7 @@ APP_MAIN_DIST = WEB / "dist" / "app-main.js"
 # Accent colors in every notation used in this stylesheet. Both the var() and
 # the literal forms are required: `.ev-row-data.is-sel` used a raw rgba(), so a
 # var()-only pattern would have passed straight over it.
-ACCENT_VARS = ("var(--primary)", "var(--primary-2)", "var(--primary-hi)")
+ACCENT_VARS = ("var(--primary)", "var(--primary-2)", "var(--primary-hi)", "var(--primary-lo)")
 ACCENT_HEX = ("#1e6fb0", "#6fbcec", "#195f97")
 ACCENT_RGB = ((30, 111, 176), (111, 188, 236), (25, 95, 151))
 
@@ -212,11 +212,26 @@ In `web/static/index.html`, find `.pnl-range-btn.is-custom.is-on` (~line 1111). 
 .pnl-range-btn.is-custom.is-on{background:var(--primary);color:#fff}
 ```
 
-Find `.ev-row-data.is-sel` (~line 723). Replace its `background:linear-gradient(90deg,rgba(30,111,176,.10),rgba(30,111,176,.02))` with the flat tint Section 2 specifies:
+Find `.ev-row-data.is-sel` (~line 723). Replace its `background:linear-gradient(90deg,rgba(30,111,176,.10),rgba(30,111,176,.02))` with a flat tint:
 
 ```css
-.ev-row-data.is-sel{border-left:2px solid var(--primary);background:var(--primary-hi);padding-left:calc(clamp(18px,2vw,24px) - 2px)}
+.ev-row-data.is-sel{border-left:2px solid var(--primary);background:var(--primary-lo);padding-left:calc(clamp(18px,2vw,24px) - 2px)}
 ```
+
+**Why `--primary-lo` and not `--primary-hi`.** The spec's Section 2 says "`--primary-hi` tint", but `--primary-hi` is `rgba(30,111,176,.22)` — tuned for focus rings and small badges, where it always sits under an explicit `color:var(--primary-2)` (7.16:1). Behind a *row* it is inherited by `.ev-time` (`color:var(--text-3)`, 12px), which measures **4.45:1 at the top of the table — under the 4.5:1 AA floor**. The gradient it replaces never dropped below 5.03:1, so shipping `--primary-hi` here would be an accessibility regression, not a like-for-like flatten. Add a new token in the same edit:
+
+```css
+  /* Row-level accent tint. --primary-hi (.22) is for focus rings and badges,
+   * where an explicit --primary-2 sits on top. Behind a row the tint is
+   * inherited by .ev-time's --text-3 and measures 4.45:1, under the AA floor
+   * the :root note above documents. .10 is exactly the most-tinted stop of the
+   * gradient this replaces, so the flat fill holds the identical worst case
+   * (5.03:1). Enforced by tests/api_tests/test_css_guards.py::
+   * test_primary_hi_never_backs_inherited_text. */
+  --primary-lo: rgba(30,111,176,.10);
+```
+
+Register the new token in `ACCENT_VARS` too, or the guard cannot see a gradient built from it.
 
 Leave the `border-left` at 2px and the `calc()` as-is for now — Task 9 moves the bar to 3px and re-derives the padding from `--row-px`. Changing them here would split one coupled edit across two commits.
 
@@ -228,7 +243,7 @@ Expected: **PASS**
 - [ ] **Step 6: Run the full suite to confirm nothing regressed**
 
 Run: `python -m pytest tests/ -q`
-Expected: `379 passed` (378 existing + 1 new).
+Expected: `380 passed` (378 existing + 2 new: the accent-gradient ban plus the `--primary-hi` contrast guard).
 
 - [ ] **Step 7: Commit**
 
@@ -353,7 +368,7 @@ def test_extension_palette_mirror_matches():
 - [ ] **Step 2: Run the new tests to verify they pass**
 
 Run: `python -m pytest tests/api_tests/test_css_guards.py -q`
-Expected: **5 passed**. If `test_extension_palette_mirror_matches` fails, the mirror has already drifted — fix `extension.html`'s `:root` to match rather than relaxing the test.
+Expected: **6 passed** (2 from Task 1 + 4 here). If `test_extension_palette_mirror_matches` fails, the mirror has already drifted — fix `extension.html`'s `:root` to match rather than relaxing the test.
 
 - [ ] **Step 3: Commit**
 
@@ -1069,8 +1084,12 @@ Then apply:
 .ev-row{padding:var(--s-4) var(--row-px)}
 /* base (~L709) and the density-overrides copy (~L1192) — BOTH */
 .ev-row-hd{padding:var(--s-4) var(--row-px)}
-/* ~L723 — bar goes 2px -> 3px so both states share one compensation value */
-.ev-row-data.is-sel{border-left:3px solid var(--primary);background:var(--primary-hi);padding-left:calc(var(--row-px) - 3px)}
+/* ~L723 — bar goes 2px -> 3px so both states share one compensation value.
+   The background stays var(--primary-lo): --primary-hi (.22) is inherited by
+   .ev-time's --text-3 and measures 4.45:1, under the AA floor. Task 1 fixed
+   that; do not "restore" --primary-hi here. Guarded by
+   test_primary_hi_never_backs_inherited_text. */
+.ev-row-data.is-sel{border-left:3px solid var(--primary);background:var(--primary-lo);padding-left:calc(var(--row-px) - 3px)}
 /* ~L743 — keep the existing !important; it is load-bearing against the
    runtime-injected hover rule in app-main.jsx */
 .ev-row-data.is-logged{border-left:3px solid var(--red);padding-left:calc(var(--row-px) - 3px)}
@@ -1157,7 +1176,7 @@ Run `python main.py`, open the Boards tab, and confirm the filter inputs, select
 - [ ] **Step 5: Run the full suite**
 
 Run: `python -m pytest tests/ -q`
-Expected: `395 passed` (378 existing + 17 new: 5 guards + 2 stamp + 10 tokens). Task 10 adds no test of its own — the uppercase/tracking change is verified visually in Step 4.
+Expected: `396 passed` (378 existing + 18 new: 6 guards + 2 stamp + 10 tokens). Task 10 adds no test of its own — the uppercase/tracking change is verified visually in Step 4.
 
 - [ ] **Step 6: Commit**
 
@@ -1282,7 +1301,7 @@ git commit -m "refactor(css): adopt the radius scale by value on the extension p
 - [ ] **Step 1: Full suite**
 
 Run: `python -m pytest tests/ -q`
-Expected: `396 passed` (378 existing + 18 new: 5 in `test_css_guards.py`, 2 in `test_build_stamp.py`, 11 in `test_css_tokens.py`). No failures, no skips.
+Expected: `397 passed` (378 existing + 19 new: 6 in `test_css_guards.py`, 2 in `test_build_stamp.py`, 11 in `test_css_tokens.py`). No failures, no skips.
 
 - [ ] **Step 2: Confirm no `.jsx` or `dist/` file was touched**
 
@@ -1329,7 +1348,7 @@ gh run list --branch main --limit 3
 
 ## Definition of done (Phase 1)
 
-- `pytest tests/ -q` → 396 passed (378 existing + 18 new).
+- `pytest tests/ -q` → 397 passed (378 existing + 19 new).
 - Zero literal `border-radius` declarations outside the documented exemptions.
 - Zero neutral card gradients; zero white inset highlights; zero accent gradients; zero accent glows.
 - Every focus ring goes through `--ring`; button heights are 32/38/44 **except** filter-bar buttons, which stay at 34px.
