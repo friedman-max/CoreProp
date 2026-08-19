@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from tests.api_tests.css_helpers import INDEX, declarations, rules, squash, style_block
+from tests.api_tests.css_helpers import INDEX, declarations, has_accent, rules, squash, style_block
 
 EXPECTED_TOKENS = {
     "--r-xl": "20px",
@@ -191,3 +191,32 @@ def test_neutral_card_surfaces_are_flat():
     # .cal-curves is dead (no markup references it) and may have been deleted.
     missing.discard(".cal-curves")
     assert not violations and not missing, f"violations={violations} missing={sorted(missing)}"
+
+
+def test_no_white_inset_highlight_anywhere():
+    """The `0 2px 0 rgba(255,255,255,.03) inset` highlight is removed from the
+    token AND the nine rules that hardcoded it. Editing only the token reaches
+    just .cp-modal and .pp-card and leaves half the surfaces skeuomorphic.
+
+    The minigame's green idle-nudge inset and the semantic 4px left-bar insets on
+    the compact result rows are not white highlights and stay.
+    """
+    violations = []
+    for selector, decls in rules(style_block(INDEX)):
+        for decl in declarations(decls):
+            body = squash(decl)
+            if "inset" in body and "rgba(255,255,255" in body:
+                violations.append(f"{selector} -> {decl.strip()}")
+    assert not violations, "white inset highlights remain:\n  " + "\n  ".join(violations)
+
+
+def test_no_accent_colored_button_glow():
+    """Flat buttons: no accent-tinted drop shadow. The blue glow on the save and
+    place CTAs is a skeuomorphic holdover."""
+    violations = []
+    for selector, decls in rules(style_block(INDEX)):
+        for decl in declarations(decls):
+            prop, _, value = decl.partition(":")
+            if prop.strip().lower() == "box-shadow" and has_accent(value):
+                violations.append(f"{selector} -> {decl.strip()}")
+    assert not violations, "accent-colored glows remain:\n  " + "\n  ".join(violations)
