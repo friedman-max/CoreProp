@@ -73,7 +73,8 @@
   --text-4:    #4a4a59;
   /* Accent is the blue lifted out of the logo wordmark (logo_full.png), not a
    * template indigo. Both values are used FLAT — there are no accent gradients
-   * anywhere in this stylesheet on purpose.
+   * anywhere in this stylesheet on purpose, enforced by
+   * tests/api_tests/test_css_guards.py::test_no_accent_gradients.
    *
    * The pair exists because one blue can't do both jobs accessibly:
    *   --primary   is only ever a FILL or a BORDER, never text. It's dark enough
@@ -86,6 +87,12 @@
   --primary:   #1E6FB0;
   --primary-2: #6FBCEC;
   --primary-hi:rgba(30,111,176,.22);
+  /* Row-level accent tint. --primary-hi (.22) was tuned for focus rings and
+   * badges, where it sits under --primary-2 (7.16:1). Behind a row it is
+   * inherited by .ev-time's --text-3 and measures 4.45:1 — under the AA floor
+   * the :root note above documents. .10 matches --red-hi so the selected and
+   * logged rows carry symmetric weight, and keeps --text-3 at 5.03:1. */
+  --primary-lo:rgba(30,111,176,.10);
   --green:     #22C55E;
   --green-hi:  rgba(34,197,94,.14);
   --red:       #EF4444;
@@ -719,8 +726,14 @@ a{color:inherit;text-decoration:none}
  * header. The padding is `clamp(18px,2vw,24px)` (see the .ev-row override
  * below) — this used to hardcode 16px, which was correct only back when the
  * padding was a flat 18px and left every selected row 6px out of alignment at
- * wide viewports. Mirrors what .is-logged does for its 3px border. */
-.ev-row-data.is-sel{border-left:2px solid var(--primary);background:var(--primary-hi);padding-left:calc(clamp(18px,2vw,24px) - 2px)}
+ * wide viewports. Mirrors what .is-logged does for its 3px border.
+ *
+ * The fill is --primary-lo (.10), NOT --primary-hi (.22): the row tint is
+ * inherited by .ev-time, whose --text-3 measures 4.45:1 on .22 over .ev-table's
+ * backdrop but 5.03:1 on .10. This was a 90deg accent gradient fading .10 -> .02
+ * until the accent-gradient ban; .10 is that gradient's darkest stop, so the
+ * flat fill holds the exact worst-case contrast the gradient had. */
+.ev-row-data.is-sel{border-left:2px solid var(--primary);background:var(--primary-lo);padding-left:calc(clamp(18px,2vw,24px) - 2px)}
 .ev-row:last-child{border-bottom:0}
 .ev-th-sort{display:inline-flex;align-items:center;gap:5px;color:var(--primary-2)}
 .ev-arrow{font-size:10px}
@@ -1106,13 +1119,14 @@ a{color:inherit;text-decoration:none}
 .pnl-range-btn{background:transparent;border:0;color:var(--text-3);padding:6px 12px;border-radius:6px;font-weight:600;font-size:11.5px;cursor:default;letter-spacing:.04em;font-family:"JetBrains Mono",monospace}
 .pnl-range-btn:hover{color:var(--text)}
 .pnl-range-btn.is-on{background:#1f1f2e;color:white}
-/* The Custom range button gets the app's purple when active so it reads as the
- * special "opens a picker" option and ties visually to the picker's focus ring. */
+/* The Custom range button gets the app's accent blue when active so it reads
+ * as the special "opens a picker" option and ties visually to the picker's
+ * focus ring. */
 .pnl-range-btn.is-custom.is-on{background:var(--primary);color:#fff}
 
 /* Custom date-range picker — matches the segmented range control above it (same
- * inset panel + radius) with two rounded date fields and the purple focus ring
- * used everywhere else in the app. */
+ * inset panel + radius) with two rounded date fields and the accent blue focus
+ * ring used everywhere else in the app. */
 .pnl-custom{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;background:#0a0a12;border:1px solid var(--hair);padding:6px 8px;border-radius:10px}
 .pnl-custom-field{display:inline-flex;align-items:center;gap:8px}
 .pnl-custom-field>span{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-family:"JetBrains Mono",ui-monospace,monospace}
