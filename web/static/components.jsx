@@ -168,7 +168,7 @@ function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app", l
                 </div>
                 <div className="cp-menu-sep" />
                 <PushToggle />
-                <button className="cp-menu-item" role="menuitem" onClick={handleLogout} disabled={busy}>
+                <button className="cp-menu-item is-danger" role="menuitem" onClick={handleLogout} disabled={busy}>
                   {busy ? "Logging out…" : "Log out"}
                 </button>
               </div>
