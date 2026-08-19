@@ -150,6 +150,12 @@ FLATTENED_SURFACES = {
     ".bt-slip": "var(--card)",
     ".ev-slip": "var(--bg-2)",
     ".cal-curves": "var(--bg)",
+    # Not a gradient itself — a hardcoded #13131c that had to move with
+    # .bd-tbl-wrap. The sticky Boards header floats over its own wrapper, so if
+    # the two drift apart the header bands visibly as you scroll. Pinned here
+    # because it is the one load-bearing pairing in this task, and it previously
+    # only matched at scrollTop 0.
+    ".bd-tbl thead th": "var(--card)",
 }
 
 
