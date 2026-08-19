@@ -220,3 +220,45 @@ def test_no_accent_colored_button_glow():
             if prop.strip().lower() == "box-shadow" and has_accent(value):
                 violations.append(f"{selector} -> {decl.strip()}")
     assert not violations, "accent-colored glows remain:\n  " + "\n  ".join(violations)
+
+
+def test_ev_row_horizontal_padding_is_always_row_px():
+    """Four rules must share the +EV row's horizontal padding, or the selected
+    and logged rows fall out of alignment with the header row.
+
+    .ev-row and .ev-row-hd are each declared TWICE — a base rule and an
+    unconditional re-declaration in the density-overrides block that wins on
+    source order. Editing only the base rule ships a no-op.
+    """
+    css = style_block(INDEX)
+    found = {".ev-row": 0, ".ev-row-hd": 0, ".ev-row-data.is-sel": 0, ".ev-row-data.is-logged": 0}
+    stale = []
+    for selector, decls in rules(css):
+        key = selector.strip()
+        if key not in found:
+            continue
+        for decl in declarations(decls):
+            prop = decl.partition(":")[0].strip().lower()
+            if prop not in ("padding", "padding-left"):
+                continue
+            body = squash(decl)
+            if "var(--row-px)" in body:
+                found[key] += 1
+            elif "clamp(" in body or "px" in body:
+                stale.append(f"{key} -> {decl.strip()}")
+    assert not stale, "hardcoded +EV row padding remains:\n  " + "\n  ".join(stale)
+    # Both copies of .ev-row / .ev-row-hd must be migrated, not just the base.
+    assert found[".ev-row"] >= 2, f".ev-row: expected both copies, found {found['.ev-row']}"
+    assert found[".ev-row-hd"] >= 2, f".ev-row-hd: expected both copies, found {found['.ev-row-hd']}"
+    assert found[".ev-row-data.is-sel"] >= 1
+    assert found[".ev-row-data.is-logged"] >= 1
+
+
+def test_selected_and_logged_bars_are_both_3px():
+    """The left bars must be equal width so their padding compensation is one
+    shared value."""
+    for selector, decls in rules(style_block(INDEX)):
+        if selector.strip() in (".ev-row-data.is-sel", ".ev-row-data.is-logged"):
+            for decl in declarations(decls):
+                if decl.partition(":")[0].strip().lower() == "border-left":
+                    assert "3px" in decl, f"{selector} left bar should be 3px: {decl.strip()}"
