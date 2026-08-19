@@ -381,3 +381,80 @@ def test_error_red_is_tokenized():
         if "#fca5a5" in squash(decls):
             violations.append(selector.strip())
     assert not violations, "hardcoded #FCA5A5 outside :root: " + ", ".join(violations)
+
+
+# The four Backtest outcome cards. Named explicitly rather than discovered, so a
+# rename cannot make this test pass by matching nothing.
+BT_OUTCOME_RULES = {
+    ".bt-slip-compact.is-win",
+    ".bt-slip-compact.is-loss",
+    ".bt-slip-compact.is-push",
+    ".bt-slip-compact.is-pending",
+}
+
+
+def test_backtest_cards_have_one_left_bar_and_flat_fills():
+    """Each outcome card carried TWO left bars — a 3px ::before gradient and a
+    4px `inset 4px 0 0` box-shadow — plus a gradient background and a blurred
+    glow. One 3px bar, flat fill, no glow.
+
+    The box-shadow is asserted *absent*, not merely inset-free: three of the four
+    rules paired the inset bar with a blurred `0 6px 20px -10px` outcome-coloured
+    glow, and `test_no_accent_colored_button_glow` cannot see those — it matches
+    on the accent blue only, and these glows are green/red/amber. After
+    flattening, none of the four owns a box-shadow at all, so "no box-shadow" is
+    the precise invariant and it catches either half coming back.
+
+    Only `.bt-slip-compact.is-*` is in scope. The 3px `.bt-slip.is-*::before` bar
+    keeps its gradient — that is the surviving single bar, and its fade to 20%
+    alpha is the bar's shape rather than a surface fill.
+    """
+    css = style_block(INDEX)
+    violations, seen = [], set()
+    for selector, decls in rules(css):
+        s = selector.strip()
+        if not s.startswith(".bt-slip-compact.is-"):
+            continue
+        seen.add(s)
+        body = squash(decls)
+        if "inset4px00" in body:
+            violations.append(f"{s} still has the 4px inset bar")
+        if "linear-gradient" in body:
+            violations.append(f"{s} still has a gradient fill")
+        if "box-shadow:" in body:
+            violations.append(f"{s} still has a box-shadow (the glow half)")
+    missing = BT_OUTCOME_RULES - seen
+    assert not missing, f"outcome rules not found — renamed? {sorted(missing)}"
+    assert not violations, "\n  ".join(violations)
+
+
+def test_backtest_pending_is_blue_on_every_surface():
+    """Pending was amber on the card and blue on the bar and the badge. Pending
+    means "not settled yet", not "warning" — amber implies caution the state does
+    not carry, and two of the three sites were already blue.
+
+    Pinned by the rgba/hex family rather than an exact value: the three surfaces
+    deliberately differ in alpha and lightness (a .14 tint, a #60A5FA bar, a
+    #93C5FD badge label), so equality would be wrong. What must hold is that none
+    of them is in the amber family.
+    """
+    AMBER = ("rgba(251,191,36", "#fbbf24", "#fde68a")
+    BLUE = ("rgba(96,165,250", "#60a5fa", "#93c5fd")
+    targets = {
+        ".bt-slip-compact.is-pending",
+        ".bt-slip.is-pending::before",
+        ".bt-slip-badge.is-pending",
+    }
+    seen, violations = set(), []
+    for selector, decls in rules(style_block(INDEX)):
+        s = selector.strip()
+        if s not in targets:
+            continue
+        seen.add(s)
+        body = squash(decls)
+        if any(a in body for a in AMBER):
+            violations.append(f"{s} is still amber: {body}")
+        elif not any(b in body for b in BLUE):
+            violations.append(f"{s} names no pending blue: {body}")
+    assert seen == targets, f"pending rules not found: {sorted(targets - seen)}"
+    assert not violations, "\n  ".join(violations)

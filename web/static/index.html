@@ -1424,6 +1424,15 @@ a{color:inherit;text-decoration:none}
 
 /* ═══════════════════════════════════════════ ANALYTICS + OBSERVATORY shared ═══════════════════════════════════════════ */
 .an-panel{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);padding:18px 20px;margin-bottom:14px}
+/* Analytics nests .bt-card inside .an-panel and both resolve to var(--card), so
+ * once Phase 1's flattening removed the tiles' top-edge lift they were held
+ * apart by a single 6%-alpha hairline. --card-2 is the next rung of the
+ * elevation ladder and exists for exactly this.
+ *
+ * A DESCENDANT rule on purpose: test_neutral_card_surfaces_are_flat pins
+ * .bt-card and .an-panel to var(--card) by exact selector, so changing either
+ * base background fails it — and deleting one trips its `missing` check. */
+.an-panel .bt-card{background:var(--card-2)}
 .an-panel-h{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:14px;flex-wrap:wrap}
 .an-panel-h h3{margin:0;font-size:15px;font-weight:700;letter-spacing:-.005em}
 .an-section-sub{font-size:12px;color:var(--text-3)}
@@ -1701,31 +1710,47 @@ a{color:inherit;text-decoration:none}
 @media (max-width:680px){.bt-slips-grid{grid-template-columns:1fr}}
 
 .bt-slip-compact{
-  padding:16px 18px;
-  gap:10px;
-  border-radius:var(--r-md);
+  /* --r-lg: these are cards, and the base .bt-slip is already --r-lg. This copy
+   * is the one that renders, so leaving it on --r-md made the spec's card radius
+   * unreachable. Roomier padding on the scale while here. */
+  padding:var(--s-4) var(--s-5);
+  gap:var(--s-3);
+  border-radius:var(--r-lg);
   border-width:2px;
 }
-/* Stronger color treatment so a losing card reads as "RED" at a glance. */
+/* Stronger colour treatment so a losing card reads as "RED" at a glance — now
+ * flat, and with ONE left bar instead of two.
+ *
+ * Each card used to carry a 4px `inset 4px 0 0` bar *underneath* the 3px
+ * .bt-slip::before bar, so the edge was two stacked bars of different widths and
+ * colours. The ::before survives as the single bar; the inset is gone.
+ *
+ * The blurred `0 6px 20px -10px` outcome-coloured glow is gone too. Note that
+ * test_no_accent_colored_button_glow could never have caught these — it matches
+ * the accent blue, and these were green/red/amber — which is why the new test
+ * asserts these four rules own no box-shadow at all.
+ *
+ * Backgrounds are the top stop of the gradient they replace, the same convention
+ * Phase 2a used for the state buttons. */
 .bt-slip-compact.is-win    {
   border-color:rgba(34,197,94,.65);
-  background:linear-gradient(180deg,rgba(34,197,94,.16),rgba(34,197,94,.06));
-  box-shadow:inset 4px 0 0 var(--green), 0 6px 20px -10px rgba(34,197,94,.4);
+  background:rgba(34,197,94,.16);
 }
 .bt-slip-compact.is-loss   {
   border-color:rgba(239,68,68,.75);
-  background:linear-gradient(180deg,rgba(239,68,68,.22),rgba(239,68,68,.08));
-  box-shadow:inset 4px 0 0 var(--red), 0 6px 20px -10px rgba(239,68,68,.5);
+  background:rgba(239,68,68,.22);
 }
+/* Pending is BLUE, not amber. It was the only one of the three pending surfaces
+ * that wasn't: .bt-slip.is-pending::before is #60A5FA and .bt-slip-badge
+ * .is-pending is #93C5FD. Amber implies caution, and pending only means "not
+ * settled yet" — push is the outcome that legitimately reads amber. */
 .bt-slip-compact.is-pending{
-  border-color:rgba(251,191,36,.60);
-  background:linear-gradient(180deg,rgba(251,191,36,.14),rgba(251,191,36,.04));
-  box-shadow:inset 4px 0 0 #FBBF24, 0 6px 20px -10px rgba(251,191,36,.35);
+  border-color:rgba(96,165,250,.60);
+  background:rgba(96,165,250,.14);
 }
 .bt-slip-compact.is-push   {
   border-color:rgba(251,191,36,.40);
-  background:linear-gradient(180deg,rgba(251,191,36,.08),transparent);
-  box-shadow:inset 4px 0 0 rgba(251,191,36,.6);
+  background:rgba(251,191,36,.08);
 }
 
 /* Header strip */
@@ -1763,8 +1788,12 @@ a{color:inherit;text-decoration:none}
   font-family:"JetBrains Mono",monospace;
   padding:2px 7px;
   border-radius:var(--r-sm);
-  background:rgba(30,111,176,.10);
-  border:1px solid rgba(30,111,176,.22);
+  /* These two are --primary-lo and --primary-hi by value. --primary-hi is safe
+   * on the border; and the background is --primary-lo with an explicit
+   * color:var(--primary-2) above, which is what keeps this off
+   * test_primary_hi_never_backs_inherited_text. */
+  background:var(--primary-lo);
+  border:1px solid var(--primary-hi);
   min-width:50px;text-align:center;
 }
 .bt-slip-compact .bt-slip-leg:last-child{border-bottom:0}
