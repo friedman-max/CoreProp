@@ -58,12 +58,22 @@ def test_row_px_is_a_fluid_clamp():
 
 
 def test_legacy_radius_aliases_point_at_the_new_scale():
-    """Six landing rules still reference the old names; they must resolve to the
-    new scale rather than keeping their old literal values."""
+    """The landing rules that still reference the old names must resolve to the
+    new scale rather than keeping their old literal values.
+
+    `--radius-xs` used to be asserted here too. Phase 1 kept all three aliases so
+    no rule would break mid-migration; by the end of Phase 2b the radius
+    migration was complete and --radius-xs had zero consumers, so it was deleted
+    rather than left as a scale hole nobody reads. --radius and --radius-sm still
+    have live consumers on the landing page and stay.
+    """
     tokens = _root_tokens()
     assert squash(tokens.get("--radius", "")) == "var(--r-lg)"
     assert squash(tokens.get("--radius-sm", "")) == "var(--r-md)"
-    assert squash(tokens.get("--radius-xs", "")) == "var(--r-sm)"
+    assert "--radius-xs" not in tokens, (
+        "--radius-xs was deleted as an unused alias; if it is back, it needs a "
+        "consumer and this assertion should flip to check its value again"
+    )
 
 
 def test_elevation_tokens_have_no_white_inset():
