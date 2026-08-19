@@ -77,3 +77,4 @@ scratch/
 
 # Headless-browser MCP scratch output (agent repro artifacts)
 .playwright-mcp/
+.superpowers/
