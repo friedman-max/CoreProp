@@ -19,7 +19,7 @@ from tests.api_tests.css_helpers import (
 )
 
 
-def test_no_accent_gradients():
+def test_no_accent_gradients() -> None:
     """No gradient may contain an accent color.
 
     Semantic gradients (--green/--red/--amber and their rgba forms) and the
@@ -34,5 +34,5 @@ def test_no_accent_gradients():
             continue
         for decl in gradient_declarations(decls):
             if has_accent(decl):
-                violations.append(f"{selector} -> {decl.strip()}")
+                violations.append(f"{selector} -> {decl}")
     assert not violations, "accent gradients found:\n  " + "\n  ".join(violations)
