@@ -21,10 +21,15 @@ EXTENSION = WEB / "extension.html"
 APP_MAIN_JSX = WEB / "app-main.jsx"
 APP_MAIN_DIST = WEB / "dist" / "app-main.js"
 
-# Accent colors in every notation used in this stylesheet. Both the var() and
-# the literal forms are required: `.ev-row-data.is-sel` used a raw rgba(), so a
-# var()-only pattern would have passed straight over it. #195F97 is the
-# hover-darken shade of --primary (.cp-btn-primary:hover and friends).
+# Every accent value in the palette, in every notation this stylesheet uses.
+# Both the var() and the literal forms are required: `.ev-row-data.is-sel` used a
+# raw rgba(), so a var()-only pattern would have passed straight over it.
+# #195F97 is the hover-darken shade of --primary (.cp-btn-primary:hover and
+# friends). --primary-lo is listed even though its rgba literal is already
+# covered by ACCENT_RGB's (30,111,176): a new accent token that is not in
+# ACCENT_VARS is expressible as a gradient the guard silently passes, which is
+# the inverse of the miss described above. Adding an accent token to :root means
+# adding it here.
 #
 # What this deliberately does NOT catch, so nobody reads the guard as airtight:
 #   * Space-separated CSS Color 4 notation — `rgb(30 111 176 / 40%)`. Zero
@@ -35,7 +40,12 @@ APP_MAIN_DIST = WEB / "dist" / "app-main.js"
 #     on screen but share no value with the palette, so a value-matching guard
 #     structurally cannot see them. (That hover also LIGHTENS, against the
 #     hover-darkens rule — a real finding, but out of scope for this guard.)
-ACCENT_VARS = ("var(--primary)", "var(--primary-2)", "var(--primary-hi)")
+ACCENT_VARS = (
+    "var(--primary)",
+    "var(--primary-2)",
+    "var(--primary-hi)",
+    "var(--primary-lo)",
+)
 ACCENT_HEX = ("#1e6fb0", "#6fbcec", "#195f97")
 ACCENT_RGB = ((30, 111, 176), (111, 188, 236), (25, 95, 151))
 
