@@ -105,7 +105,9 @@
   /* Radius scale. Five steps replace 18 distinct literal sizes. The old names
    * are kept as aliases because six landing rules still reference them; note
    * this is source compatibility, not visual identity (--radius goes 14→16px,
-   * --radius-sm 10→12px). Mirror any change in ios/CoreProp/Theme/Theme.swift. */
+   * --radius-sm 10→12px). ios/CoreProp/Theme/Theme.swift carries the same
+   * 14/10/8 triple and is deliberately still on the old values — Phase 4 of the
+   * modernization ports this scale there. No test pins that mirror. */
   --r-xl:      20px;   /* .pp-card, .pp-card-glow, .lp-cta-card only */
   --r-lg:      16px;   /* cards, panels, table wrappers, modals */
   --r-md:      12px;   /* inputs, inner tiles, menus, row action buttons */
