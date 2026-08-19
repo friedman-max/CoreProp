@@ -77,3 +77,50 @@ def test_elevation_tokens_have_no_white_inset():
     assert squash(tokens.get("--ring", "")) == "0004pxvar(--primary-hi)", (
         f"--ring should be the tokenized 4px focus ring, got {tokens.get('--ring')!r}"
     )
+
+
+# Selectors whose radii are deliberately literal (spec Section 1).
+#   lp-game-*  : the PrizePicks-board mimic keeps its geometry (22/26/14/7px).
+#                The 26px stage sits 4px outside the 22px card so the padding
+#                reads as a concentric frame, and .lp-game-wash's inset:0 only
+#                aligns because it repeats the card's 22px exactly.
+#   lp-sk-photo: must always equal .lp-game-photo-fb (the skeleton stands in
+#                for the photo).
+#   the rest   : 1-4px radii on decorative bars/keys/swatches whose short
+#                dimension is 3-12px, where 8px would round them into lozenges.
+RADIUS_EXEMPT = (
+    "lp-game-",
+    "lp-sk-photo",
+    "lp-vig-key",
+    "cal-legend-item",
+    "ev-legend-swatch",
+    "lp-books-bartrack",
+    "obs-heat-v",
+    "lp-foot-nav",
+)
+
+# Literal values that stay literal: true circles/squares (50% and 999px render
+# identically on a square) and deliberate square-corner resets.
+RADIUS_LITERAL_OK = {"50%", "0"}
+
+
+def test_every_radius_goes_through_a_token():
+    violations = []
+    for selector, decls in rules(style_block(INDEX)):
+        if any(frag in selector for frag in RADIUS_EXEMPT):
+            continue
+        for decl in declarations(decls):
+            prop, _, value = decl.partition(":")
+            if prop.strip().lower() != "border-radius":
+                continue
+            v = squash(value)
+            # `var(--r` covers both the new --r-* scale and the --radius* aliases.
+            if "var(--r" in v:
+                continue
+            if all(part in RADIUS_LITERAL_OK for part in value.split()):
+                continue
+            violations.append(f"{selector} -> border-radius:{value.strip()}")
+    assert not violations, (
+        f"{len(violations)} literal border-radius declarations remain:\n  "
+        + "\n  ".join(violations)
+    )
