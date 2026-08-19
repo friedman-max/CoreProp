@@ -948,6 +948,13 @@ a{color:inherit;text-decoration:none}
 .ev-add-btn{width:30px;height:30px;border-radius:var(--r-md);background:#0a0a12;border:1px solid var(--hair-2);display:grid;place-items:center;color:var(--text-3);font-size:15px;transition:.15s}
 .ev-row-data:hover .ev-add-btn{color:var(--text);border-color:var(--primary)}
 .ev-add-btn.is-sel{background:var(--primary);color:white;border-color:var(--primary)}
+/* The "no bets match" / "no green devils" message. It used to be a `.ev-row`
+ * carrying five inline styles, one of which was `display:block` purely to opt
+ * out of the row's 9-track grid — there is no grid to opt out of any more, and
+ * its `40px 18px` padding was off both scales. It is the table's only child
+ * whenever it renders, so it needs neither the row's hairline nor --row-px
+ * compensation; it just needs to be centred on the scale. */
+.ev-empty-row{padding:var(--s-10) var(--row-px);text-align:center;color:var(--text-3);font-size:13px}
 
 /* Slip.
  * --bg-2, not --card: this is a full-height rail sitting directly against
@@ -1812,16 +1819,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=786b6f9b7b"></script>
-<script src="/static/dist/tweaks-panel.js?v=786b6f9b7b"></script>
-<script src="/static/dist/components.js?v=786b6f9b7b"></script>
-<script src="/static/dist/landing.js?v=786b6f9b7b"></script>
-<script src="/static/dist/ev-page.js?v=786b6f9b7b"></script>
-<script src="/static/dist/page-boards.js?v=786b6f9b7b"></script>
-<script src="/static/dist/page-backtest.js?v=786b6f9b7b"></script>
-<script src="/static/dist/page-analytics.js?v=786b6f9b7b"></script>
-<script src="/static/dist/pricing.js?v=786b6f9b7b"></script>
-<script src="/static/dist/app-main.js?v=786b6f9b7b"></script>
+<script src="/static/dist/api.js?v=51f4e70f90"></script>
+<script src="/static/dist/tweaks-panel.js?v=51f4e70f90"></script>
+<script src="/static/dist/components.js?v=51f4e70f90"></script>
+<script src="/static/dist/landing.js?v=51f4e70f90"></script>
+<script src="/static/dist/ev-page.js?v=51f4e70f90"></script>
+<script src="/static/dist/page-boards.js?v=51f4e70f90"></script>
+<script src="/static/dist/page-backtest.js?v=51f4e70f90"></script>
+<script src="/static/dist/page-analytics.js?v=51f4e70f90"></script>
+<script src="/static/dist/pricing.js?v=51f4e70f90"></script>
+<script src="/static/dist/app-main.js?v=51f4e70f90"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

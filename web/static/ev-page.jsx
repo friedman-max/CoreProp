@@ -725,7 +725,7 @@ function EVPage() {
             );
           })}
           {loadState === "ok" && bets.length === 0 && (
-            <div className="ev-row" style={{ display: "block", textAlign: "center", padding: "40px 18px", color: "var(--text-3)", fontSize: 13 }}>
+            <div className="ev-empty-row">
               {showGreenDevils ? "No green devils available right now." : "No bets match your filters."}
             </div>
           )}
