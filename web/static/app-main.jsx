@@ -252,10 +252,26 @@ function App() {
   );
 }
 
-// Density + halo overrides
+// Density + halo overrides.
+//
+// This sheet is appended to <head> LAST, after index.html's <style> block, so it
+// wins every equal-specificity tie against it. That is load-bearing in both
+// directions: it is why the hover rule below beats index.html's own
+// `.ev-row-data:hover`, and it is why every `.is-logged` / `.is-sel:hover` tint
+// over there has to carry `!important` — this rule is (0,4,0) and outranks them.
+//
+// The selectors are coupled to ev-page.jsx's class names (`.ev-row`,
+// `.ev-row-data`) and to index.html's `.ev-row` padding. `padding-top` /
+// `padding-bottom` are deliberately LONGHANDS: the row's horizontal padding is
+// `var(--row-px)` and the `.is-sel` / `.is-logged` rules compensate their 3px
+// left border against it, so a `padding:` shorthand here would silently drop
+// --row-px on every compact row and knock the whole column out of alignment.
+// --s-3 (12px) against the row's regular --s-4 (16px) keeps compact visibly
+// tighter while putting the value on the spacing scale — custom properties
+// resolve fine inside an injected sheet.
 const styleEl = document.createElement("style");
 styleEl.textContent = `
-.density-compact .ev-row{padding-top:9px;padding-bottom:9px;font-size:13px}
+.density-compact .ev-row{padding-top:var(--s-3);padding-bottom:var(--s-3);font-size:13px}
 .density-compact .ev-row-data{font-size:12.5px}
 .app:not(.tint-on) .ev-row-data:hover{background:rgba(255,255,255,.025)}
 `;
