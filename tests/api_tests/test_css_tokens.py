@@ -132,3 +132,56 @@ def test_every_radius_goes_through_a_token():
         f"{len(violations)} literal border-radius declarations remain:\n  "
         + "\n  ".join(violations)
     )
+
+
+# The twelve neutral-grey surface gradients and their flat replacements.
+# Two are recessed wells, NOT cards: .ev-slip is a sidebar rail beside
+# .ev-table (--card would merge the two), and .cal-curves is a chart well sunk
+# below .an-panel (--card would make it lighter than its own container).
+FLATTENED_SURFACES = {
+    ".ev-filters": "var(--card)",
+    ".ev-table": "var(--card)",
+    ".bd-filters": "var(--card)",
+    ".pp-card": "var(--card)",
+    ".pp-faq details": "var(--card)",
+    ".bt-card": "var(--card)",
+    ".an-panel": "var(--card)",
+    ".bd-tbl-wrap": "var(--card)",
+    ".bt-slip": "var(--card)",
+    ".ev-slip": "var(--bg-2)",
+    ".cal-curves": "var(--bg)",
+}
+
+
+def test_neutral_card_surfaces_are_flat():
+    """No neutral card surface keeps a vertical grey gradient.
+
+    Shimmers (.lp-sk, .cp-skel), the semantic outcome bars and tints, the
+    save/place button state fills, and the minigame gradients are NOT neutral
+    card surfaces and deliberately stay — do not widen this to every
+    linear-gradient(180deg,...).
+    """
+    seen, violations = set(), []
+    for selector, decls in rules(style_block(INDEX)):
+        target = FLATTENED_SURFACES.get(selector.strip())
+        if target is None:
+            continue
+        body = squash(decls)
+        # Five of these selectors are re-opened by the density-override and
+        # mobile blocks to tweak padding/overflow only (.ev-slip, .ev-filters
+        # twice, .bd-filters, .ev-table). Those rules declare no background, so
+        # they are not the surface declaration and neither carry the gradient nor
+        # owe the flat token — checking them would fail the whole test forever.
+        # `seen` is only credited by a rule that actually paints, so deleting a
+        # surface's background outright still trips the `missing` check below.
+        if "background:" not in body:
+            continue
+        seen.add(selector.strip())
+        if "linear-gradient" in body:
+            violations.append(f"{selector} still has a gradient")
+        elif squash(target) not in body:
+            violations.append(f"{selector} should use {target}")
+    missing = set(FLATTENED_SURFACES) - seen
+    # .cal-curves is dead (no markup references it) and may have been deleted.
+    missing.discard(".cal-curves")
+    assert not violations and not missing, f"violations={violations} missing={sorted(missing)}"
