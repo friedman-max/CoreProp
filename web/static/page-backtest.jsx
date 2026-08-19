@@ -381,10 +381,10 @@ function BacktestPage() {
         />
       </div>
 
-      {loadState === "loading" && <div style={{padding:"20px", color:"var(--text-3)"}}>Loading slips…</div>}
-      {loadState === "error" && <div style={{padding:"20px", color:"#FCA5A5"}}>Error: {errMsg}</div>}
+      {loadState === "loading" && <div className="cp-state">Loading slips…</div>}
+      {loadState === "error" && <div className="cp-state-err">Error: {errMsg}</div>}
       {loadState === "ok" && slipsView.length === 0 && (
-        <div style={{padding:"32px", color:"var(--text-3)", textAlign:"center"}}>
+        <div className="cp-state">
           {slips.length === 0
             ? "No logged slips yet. Save a slip from the +EV Bets tab to start tracking your backtest."
             : "No slips match your filters."}

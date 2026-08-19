@@ -345,3 +345,39 @@ def test_no_mobile_ev_row_min_width():
     gone."""
     css = style_block(INDEX)
     assert "min-width:620px" not in squash(css), "the +EV row still forces a 620px scroll"
+
+
+# `.lp-game-err` is the landing-page minigame's error line. The whole `lp-game-`
+# surface is Phase 3's, and this phase does not touch it — not even for a
+# value-identical token swap, because touching it means re-reviewing the landing
+# page. Phase 3 should migrate it and delete this exemption; it is spelled as a
+# literal selector, not a prefix, so it cannot silently cover a new rule.
+RED2_EXEMPT = {".lp-game-err"}
+
+
+def test_error_red_is_tokenized():
+    """#FCA5A5 is the error/miss red. It appeared in ~10 rules with no token, so
+    a change meant finding every site by hand. --red-2 is that token.
+
+    --red (#EF4444) is the *semantic* red for bars, borders and fills; --red-2 is
+    the lighter text red that reads on a red tint (it measures 8.5-10.7:1 over
+    the logged-row tints where --text-3 fails). They are not interchangeable.
+    """
+    css = style_block(INDEX)
+    tokens = {}
+    root = re.search(r":root\s*\{(.*?)\}", css, re.S)
+    for decl in declarations(root.group(1)):
+        if decl.startswith("--"):
+            name, _, value = decl.partition(":")
+            tokens[name.strip()] = value.strip()
+    assert squash(tokens.get("--red-2", "")) == "#fca5a5", (
+        f"--red-2 should be #FCA5A5, got {tokens.get('--red-2')!r}"
+    )
+    # No rule outside :root may hardcode it.
+    violations = []
+    for selector, decls in rules(css):
+        if selector.strip() == ":root" or selector.strip() in RED2_EXEMPT:
+            continue
+        if "#fca5a5" in squash(decls):
+            violations.append(selector.strip())
+    assert not violations, "hardcoded #FCA5A5 outside :root: " + ", ".join(violations)

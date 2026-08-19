@@ -98,6 +98,11 @@
   --green:     #22C55E;
   --green-hi:  rgba(34,197,94,.14);
   --red:       #EF4444;
+  /* The lighter error/miss red, for TEXT on a red tint. --red (#EF4444) is the
+   * semantic red for bars, borders and fills; this one is what reads on top of
+   * one (8.5-10.7:1 over the logged-row tints, where --text-3 measures 3.6-4.6
+   * and fails AA). Not interchangeable — see the .is-logged note. */
+  --red-2:     #FCA5A5;
   --red-hi:    rgba(239,68,68,.10);
   --amber:     #F59E0B;
   --logo-1:    #7EE7F5;
@@ -305,7 +310,7 @@ a{color:inherit;text-decoration:none}
 .cp-menu-email{font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cp-menu-sep{height:1px;background:var(--hair);margin:2px 0 6px}
 .cp-menu-item{width:100%;text-align:left;background:transparent;border:0;color:var(--text-2);padding:var(--s-3);border-radius:var(--r-sm);font-size:13px;font-weight:500;cursor:pointer;transition:.12s}
-.cp-menu-item:hover{background:rgba(239,68,68,.12);color:#FCA5A5}
+.cp-menu-item:hover{background:rgba(239,68,68,.12);color:var(--red-2)}
 
 /* ─────────── auth modal ─────────── */
 .cp-modal-back{
@@ -337,6 +342,24 @@ a{color:inherit;text-decoration:none}
 .cp-odd{display:inline-flex;align-items:center;gap:5px;margin-right:6px}
 .cp-odd-n{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px;color:var(--text-2);font-weight:500}
 .cp-book{font-size:9.5px;font-weight:700;letter-spacing:.06em;padding:2px 5px;border-radius:var(--r-sm)}
+
+/* ─────────── loading / error / empty blocks ─────────── */
+/* The six loading / error / empty blocks across Backtest and Analytics were
+ * near-identical inline style objects (20px or 32px padding, --text-3 or
+ * --text-2, sometimes centered, and the error copies carried the #FCA5A5
+ * literal by hand). One pair of classes instead, so they can never drift apart
+ * again. 13px matches .bd-empty, which is the same thing for the Boards tables;
+ * the inline versions inherited the UA's 16px because nothing sets a body size.
+ *
+ * --red-2, not --red: this is text. See the token note in :root.
+ *
+ * The Analytics "no resolved slips yet" block is `an-panel cp-state`, and
+ * .an-panel is declared later in this sheet, so the PANEL's padding wins over
+ * the one below. That is intended — a panel supplies its own padding and the
+ * state class supplies the centering, tone and size. Do not "fix" it by adding
+ * specificity here. */
+.cp-state{padding:var(--s-8) var(--s-5);text-align:center;color:var(--text-3);font-size:13px}
+.cp-state-err{padding:var(--s-8) var(--s-5);text-align:center;color:var(--red-2);font-size:13px}
 
 /* ═══════════════════════════════════════════ LANDING ═══════════════════════════════════════════ */
 /* Type scale, spacing and surfaces are shared with the app tabs (same tokens).
@@ -764,7 +787,7 @@ a{color:inherit;text-decoration:none}
  * horizontal padding on the scale, height pinned to the row. That also closes
  * the 2px the old 9px padding was over (it computed to 36px, not 34px). */
 .ev-clear{margin-left:auto;background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:0 var(--s-4);height:34px;display:inline-flex;align-items:center;border-radius:var(--r-sm);font-size:13px;cursor:default;align-self:flex-end}
-.ev-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#FCA5A5}
+.ev-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:var(--red-2)}
 /* Slip Builder toggle — desktop hides it (the sidebar aside is always visible
  * there). On mobile (block at the end of the sheet) it becomes a full-width
  * grey bar at the bottom of the config tile. */
@@ -791,7 +814,7 @@ a{color:inherit;text-decoration:none}
  * ever changes again, this changes with it or the key stops matching the thing
  * it explains. border-radius:3px is intentional and exempt from the radius
  * scale (see RADIUS_EXEMPT) — a 12px-tall chip on --r-sm reads as a pill. */
-.ev-legend{display:inline-flex;align-items:center;gap:7px;color:#FCA5A5;cursor:help}
+.ev-legend{display:inline-flex;align-items:center;gap:7px;color:var(--red-2);cursor:help}
 .ev-legend-swatch{
   width:24px;height:12px;border-radius:3px;flex-shrink:0;
   border-left:3px solid var(--red);
@@ -1096,7 +1119,7 @@ a{color:inherit;text-decoration:none}
 .ev-leg-p{font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-leg-pct{font-size:12.5px}
 .ev-leg-x{background:transparent;border:0;color:var(--text-3);width:22px;height:22px;border-radius:var(--r-sm);cursor:default;font-size:11px}
-.ev-leg-x:hover{background:rgba(239,68,68,.15);color:#FCA5A5}
+.ev-leg-x:hover{background:rgba(239,68,68,.15);color:var(--red-2)}
 
 .ev-slip-summary{padding-top:8px;border-top:1px solid var(--hair);display:flex;flex-direction:column;gap:6px}
 .ev-sum-row{display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-2)}
@@ -1238,7 +1261,7 @@ a{color:inherit;text-decoration:none}
  * height so they line up on one row; `margin-left:auto` on Clear pushes the
  * whole cluster to the right edge, past the left-aligned filter fields. */
 .bd-clear{background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:0 14px;height:34px;border-radius:var(--r-sm);font-size:13px;cursor:default;align-self:center;margin-left:auto;display:inline-flex;align-items:center}
-.bd-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#FCA5A5}
+.bd-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:var(--red-2)}
 .bd-badge{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--text-2);background:rgba(30,111,176,.10);border:1px solid rgba(30,111,176,.25);padding:0 12px;height:34px;border-radius:var(--r-pill);align-self:center;display:inline-flex;align-items:center}
 .bd-pag{display:inline-flex;align-items:center;gap:4px;align-self:center;height:34px}
 .bd-pag-btn{background:#0a0a12;border:1px solid var(--hair);color:var(--text);width:28px;height:28px;border-radius:var(--r-sm);cursor:default;font-size:14px}
@@ -1295,7 +1318,7 @@ a{color:inherit;text-decoration:none}
 .bt-card-sub{font-size:9.5px;opacity:.7;text-transform:none;letter-spacing:0}
 .bt-card-value{font-size:22px;font-weight:700;margin-top:auto;padding-top:6px;letter-spacing:-.01em;font-family:"JetBrains Mono",monospace}
 .bt-card.tone-good .bt-card-value{color:var(--green)}
-.bt-card.tone-bad  .bt-card-value{color:#FCA5A5}
+.bt-card.tone-bad  .bt-card-value{color:var(--red-2)}
 
 /* Loading skeleton — shown instead of computed-from-empty zeros while the
  * first fetch is in flight, so a refresh never flashes misleading 0/0 / 0.0%
@@ -1318,7 +1341,7 @@ a{color:inherit;text-decoration:none}
 .bt-slip-ts{font-size:11px;color:var(--text-3);font-family:"JetBrains Mono",monospace}
 .bt-slip-badge{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:var(--r-sm)}
 .bt-slip-badge.is-win{background:rgba(34,197,94,.14);color:#86EFAC}
-.bt-slip-badge.is-loss{background:rgba(239,68,68,.14);color:#FCA5A5}
+.bt-slip-badge.is-loss{background:rgba(239,68,68,.14);color:var(--red-2)}
 .bt-slip-badge.is-push{background:rgba(251,191,36,.14);color:#FDE68A}
 .bt-slip-badge.is-pending{background:rgba(96,165,250,.14);color:#93C5FD}
 /* --text-3, not --text-4: this is an interactive control's icon, not a
@@ -1326,14 +1349,14 @@ a{color:inherit;text-decoration:none}
  * 1.4.11 floor for non-text UI, and only the hover state cleared it — a control
  * you can't see until you point at it. --text-3 is 5.66:1 on this surface. */
 .bt-slip-del{background:transparent;border:1px solid var(--hair-2);color:var(--text-3);width:24px;height:24px;border-radius:var(--r-sm);cursor:pointer;font-size:12px;line-height:1;display:grid;place-items:center;flex-shrink:0;transition:.15s}
-.bt-slip-del:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:#FCA5A5}
+.bt-slip-del:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:var(--red-2)}
 
 /* Delete-slip confirmation modal (reuses .cp-modal-back / .cp-modal shell). */
 .bt-del-modal{width:min(420px,92vw);text-align:center;padding:28px 26px 22px}
 .bt-del-icon{width:52px;height:52px;margin:0 auto 14px;border-radius:50%;display:grid;place-items:center;font-size:24px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4)}
 .bt-del-title{margin:0 0 8px;font-size:18px;font-weight:700;color:var(--text)}
 .bt-del-body{margin:0 0 6px;font-size:13.5px;line-height:1.5;color:var(--text-2)}
-.bt-del-error{margin:10px 0 0;font-size:12.5px;color:#FCA5A5;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:8px 10px}
+.bt-del-error{margin:10px 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:8px 10px}
 .bt-del-actions{display:flex;gap:10px;justify-content:center;margin-top:20px}
 .bt-del-actions .cp-btn{min-width:118px;padding:10px 16px}
 .bt-del-confirm{background:var(--red,#ef4444);color:#fff;border:1px solid var(--red,#ef4444)}
@@ -1350,7 +1373,7 @@ a{color:inherit;text-decoration:none}
 .bt-leg-pct{font-size:12px;color:var(--text-2);font-family:"JetBrains Mono",monospace}
 .bt-leg-actual{font-size:13px;font-weight:700;font-family:"JetBrains Mono",monospace;padding:2px 8px;border-radius:var(--r-sm)}
 .bt-leg-actual.leg-hit{background:rgba(34,197,94,.14);color:#86EFAC}
-.bt-leg-actual.leg-miss{background:rgba(239,68,68,.14);color:#FCA5A5}
+.bt-leg-actual.leg-miss{background:rgba(239,68,68,.14);color:var(--red-2)}
 .bt-leg-actual.leg-push{background:rgba(251,191,36,.14);color:#FDE68A}
 .bt-leg-actual.leg-dnp,.bt-leg-actual.leg-pending{background:rgba(96,165,250,.14);color:#93C5FD}
 
@@ -1359,7 +1382,7 @@ a{color:inherit;text-decoration:none}
 .bt-slip-foot-k{font-size:10px;color:var(--text-3);letter-spacing:.04em;font-weight:600}
 .bt-slip-foot-v{font-size:13px;font-weight:700}
 .tone-good{color:var(--green)!important}
-.tone-bad{color:#FCA5A5!important}
+.tone-bad{color:var(--red-2)!important}
 
 /* ═══════════════════════════════════════════ ANALYTICS + OBSERVATORY shared ═══════════════════════════════════════════ */
 .an-panel{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);padding:18px 20px;margin-bottom:14px}
@@ -1627,7 +1650,7 @@ a{color:inherit;text-decoration:none}
    .bt-del-error from the delete-slip modal, so restyling deletion silently
    restyled betting errors. */
 .bt-place-note{margin:8px 0 0;font-size:11.5px;color:#94a3b8;line-height:1.5}
-.bt-place-error{margin:8px 0 0;font-size:12.5px;color:#FCA5A5;background:rgba(239,68,68,.1);
+.bt-place-error{margin:8px 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);
   border:1px solid rgba(239,68,68,.25);border-radius:var(--r-sm);padding:7px 9px;line-height:1.5}
 
 /* ─────────── Backtest cards: 3-up grid, bigger, more legible ─────────── */
@@ -1683,7 +1706,7 @@ a{color:inherit;text-decoration:none}
   white-space:nowrap;
 }
 .bt-slip-ev.is-pos{color:#86EFAC;background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.40)}
-.bt-slip-ev.is-neg{color:#FCA5A5;background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.40)}
+.bt-slip-ev.is-neg{color:var(--red-2);background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.40)}
 
 /* Leg rows: player + prop on the left, True % in the middle, actual on the right */
 .bt-slip-compact .bt-slip-legs{gap:4px}
@@ -1943,16 +1966,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=3815cc7812"></script>
-<script src="/static/dist/tweaks-panel.js?v=3815cc7812"></script>
-<script src="/static/dist/components.js?v=3815cc7812"></script>
-<script src="/static/dist/landing.js?v=3815cc7812"></script>
-<script src="/static/dist/ev-page.js?v=3815cc7812"></script>
-<script src="/static/dist/page-boards.js?v=3815cc7812"></script>
-<script src="/static/dist/page-backtest.js?v=3815cc7812"></script>
-<script src="/static/dist/page-analytics.js?v=3815cc7812"></script>
-<script src="/static/dist/pricing.js?v=3815cc7812"></script>
-<script src="/static/dist/app-main.js?v=3815cc7812"></script>
+<script src="/static/dist/api.js?v=1ffad6966a"></script>
+<script src="/static/dist/tweaks-panel.js?v=1ffad6966a"></script>
+<script src="/static/dist/components.js?v=1ffad6966a"></script>
+<script src="/static/dist/landing.js?v=1ffad6966a"></script>
+<script src="/static/dist/ev-page.js?v=1ffad6966a"></script>
+<script src="/static/dist/page-boards.js?v=1ffad6966a"></script>
+<script src="/static/dist/page-backtest.js?v=1ffad6966a"></script>
+<script src="/static/dist/page-analytics.js?v=1ffad6966a"></script>
+<script src="/static/dist/pricing.js?v=1ffad6966a"></script>
+<script src="/static/dist/app-main.js?v=1ffad6966a"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

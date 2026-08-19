@@ -252,15 +252,15 @@ function AnalyticsPage() {
   };
 
   if (loadState === "loading") {
-    return <main className="bd-page an-page"><div style={{padding:"32px",color:"var(--text-3)"}}>Loading analytics…</div></main>;
+    return <main className="bd-page an-page"><div className="cp-state">Loading analytics…</div></main>;
   }
   if (loadState === "error") {
-    return <main className="bd-page an-page"><div style={{padding:"32px",color:"#FCA5A5"}}>Error: {errMsg}</div></main>;
+    return <main className="bd-page an-page"><div className="cp-state-err">Error: {errMsg}</div></main>;
   }
   if (!fullSeries.length) {
     return (
       <main className="bd-page an-page">
-        <div className="an-panel" style={{padding:"32px",textAlign:"center",color:"var(--text-2)"}}>
+        <div className="an-panel cp-state">
           No resolved slips yet. Once your logged slips settle, your equity curve and calibration stats appear here.
         </div>
       </main>
