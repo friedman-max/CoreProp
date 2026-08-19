@@ -727,7 +727,9 @@ def test_every_radius_goes_through_a_token():
 - [ ] **Step 2: Run to verify it fails and capture the worklist**
 
 Run: `python -m pytest tests/api_tests/test_css_tokens.py::test_every_radius_goes_through_a_token -q 2>&1 | tee /tmp/radius-worklist.txt`
-Expected: **FAIL**, listing ~104 declarations. Keep `/tmp/radius-worklist.txt` — it is the batch checklist for the next steps.
+Expected: **FAIL**, listing **74** declarations. Keep `/tmp/radius-worklist.txt` — it is the batch checklist.
+
+(74, not 104, and both numbers are right: there are 110 `border-radius` declarations, 6 already read `var(--radius*)`, leaving 104 literals. Of those, 22 sit under `RADIUS_EXEMPT` selectors and 8 more are `50%`/`0`, both of which this test skips — so 74 is the worklist and 104 is the literal count.)
 
 - [ ] **Step 3: Batch A — the `--r-sm` group (5, 6, 7, 8, 9px → 8px)**
 
@@ -738,7 +740,7 @@ Two easy-to-miss areas: the compact-slip block at ~L1297-1392 carries its own 4/
 **Expected visible change:** the 5/6/7px elements grow 1-3px. That is intended on roughly 30 elements 15-24px tall — it is the single most reviewable part of this task.
 
 Run: `python -m pytest tests/api_tests/test_css_tokens.py::test_every_radius_goes_through_a_token -q`
-Expected: still FAIL, but the violation count drops to roughly 64.
+Expected: still FAIL, with the count down to **32** (43 rewrites).
 
 ```bash
 git add web/static/index.html
