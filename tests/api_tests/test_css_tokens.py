@@ -86,11 +86,19 @@ def test_elevation_tokens_have_no_white_inset():
 #                aligns because it repeats the card's 22px exactly.
 #   lp-sk-photo: must always equal .lp-game-photo-fb (the skeleton stands in
 #                for the photo).
+#   ev-check   : 16x16px, so --r-sm (8px) is exactly half its side and renders a
+#                perfect circle. It fronts two <input type="checkbox"> toggles in
+#                the slip builder, and a circular checkbox reads as a radio
+#                button — an affordance change, not a 1-3px softening. Audited:
+#                it is the only rule on the scale with a fixed dimension <= 16px.
 #   the rest   : 1-4px radii on decorative bars/keys/swatches whose short
 #                dimension is 3-12px, where 8px would round them into lozenges.
+#
+# All of these are the same rule: too small for the scale's 8px floor.
 RADIUS_EXEMPT = (
     "lp-game-",
     "lp-sk-photo",
+    "ev-check",
     "lp-vig-key",
     "cal-legend-item",
     "ev-legend-swatch",
