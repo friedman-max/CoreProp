@@ -1462,20 +1462,43 @@ a{color:inherit;text-decoration:none}
  * white-on-blue under 4.5:1), and the press is the same 1px push .cp-btn uses —
  * this button does not carry .cp-btn, so it needs its own.
  *
- * `background-color`, NOT the `background` shorthand: the saved/error state
- * classes below are `.ev-prefs-save-*` (0,1,0) while this is 0,2,0, so a
- * shorthand here would win the whole background and turn a just-saved green
- * button accent-blue on hover. Setting only the color layer leaves their opaque
- * background-IMAGE gradient painting on top, so the state colours survive.
+ * `background-color`, NOT the `background` shorthand — but no longer for the
+ * reason this comment used to give. It said the shorthand would beat the state
+ * classes' background-IMAGE gradient; the state fills are flat now and hold
+ * their own ground by specificity (see below). It stays `background-color`
+ * because the shorthand would also wipe the `background-image` off
+ * .bt-slip-place-install's sibling pattern and there is no reason to widen what
+ * a hover touches.
  *
  * :not(:disabled) because this button is disabled while prefs load and while
  * saving — a hover response there advertises a click that does nothing. (The
- * old hover LIFTED a disabled button, since :disabled never reset transform.) */
+ * old hover LIFTED a disabled button, since :disabled never reset transform.)
+ * It also makes this selector (0,3,0), which is the number the state rules
+ * below have to clear. */
 .ev-prefs-save:hover:not(:disabled){background-color:#195F97}
 .ev-prefs-save:active{transform:translateY(1px)}
 .ev-prefs-save:disabled{opacity:.7;cursor:default}
-.ev-prefs-save-saved{background:linear-gradient(180deg,#16a34a,#15803d)}
-.ev-prefs-save-error{background:linear-gradient(180deg,#dc2626,#b91c1c)}
+/* Flat fills, and the specificity that flatness costs.
+ *
+ * These were `linear-gradient(180deg,...)`, and the gradient was doing cascade
+ * work nobody had written down: it painted a background-IMAGE, which the hover
+ * rule's `background-color` above physically cannot override, so a single class
+ * at (0,1,0) survived a (0,3,0) hover. A solid colour is only a colour, so the
+ * hover would win it outright and a just-saved GREEN button would go accent
+ * BLUE under the cursor.
+ *
+ * Doubling the class reaches (0,2,0) — enough to beat the base .ev-prefs-save
+ * (0,1,0) at rest, and NOT enough to beat the (0,3,0) hover: `:hover` and the
+ * `:disabled` inside `:not()` each count. Measured in a browser on an isolated
+ * replica of this exact cascade, the doubled class alone computed #16a34a at
+ * rest and #195F97 on hover — i.e. it ships the regression it was meant to
+ * prevent. So each state also states its own hover at (0,4,0). BOTH selectors
+ * are load-bearing; deleting either reopens the trap in a state nothing tests.
+ * Verified: hovering the saved button holds rgb(22,163,74). */
+.ev-prefs-save.ev-prefs-save-saved,
+.ev-prefs-save.ev-prefs-save-saved:hover:not(:disabled){background:#16a34a}
+.ev-prefs-save.ev-prefs-save-error,
+.ev-prefs-save.ev-prefs-save-error:hover:not(:disabled){background:#dc2626}
 
 /* Big Save-preferences bar at the bottom of the +EV main column. */
 /* Backtest slip card: Place-on-PrizePicks button at the bottom */
@@ -1494,16 +1517,31 @@ a{color:inherit;text-decoration:none}
 }
 /* Flat, hover DARKENS, `background-color` only, and not while disabled — see
  * .ev-prefs-save:hover for all three reasons. Here the shorthand would also
- * flatten the install <a>'s and the queued/error/sending gradients. */
+ * flatten the install <a>'s gradient, which is still a gradient (Phase 2b). */
 .bt-slip-place:hover:not(:disabled){background-color:#195F97}
 .bt-slip-place:active{transform:translateY(1px)}
 .bt-slip-place:disabled{opacity:.55;cursor:default;transform:none}
-.bt-slip-place-queued{background:linear-gradient(180deg,#16a34a,#15803d)}
-.bt-slip-place-error{background:linear-gradient(180deg,#dc2626,#b91c1c)}
+/* Flat fills at doubled specificity, plus their own hover — the same two-selector
+ * pattern and the same reason as .ev-prefs-save-saved above; read that note.
+ *
+ * The hover halves are belt-and-braces for -queued and -sending specifically:
+ * page-backtest.jsx disables the button in both states, so the (0,3,0) hover
+ * above cannot match them today and the (0,2,0) resting rule is already enough.
+ * They are written anyway so the fill does not quietly depend on that `disabled`
+ * expression staying the way it is. -error is NOT disabled, so for that one the
+ * hover half is doing real work. */
+.bt-slip-place.bt-slip-place-queued,
+.bt-slip-place.bt-slip-place-queued:hover:not(:disabled){background:#16a34a}
+.bt-slip-place.bt-slip-place-error,
+.bt-slip-place.bt-slip-place-error:hover:not(:disabled){background:#dc2626}
 /* In-flight state needs to look distinct from idle, or a slow connection reads
    as an unresponsive button and the user clicks again. */
-.bt-slip-place-sending{background:linear-gradient(180deg,#4b5563,#374151);cursor:progress}
-/* Rendered as an <a> to the install page when no extension is detected. */
+.bt-slip-place.bt-slip-place-sending,
+.bt-slip-place.bt-slip-place-sending:hover:not(:disabled){background:#4b5563;cursor:progress}
+/* Rendered as an <a> to the install page when no extension is detected. Left on
+ * its gradient deliberately — Phase 2b owns this one, and note before touching
+ * it that its :hover LIGHTENS, against the hover-darkens rule the two buttons
+ * above now follow. */
 .bt-slip-place-install{
   display:block;text-align:center;text-decoration:none;
   background:linear-gradient(180deg,#1e3a5f,#15304f);color:#9fd0f5;
