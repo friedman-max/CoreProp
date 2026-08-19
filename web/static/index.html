@@ -102,10 +102,32 @@
   --amber:     #F59E0B;
   --logo-1:    #7EE7F5;
   --logo-2:    #3DA9F0;
-  --radius:    14px;
-  --radius-sm: 10px;
-  --radius-xs: 8px;
-  --shadow-card: 0 2px 0 rgba(255,255,255,.03) inset, 0 24px 60px -20px rgba(0,0,0,.6);
+  /* Radius scale. Five steps replace 18 distinct literal sizes. The old names
+   * are kept as aliases because six landing rules still reference them; note
+   * this is source compatibility, not visual identity (--radius goes 14→16px,
+   * --radius-sm 10→12px). Mirror any change in ios/CoreProp/Theme/Theme.swift. */
+  --r-xl:      20px;   /* .pp-card, .pp-card-glow, .lp-cta-card only */
+  --r-lg:      16px;   /* cards, panels, table wrappers, modals */
+  --r-md:      12px;   /* inputs, inner tiles, menus, row action buttons */
+  --r-sm:      8px;    /* small chips, badges, skeletons, icon buttons */
+  --r-pill:    999px;  /* buttons, filter chips */
+  --radius:    var(--r-lg);
+  --radius-sm: var(--r-md);
+  --radius-xs: var(--r-sm);
+
+  /* Spacing scale. There was none, which is why padding drifted. */
+  --s-1:  4px;   --s-2:  8px;   --s-3: 12px;  --s-4: 16px;  --s-5: 20px;
+  --s-6: 24px;   --s-8: 32px;   --s-10: 40px; --s-12: 48px;
+  /* Derived: the ONLY definition of the +EV row's horizontal padding. Four
+   * rules must share it (.ev-row, .ev-row-hd, .is-sel, .is-logged) — a stale
+   * literal in one of their calc()s once shipped a 6px misalignment. */
+  --row-px: clamp(var(--s-5), 2vw, var(--s-6));
+
+  /* Elevation. The `0 2px 0 rgba(255,255,255,.03) inset` highlight that used to
+   * lead --shadow-card is gone: that inset is the skeuomorphic tell. */
+  --shadow-card: 0 12px 32px -18px rgba(0,0,0,.7);
+  --shadow-pop:  0 16px 40px -12px rgba(0,0,0,.6);
+  --ring:        0 0 0 4px var(--primary-hi);
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;font-feature-settings:"cv11","ss01";-webkit-font-smoothing:antialiased}
