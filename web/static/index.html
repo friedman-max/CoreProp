@@ -135,7 +135,59 @@
   --row-px: clamp(var(--s-5), 2vw, var(--s-6));
 
   /* Elevation. The `0 2px 0 rgba(255,255,255,.03) inset` highlight that used to
-   * lead --shadow-card is gone: that inset is the skeuomorphic tell. */
+   * lead --shadow-card is gone: that inset is the skeuomorphic tell.
+   *
+   * --shadow-card has exactly TWO consumers — .cp-modal and .pp-card, both of
+   * which predate the modernization — and that is now a DECISION, not the
+   * omission it looked like. The spec's card recipe reads "flat var(--card) +
+   * hairline + --shadow-card at --r-lg", and the flattening pass that removed
+   * every card's top-edge falloff named this shadow as the replacement lift. No
+   * task ever applied it, so it got MEASURED instead of pasted.
+   *
+   * Measured in Chromium at 1440px — this stylesheet against the real class
+   * names, one render with the shadow off and one with it added to all nine
+   * candidates; max diff over the whole 1440x2469 frame was 5/255. Directly
+   * under a card's bottom edge the shadow moves the pixel from rgb(10,10,13)
+   * (--bg) to rgb(7,7,10), decaying to 1/255 by 16px out. As contrast ratios
+   * against the ground the card sits on:
+   *     --shadow-card peak on --bg ....... 1.018:1
+   *     --shadow-card peak on --card ..... 1.044:1
+   *     the --hair border pixel .......... 1.240:1   (on either ground)
+   *     --card-2 against --card .......... 1.061:1
+   * The 1px hairline every one of these surfaces ALREADY carries is ~13x the
+   * shadow's step on the page ground (.240 vs .018 above unity). A drop shadow
+   * is a light-mode mechanism: on a #0a0a0d ground a black shadow has nothing
+   * to darken. That is also why nobody ever reported the token's absence as a
+   * symptom — .pp-card's shipped shadow measures the identical 3/255.
+   *
+   * Considered and deliberately left flat, all nine of which have a hairline and
+   * no shadow: .ev-filters, .ev-table, .bd-tbl-wrap, .bd-filters, .an-panel,
+   * .bt-slip (which only ever renders as .bt-slip.bt-slip-compact), .bt-card,
+   * .pp-faq details. Five are full-bleed regions, where the shadow's footprint —
+   * ~10px below the bottom edge, tapering to nothing at the sides, because the
+   * -18px spread pulls the shadow rect 18px INSIDE the border box before the
+   * +12px offset pushes it back out — is a 1052px-wide band, not a lift. The
+   * rest are grid tiles with siblings on two or three sides.
+   * .bt-slip-compact additionally carries a 2px saturated outcome border over a
+   * coloured tint, the strongest separation on any surface in the app.
+   *
+   * What the two live consumers share and the nine do not: each is
+   * width-constrained, centred, and the only focal object on its surface, with
+   * ground visible on all four sides. .cp-modal is min(420px,92vw) in a
+   * place-items:center fixed overlay, over a blurred rgba(4,4,8,.7) scrim — the
+   * one place in the app where the shadow separates a card from something other
+   * than the flat page ground. .pp-card is the pricing hero inside
+   * .pp-card-wrap's max-width:620px/margin:0 auto. Neither tiles against a
+   * sibling; neither is full-bleed.
+   *
+   * The one flatness symptom anyone actually noticed in four phases of review —
+   * .bt-card nested in .an-panel, same-tone-on-same-tone — was fixed with a tone
+   * step (--card-2; see the note at .an-panel .bt-card), which measures 1.061:1
+   * against 1.044:1 for a shadow on that same ground, and needs no scoping. On
+   * this palette the elevation LADDER is the separation mechanism and the shadow
+   * token is not. If --bg is ever lightened the trade flips, and the cheaper
+   * change then is to strengthen this token — which reaches both consumers at
+   * once — not to add nine declarations that measure 1.02:1. */
   --shadow-card: 0 12px 32px -18px rgba(0,0,0,.7);
   --shadow-pop:  0 16px 40px -12px rgba(0,0,0,.6);
   --ring:        0 0 0 4px var(--primary-hi);
@@ -977,7 +1029,13 @@ a{color:inherit;text-decoration:none}
  * a live constraint — but the conclusion still holds on its own terms: the red
  * row treatment below is the status, .ev-legend in the meta row is what tells
  * the user red = logged, and a badge would only repeat both. */
-.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.10em;background:rgba(96,165,250,.14);color:#93C5FD;padding:2px 6px;border-radius:var(--r-sm);margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
+/* Dead CSS — no .jsx references .ev-sharp. Kept rather than deleted (deleting it
+ * is a separate call), but its tracking is migrated with the live ones: the
+ * typography pass drove off `grep -n "letter-spacing:\.1em"`, which does not
+ * match the `.10em` spelling, so this and .bt-slip-compact .bt-slip-badge were
+ * the two sites it missed. Leaving a dead rule on the pre-pass value is how the
+ * next person rediscovers the same too-narrow grep. */
+.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.04em;background:rgba(96,165,250,.14);color:#93C5FD;padding:2px 6px;border-radius:var(--r-sm);margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
 
 /* Logged-bet row: bet is already in this user's backtest, so it will not
  * be selected for future auto-built slips. Painted red end-to-end so the
@@ -1453,6 +1511,12 @@ a{color:inherit;text-decoration:none}
 .bt-slip-hd-l{display:flex;flex-direction:column;gap:2px}
 .bt-slip-type{font-size:12.5px;font-weight:700}
 .bt-slip-ts{font-size:11px;color:var(--text-3);font-family:"JetBrains Mono",monospace}
+/* font-size, padding and letter-spacing here are all overridden by
+ * `.bt-slip-compact .bt-slip-badge` further down, and that copy is the one every
+ * rendered badge gets (page-backtest.jsx only ever emits the badge inside a
+ * compact card). Editing the tracking HERE ships a no-op — the .10em that copy
+ * carried is exactly how the typography pass came to miss it. The colour rules
+ * below are single-class and do render. */
 .bt-slip-badge{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:var(--r-sm)}
 .bt-slip-badge.is-win{background:rgba(34,197,94,.14);color:#86EFAC}
 .bt-slip-badge.is-loss{background:rgba(239,68,68,.14);color:var(--red-2)}
@@ -1542,6 +1606,16 @@ a{color:inherit;text-decoration:none}
 .pnl-chart{margin:0 -4px;touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .pnl-chart svg{display:block;width:100%;-webkit-user-select:none;user-select:none}
 
+/* #0a0a12 and #1f1f2e below stay LITERAL: no :root token matches either value,
+ * and neither is a one-screen cleanup. #0a0a12 is the recessed-well fill with 14
+ * declarations across six screens, and it is only one member of a four-hex
+ * "sunken surface" family — #0a0a12, #0c0c14 (.cp-seg, .pp-toggle), #0e0e16
+ * (.cp-input), and historically #13131c — so naming one token means deciding
+ * whether those are three mistakes or three deliberate depths. That is a design
+ * call, not tokenization, and doing two of fourteen sites leaves the same colour
+ * spelled two ways, which is worse than today. #1f1f2e is the active-segment
+ * fill, shared with .pp-tg-btn.is-on on the pricing page; same argument at
+ * smaller scale. Both need their own cross-screen pass. */
 .pnl-range{display:inline-flex;gap:2px;background:#0a0a12;border:1px solid var(--hair);padding:3px;border-radius:var(--r-sm);margin-top:8px}
 .pnl-range-btn{background:transparent;border:0;color:var(--text-3);padding:6px 12px;border-radius:var(--r-sm);font-weight:600;font-size:11.5px;cursor:default;letter-spacing:.04em;font-family:"JetBrains Mono",monospace}
 .pnl-range-btn:hover{color:var(--text)}
@@ -1557,7 +1631,15 @@ a{color:inherit;text-decoration:none}
 .pnl-custom{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;background:#0a0a12;border:1px solid var(--hair);padding:6px 8px;border-radius:var(--r-md)}
 .pnl-custom-field{display:inline-flex;align-items:center;gap:8px}
 .pnl-custom-field>span{font-size:10.5px;font-weight:700;letter-spacing:.04em;color:var(--text-3);font-family:"JetBrains Mono",ui-monospace,monospace}
-.pnl-custom-input{background:#14141e;border:1px solid var(--hair-2);color:var(--text);border-radius:var(--r-sm);padding:7px 10px;font-size:12.5px;font-family:"JetBrains Mono",ui-monospace,monospace;outline:none;color-scheme:dark;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease}
+/* var(--card), not the literal it used to be. Value-identical, so this renders
+ * no differently today — which is exactly the problem it fixes. It was the ONLY
+ * place in the stylesheet that spelled --card's hex outside :root, so a palette
+ * change would have moved every other card and panel and silently left this one
+ * date input behind, with nothing to grep for. Unlike the two literals above,
+ * this value HAD an exact token all along; it was skipped, not deferred. (The
+ * hex is deliberately not repeated here — a bare copy of a token's value in a
+ * comment is the next thing someone pastes into a rule.) */
+.pnl-custom-input{background:var(--card);border:1px solid var(--hair-2);color:var(--text);border-radius:var(--r-sm);padding:7px 10px;font-size:12.5px;font-family:"JetBrains Mono",ui-monospace,monospace;outline:none;color-scheme:dark;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease}
 .pnl-custom-input:hover{border-color:var(--primary-2)}
 .pnl-custom-input:focus{border-color:var(--primary);box-shadow:var(--ring)}
 .pnl-custom-arrow{color:var(--text-4);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
@@ -1681,9 +1763,15 @@ a{color:inherit;text-decoration:none}
  * classes' background-IMAGE gradient; the state fills are flat now and defend
  * themselves by specificity instead (see below), so for THIS button the choice
  * has stopped mattering. It stays because a hover should touch the narrowest
- * thing that produces the effect, and because the parallel rule on
- * .bt-slip-place still genuinely needs it — .bt-slip-place-install is an <a>,
- * cannot be :disabled, and is still a gradient.
+ * thing that produces the effect.
+ *
+ * This note also used to carry the parallel rule on .bt-slip-place, saying it
+ * "still genuinely needs it" because .bt-slip-place-install is an <a> that
+ * cannot be :disabled and is still a gradient. Half of that has expired: the
+ * install <a> is flat now and defends itself with the same doubled class these
+ * state rules use, so nothing on either button depends on the longhand any
+ * more. It is still true that an <a> can never be :disabled, which is why that
+ * link matches .bt-slip-place:hover:not(:disabled) at all — read the note there.
  *
  * :not(:disabled) because this button is disabled while prefs load and while
  * saving — a hover response there advertises a click that does nothing. (The
@@ -1731,8 +1819,16 @@ a{color:inherit;text-decoration:none}
   transition:transform .08s ease, background .2s ease;
 }
 /* Flat, hover DARKENS, `background-color` only, and not while disabled — see
- * .ev-prefs-save:hover for all three reasons. Here the shorthand would also
- * flatten the install <a>'s gradient, which is still a gradient (Phase 2b). */
+ * .ev-prefs-save:hover for all three reasons.
+ *
+ * That note used to add a fourth reason specific to this rule: the `background`
+ * shorthand would set background-image:none at (0,3,0) and so erase the install
+ * <a>'s hover GRADIENT. That gradient is gone (see .bt-slip-place-install), and
+ * with it the last thing on this button that the shorthand-vs-longhand choice
+ * changed — every state fill below is now flat and defends itself by
+ * specificity, so a shorthand here would compute the same pixels. It stays for
+ * the reason .ev-prefs-save gives: a hover should touch the narrowest thing that
+ * produces the effect. Do not read it as protecting anything. */
 .bt-slip-place:hover:not(:disabled){background-color:#195F97}
 .bt-slip-place:active{transform:translateY(1px)}
 .bt-slip-place:disabled{opacity:.55;cursor:default;transform:none}
@@ -1759,16 +1855,41 @@ a{color:inherit;text-decoration:none}
    do, so it is kept rather than dropped. */
 .bt-slip-place.bt-slip-place-sending,
 .bt-slip-place.bt-slip-place-sending:hover:not(:disabled){background:#4b5563;cursor:progress}
-/* Rendered as an <a> to the install page when no extension is detected. Left on
- * its gradient deliberately — Phase 2b owns this one, and note before touching
- * it that its :hover LIGHTENS, against the hover-darkens rule the two buttons
- * above now follow. */
-.bt-slip-place-install{
+/* Rendered as an <a> to the install page when no extension is detected. It was
+ * the last gradient button in the app and the last :hover that LIGHTENED, and
+ * both were live UI: the CTA every user without the extension sees on every
+ * Backtest card. No test could see it — test_no_accent_gradients matches the
+ * accent blues (#1E6FB0 / #6FBCEC / #195F97) and their rgb() forms, and
+ * #1e3a5f / #26527f are none of those, which is why the dropped Phase 2a→2b
+ * hand-off survived two phases of review.
+ *
+ * Both fills are stops of the gradients they replace, so no new colour enters
+ * the palette: rest is the old rest gradient's top stop, hover is its BOTTOM
+ * stop — which is what makes the hover darken. Measured: the fill goes from
+ * luminance .0413 to .0284 (a 1.31:1 step, so the state change is still
+ * plainly visible), and the label's #9fd0f5 → #cfe8fb lightening takes contrast
+ * UP with it, 7.02:1 → 10.58:1. Both clear AA and AAA for 12.5px/700. The old
+ * hover gradient's own top stop measured 6.39:1 under the same label, so this is
+ * better than what it replaces at both ends.
+ *
+ * DOUBLED CLASS, and it is load-bearing — this is the trap the .ev-prefs-save
+ * note describes, arriving one rule later. The <a> carries both classes, so
+ * .bt-slip-place:hover:not(:disabled) at (0,3,0) also matches it (an <a> can
+ * never be :disabled, so the :not() always passes). The gradient used to hide
+ * that: a background-IMAGE cannot be overridden by that rule's
+ * `background-color`. A flat colour is only a colour, so a single-class
+ * (0,1,0)/(0,2,0) install rule would LOSE the background-color longhand and this
+ * link would go accent BLUE on hover — the exact regression flattening the
+ * .ev-prefs-save/.bt-slip-place state fills already had to defend against. So it
+ * takes the same two-selector shape as -queued / -error / -sending: (0,2,0) at
+ * rest, (0,4,0) on hover. `:not(:disabled)` is inert on an <a> and is there only
+ * to match those three siblings' specificity arithmetic. */
+.bt-slip-place.bt-slip-place-install{
   display:block;text-align:center;text-decoration:none;
-  background:linear-gradient(180deg,#1e3a5f,#15304f);color:#9fd0f5;
+  background:#1e3a5f;color:#9fd0f5;
   box-shadow:none;border:1px solid #26527f;
 }
-.bt-slip-place-install:hover{background:linear-gradient(180deg,#26527f,#1b3d63);color:#cfe8fb}
+.bt-slip-place.bt-slip-place-install:hover:not(:disabled){background:#15304f;color:#cfe8fb}
 /* Placement messages get their own classes — these used to borrow
    .bt-del-error from the delete-slip modal, so restyling deletion silently
    restyled betting errors. */
@@ -1835,7 +1956,16 @@ a{color:inherit;text-decoration:none}
 .bt-slip-compact .bt-slip-hd-r{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .bt-slip-compact .bt-slip-type{font-size:14px;font-weight:800;letter-spacing:.02em;color:var(--text)}
 .bt-slip-compact .bt-slip-ts{font-size:12px;color:var(--text-3)}
-.bt-slip-compact .bt-slip-badge{font-size:10.5px;padding:var(--s-1) 10px;letter-spacing:.10em;font-weight:800}
+/* THIS is the copy that renders. page-backtest.jsx emits the WIN/LOSS/PUSH/
+ * PENDING badge in exactly one place, inside `<article class="bt-slip
+ * bt-slip-compact …">`, so every badge in the app matches this (0,2,0) rule and
+ * the base .bt-slip-badge's own letter-spacing is unreachable — the base rule's
+ * `.08em` is dead for tracking and is left only so a badge rendered outside a
+ * compact card would still get something sane. It said `.10em`, which is why the
+ * typography pass missed it: that pass grepped `letter-spacing:\.1em` and this
+ * file spells the value `.10em`. So the one dated-caps micro-label the pass
+ * existed to fix was the one it did not reach. --s-1 is the vertical pad. */
+.bt-slip-compact .bt-slip-badge{font-size:10.5px;padding:var(--s-1) 10px;letter-spacing:.04em;font-weight:800}
 
 /* Slip-level +EV % badge */
 .bt-slip-ev{
