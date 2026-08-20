@@ -1207,7 +1207,10 @@ a{color:inherit;text-decoration:none}
 .ev-auto{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3);cursor:pointer;user-select:none}
 /* Custom themed checkbox: hide the native box, drive a styled .ev-check off its
  * :checked state. Matches the accent (--primary) with a drawn checkmark; the
- * green-devils variant (.ev-auto-gd) uses the green accent. */
+ * green-devils variant (.ev-auto-gd) is the same two-token shape in green —
+ * the dark fill when checked, the bright one as the hover border — so the two
+ * pairs of rules below should read as parallels of each other. --save is the
+ * green that plays --primary's part; --green plays --primary-2's. */
 .ev-auto input{position:absolute;opacity:0;width:0;height:0;margin:0;pointer-events:none}
 /* 5px, deliberately off the radius scale: this box is 16px square, so --r-sm
  * (8px) is exactly half its side and renders a perfect circle. It fronts two
@@ -1222,7 +1225,7 @@ a{color:inherit;text-decoration:none}
 .ev-auto:hover .ev-check{border-color:var(--primary-2)}
 .ev-auto input:focus-visible ~ .ev-check{box-shadow:var(--ring)}
 .ev-auto-gd input:checked ~ .ev-check{background:var(--save);border-color:var(--save)}
-.ev-auto-gd:hover .ev-check{border-color:#22c55e}
+.ev-auto-gd:hover .ev-check{border-color:var(--green)}
 /* NOT var(--ring): the green-devils toggle's ring is green on purpose, and the
  * token is accent-blue. Only the width is normalized to the token's 4px so the
  * two rings on this same 16px box are the same size — a 3px green ring beside a
@@ -1599,7 +1602,7 @@ a{color:inherit;text-decoration:none}
 .bt-del-error{margin:10px 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:8px 10px}
 .bt-del-actions{display:flex;gap:10px;justify-content:center;margin-top:20px}
 .bt-del-actions .cp-btn{min-width:118px;padding:10px 16px}
-.bt-del-confirm{background:var(--red,#ef4444);color:#fff;border:1px solid var(--red,#ef4444)}
+.bt-del-confirm{background:var(--red);color:#fff;border:1px solid var(--red)}
 .bt-del-confirm:hover:not(:disabled){background:#dc2626;border-color:#dc2626}
 .bt-del-confirm:disabled{opacity:.6;cursor:default}
 
