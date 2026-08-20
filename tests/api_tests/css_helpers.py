@@ -20,6 +20,8 @@ INDEX = WEB / "index.html"
 EXTENSION = WEB / "extension.html"
 APP_MAIN_JSX = WEB / "app-main.jsx"
 APP_MAIN_DIST = WEB / "dist" / "app-main.js"
+EV_PAGE_JSX = WEB / "ev-page.jsx"
+EV_PAGE_DIST = WEB / "dist" / "ev-page.js"
 
 # Every accent value in the palette, in every notation this stylesheet uses.
 # Both the var() and the literal forms are required: `.ev-row-data.is-sel` used a
@@ -78,6 +80,66 @@ def style_block(path: Path = INDEX) -> str:
     return css
 
 
+_INJECTED = re.compile(r"\.textContent\s*=\s*`([^`]*)`", re.S)
+
+
+def injected_style_block(path: Path = APP_MAIN_JSX) -> str:
+    """The runtime-injected stylesheet from app-main.jsx or its compiled bundle.
+
+    `app-main.jsx` builds a <style> element and assigns a template literal to its
+    `.textContent`, then appends it to <head> LAST — so it wins every
+    equal-specificity tie against index.html's <style> block, and three
+    `.ev-row-data` tints over there carry `!important` for no other reason. It is
+    the highest-priority stylesheet in the app, and until this helper existed no
+    guard read it at all.
+
+    One regex serves both files because esbuild's JSX transform leaves template
+    literals alone: `dist/app-main.js` carries the same backticked text, newlines
+    included. That is what lets the bans below run over the shipped bundle as
+    well as the source, which matters for the same reason
+    `test_accent_agrees_in_all_three_copies` reads both — dist/ is committed and
+    served directly, so a source-only assertion can pass while the browser runs
+    something else.
+
+    Deliberately anchored on `.textContent =` rather than on the `styleEl` name:
+    the name is local and esbuild is free to mangle it, the property is not.
+    Comments are stripped for the same reason `style_block` strips them.
+    """
+    text = path.read_text(encoding="utf-8")
+    blocks = _INJECTED.findall(text)
+    assert blocks, (
+        f"no `.textContent = `...`` injected stylesheet found in {path.name}. If "
+        "the injection moved to a different mechanism, this helper and every ban "
+        "built on it are now blind — fix the pattern, do not delete the caller."
+    )
+    return _COMMENT.sub("", "\n".join(blocks))
+
+
+def style_sources() -> list[tuple[str, str]]:
+    """Every stylesheet the app ships, as `(label, css)`.
+
+    The permanent bans are supposed to hold "against every file in the set", and
+    for three phases they iterated `index.html` alone. All four are listed here so
+    a ban is one `for` loop away from total coverage:
+
+      * `index.html` — the whole app stylesheet.
+      * `app-main.jsx` — the runtime-injected sheet, highest priority of the four.
+      * `dist/app-main.js` — what the browser actually executes.
+      * `extension.html` — standalone by design (no React, no shared sheet) so it
+        still renders for an expired session, which also means nothing else
+        covers it.
+
+    Labels rather than Paths because two entries share a file with a different
+    extraction, so `path.name` would report the same name twice.
+    """
+    return [
+        ("index.html <style>", style_block(INDEX)),
+        ("app-main.jsx injected sheet", injected_style_block(APP_MAIN_JSX)),
+        ("dist/app-main.js injected sheet", injected_style_block(APP_MAIN_DIST)),
+        ("extension.html <style>", style_block(EXTENSION)),
+    ]
+
+
 def rules(css: str) -> Iterator[tuple[str, str]]:
     """Yield (selector, declarations) for every rule.
 
@@ -111,6 +173,38 @@ def declarations(decls: str) -> list[str]:
 def squash(text: str) -> str:
     """Lowercase and remove all whitespace, for whitespace-insensitive matching."""
     return re.sub(r"\s+", "", text).lower()
+
+
+def split_lengths(value: str) -> list[str]:
+    """Split a spacing shorthand into its top-level parts, respecting parens.
+
+    `value.split()` is wrong here and the reason is not hypothetical: CSS requires
+    whitespace around `calc()`'s `+`/`-` operators, so
+    `padding-left:calc(var(--row-px) - 3px)` splits into three garbage tokens
+    (`calc(var(--row-px)`, `-`, `3px)`) and reports the +EV row's *correct*, fully
+    derived 3px-border compensation as three off-scale values. `.cp-nav`'s
+    four-part safe-area padding is four calc()s and would report as twelve.
+
+    So depth-track `(` / `)` and only break on whitespace at depth 0. Nesting is
+    the norm in this sheet (`clamp(var(--s-6),2.5vw,var(--s-10))`,
+    `calc(var(--s-3) + env(safe-area-inset-top))`), which is exactly why a
+    non-recursive scanner has to count rather than match.
+    """
+    parts, depth, buf = [], 0, []
+    for ch in value.strip():
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if depth == 0 and ch.isspace():
+            if buf:
+                parts.append("".join(buf))
+                buf = []
+            continue
+        buf.append(ch)
+    if buf:
+        parts.append("".join(buf))
+    return parts
 
 
 def has_accent(decl: str) -> bool:

@@ -8,7 +8,15 @@ from __future__ import annotations
 
 import re
 
-from tests.api_tests.css_helpers import INDEX, declarations, has_accent, rules, squash, style_block
+from tests.api_tests.css_helpers import (
+    INDEX,
+    declarations,
+    has_accent,
+    rules,
+    split_lengths,
+    squash,
+    style_block,
+)
 
 EXPECTED_TOKENS = {
     "--r-xl": "20px",
@@ -560,33 +568,344 @@ MARKETING_SPACING_LITERAL_OK = {
 # `[^)]*` precisely so a clamp that interpolates var() tokens still matches —
 # values in this stylesheet carry no spaces, so a `.*` cannot span two lengths of
 # a shorthand.
+#
+# "Any clamp() passes" is the known hole, and it is real rather than theoretical:
+# `.lp-cta-card{padding:clamp(36px,4.5vw,56px) var(--s-6)}` derives from nothing —
+# both endpoints are literal — and this pattern waves it through. The app-screen
+# sibling below (`_APP_SPACING_OK`) closes it by requiring a `var(--` inside the
+# function, and the two patterns differ for exactly that one declaration: applying
+# the tightening here fails `.lp-cta-card` and nothing else. That is left as a
+# reported worklist item rather than fixed by exempting the rule, because 36px/56px
+# are not the 1-3px optical values MARKETING_SPACING_LITERAL_OK is for. Migrate
+# `.lp-cta-card` to token endpoints and the two patterns can merge.
 _SPACING_OK = re.compile(
     r"^(0|auto|var\(--s-\d+\)|var\(--lp-(?:gap|px)\)|clamp\(.*\))$"
 )
 _SPACING_PROPS = ("padding", "margin", "gap", "row-gap", "column-gap")
 
 
-def test_marketing_spacing_goes_through_the_scale():
-    violations = []
+def _spacing_declarations(sel_filter) -> list[tuple[str, str, str]]:
+    """`(selector, prop, normalised value)` for every spacing declaration whose
+    selector satisfies `sel_filter`.
+
+    Shared by the marketing and app-screen invariants so the two cannot disagree
+    about what counts as a spacing declaration — the asymmetry this pair exists to
+    remove was one surface having an invariant and the other not, and a second
+    copy of the property list is how that comes back.
+    """
+    out = []
     for selector, decls in rules(style_block(INDEX)):
         sel = selector.strip()
-        if not re.search(r"\.(lp|pp)-", sel):
-            continue
-        if any(frag in sel for frag in MARKETING_SPACING_EXEMPT):
-            continue
-        if sel in MARKETING_SPACING_LITERAL_OK:
+        if not sel_filter(sel):
             continue
         for decl in declarations(decls):
             prop, _, value = decl.partition(":")
             prop = prop.strip().lower()
             if prop not in _SPACING_PROPS and not prop.startswith(("padding-", "margin-")):
                 continue
-            # A shorthand is a list of lengths; every part must be legal.
-            for part in value.split():
-                if not _SPACING_OK.match(part.strip()):
-                    violations.append(f"{sel} -> {prop}:{value.strip()}")
-                    break
+            out.append((sel, prop, " ".join(value.split())))
+    return out
+
+
+# ── Which test owns which selector ────────────────────────────────────────────
+# The marketing filter requires a HYPHEN (`\.(lp|pp)-`), so the two bare page
+# shells `.lp` and `.pp` match neither `lp-` nor `pp-` and, until the app-screen
+# test below existed, were checked by nothing at all —
+# `.pp{padding:var(--s-12) var(--s-6) 80px}` was unguarded on the one surface that
+# had an invariant.
+#
+# They are owned by the APP-SCREEN test, deliberately, and the two scopes are
+# written as exact complements (`is_marketing` / `not is_marketing`) so ownership
+# is a property of the code rather than of two hand-maintained lists —
+# `test_the_two_spacing_scopes_partition_the_stylesheet` proves it.
+#
+# `.pp` lands on the app side because the exemption its 80px needs (trailing
+# scroll padding on a page container, which the scale cannot express) is a category
+# the app test has to create anyway for `.ev-main` and `.bd-page`. Putting `.pp`
+# on the marketing side would mean writing that reasoning twice, in two files'
+# worth of comments, for one declaration.
+def is_marketing(selector: str) -> bool:
+    return bool(re.search(r"\.(lp|pp)-", selector))
+
+
+def _has_class(selector: str) -> bool:
+    return bool(re.search(r"\.[A-Za-z_-]", selector))
+
+
+def test_marketing_spacing_goes_through_the_scale():
+    violations = []
+    for sel, prop, value in _spacing_declarations(is_marketing):
+        if any(frag in sel for frag in MARKETING_SPACING_EXEMPT):
+            continue
+        if sel in MARKETING_SPACING_LITERAL_OK:
+            continue
+        # A shorthand is a list of lengths; every part must be legal.
+        for part in split_lengths(value):
+            if not _SPACING_OK.match(part):
+                violations.append(f"{sel} -> {prop}:{value}")
+                break
     assert not violations, (
         f"{len(violations)} off-scale marketing spacing declarations:\n  "
         + "\n  ".join(sorted(set(violations)))
+    )
+
+
+# ── App-screen spacing ────────────────────────────────────────────────────────
+# The same invariant as the marketing one, for the four app screens (+EV, Boards,
+# Backtest, Analytics/Observatory/Calibration) plus the shared chrome. It did not
+# exist for three phases, which is how `.bt-card{padding:14px 16px}` — the spec's
+# own headline example of padding drift — survived all of them: the surface the
+# modernization was actually about was the one surface with no guard.
+#
+# Legal values are the marketing set minus the landing-only `--lp-*` layout vars,
+# plus `--row-px` (the +EV row's derived horizontal padding, which three rules must
+# share), and with the derived-function hole closed: a `calc()` / `clamp()` /
+# `min()` / `max()` must contain at least one `var(--`, so a "derived" value
+# actually derives from a token instead of being two literals in a clamp. See the
+# note on `_SPACING_OK` for the single marketing declaration that blocks merging
+# the two patterns.
+_APP_SPACING_OK = re.compile(
+    r"^(0|auto|var\(--s-\d+\)|var\(--row-px\)"
+    r"|(?:calc|clamp|min|max)\(.*var\(--.*\))$"
+)
+
+# ── Exemption group 1: sub-scale optical values ───────────────────────────────
+# Every entry is a declaration whose only literal parts are 1-3px. That is the
+# standard every existing exemption in this file and in test_ios_tokens.py rests
+# on: the scale's floor is --s-1 (4px), so below that a value is seating a glyph on
+# a baseline, drawing a hairline, or constructing a control — snapping it to 4px
+# changes the drawing, not the rhythm. A declaration with any literal part >= 4px
+# is off the scale and does NOT qualify, however small the rest of it is; that is
+# why `.cp-nav-c{padding:2px var(--s-4) 4px}` is absent while its `margin:` sibling
+# is present, and why the 5/6/7/8px insets on the badges are all still in the
+# worklist.
+#
+# Keys are the whole `"<selector> -> <prop>:<value>"` string, matched entire —
+# never a prefix, never a bare selector. A selector-level key would exempt every
+# spacing declaration on the rule (the shape MARKETING_SPACING_LITERAL_OK is stuck
+# with, and the reason `.pp-save`'s entry has to apologise for covering its
+# on-scale horizontal padding too). The cost of the tighter key is churn: changing
+# an exempt value breaks its own exemption and fails this test. That is the safe
+# direction — it asks for a re-read of the value — and it is the same trade
+# test_ios_tokens.py's whole-line keys make.
+APP_SPACING_OPTICAL_OK = {
+    # A leg's prop line sits directly under its player name inside one text
+    # block; 3px is the half-leading between them, on top of the line-height.
+    # --s-1 would read as two unrelated lines. iOS makes the identical call at
+    # 1pt (SlipCard's `VStack(spacing: 1)`).
+    ".bt-leg-prop -> margin-top:3px":
+        "leading between a leg's name and its prop line, not a gap",
+    # Slip type over its timestamp, in a flex column. Two lines of one label.
+    ".bt-slip-hd-l -> gap:2px":
+        "type/timestamp leading inside one header label, not a gap",
+    ".bt-slip-compact .bt-slip-hd-l -> gap:2px":
+        "the compact card's copy of the same type/timestamp pair",
+    # .bt-slip-foot-k above .bt-slip-foot-v: a label above its value in one
+    # footer cell. Same pairing iOS exempts at 2pt in SlipCard and SlipView.
+    ".bt-slip-foot-c -> gap:2px":
+        "label-above-value leading inside one footer cell, not a gap",
+    # The P&L range picker is a segmented control: one bordered track holding
+    # abutting buttons. The 3px is the track's inset around them and the 2px is
+    # the seam between segments — both are the control's construction, and 4px
+    # visibly breaks it into separate buttons.
+    ".pnl-range -> padding:3px":
+        "segmented-control track inset around abutting buttons, not a gap",
+    ".pnl-range -> gap:2px":
+        "seam between two segments of one control, not a gap",
+    # A 9.5px sample count under its heat value, inside one table cell. The
+    # cell's own padding is the spacing; this is hairline leading.
+    ".obs-heat-n -> margin-top:1px":
+        "leading between a heat value and its count inside one cell",
+    ".obs-mult-n -> margin-top:2px":
+        "the multiplier table's copy of the same value/count pair",
+    # The tinted value block inside a heat cell. Its vertical inset is what makes
+    # the tint read as a chip rather than filling the cell; the cell's 8px/12px
+    # padding is the actual spacing.
+    ".obs-heat-v -> padding:2px 0":
+        "vertical inset of a tint chip inside a cell that owns the spacing",
+    # The mobile tab strip's 2px top nudge. Its side margins are already derived
+    # (`calc(-1 * var(--s-4))`, pinned to .cp-nav's gutter minimum by the comment
+    # above it) — only the optical top offset is literal.
+    ".cp-nav-c -> margin:2px calc(-1 * var(--s-4)) 0":
+        "optical top nudge on the scrollable tab strip; its sides are derived",
+}
+
+# ── Exemption group 2: constrained from outside the rhythm ────────────────────
+# A different category, kept separate on purpose: these are not sub-scale, they are
+# values whose constraint does not come from the spacing rhythm at all, so no
+# token could express them even in principle.
+#
+# All seven are trailing BOTTOM padding on a page container — scroll breathing room
+# under the last row so the final card is not flush against the viewport edge. The
+# scale deliberately stops at --s-12 (48px) and there is no --s-7/--s-9/--s-11 by
+# design, so 60px and 80px are unexpressible. Extending the scale to reach them
+# would be a larger decision than this test, and is explicitly NOT what these
+# entries are asking for.
+#
+# One hypothesis checked and disproved during the audit, recorded so nobody spends
+# the time again: these are not clearance for a fixed bottom nav. `--nav-h` (67px)
+# is the TOP nav — its only consumers are `.ev-slip{position:sticky;top:var(--nav-h)}`
+# and `.ev`'s min-height — and the mobile tab row scrolls horizontally inside that
+# same top nav rather than docking at the bottom. There is no under-nav bug hiding
+# behind these numbers; they are simply generous trailing padding.
+#
+# Each container is listed once per declaration because each is re-declared in the
+# density-override and @media blocks with a different gutter, and all copies must
+# keep the same trailing value or the page's bottom gap changes with the viewport.
+APP_SPACING_OUTSIDE_RHYTHM_OK = {
+    ".ev-main -> padding:var(--s-6) var(--s-6) 80px":
+        "trailing scroll room below the last +EV row; --s-12 (48px) is the "
+        "scale's top step and cannot express 80px",
+    ".ev-main -> padding:var(--s-6) clamp(var(--s-6),2.5vw,var(--s-10)) 80px":
+        "the density-override copy of the same page container",
+    ".bd-page -> padding:var(--s-5) var(--s-6) 60px":
+        "trailing scroll room below the board table; unexpressible on the scale",
+    ".bd-page -> padding:var(--s-5) clamp(var(--s-6),2.5vw,var(--s-10)) 60px":
+        "the density-override copy of the same page container",
+    ".bd-page -> padding:var(--s-5) var(--s-4) 60px":
+        "the @media 900 copy of the same page container",
+    ".pp -> padding:var(--s-12) var(--s-6) 80px":
+        "trailing scroll room below the pricing card; unexpressible on the scale",
+    ".pp -> padding:var(--s-12) clamp(var(--s-6),3vw,56px) 80px":
+        "the wide-viewport copy of the same page container. NOTE: its gutter "
+        "clamp tops out at a literal 56px, which passes only because the clamp "
+        "also names var(--s-6) — that endpoint is worth migrating, but it is a "
+        "gutter, not the trailing value this entry is about",
+}
+
+APP_SPACING_EXEMPT = {**APP_SPACING_OPTICAL_OK, **APP_SPACING_OUTSIDE_RHYTHM_OK}
+
+
+def _app_spacing_violations() -> list[str]:
+    violations = []
+    for sel, prop, value in _spacing_declarations(
+        lambda s: _has_class(s) and not is_marketing(s)
+    ):
+        key = f"{sel} -> {prop}:{value}"
+        if key in APP_SPACING_EXEMPT:
+            continue
+        for part in split_lengths(value):
+            if not _APP_SPACING_OK.match(part):
+                violations.append(key)
+                break
+    return violations
+
+
+def test_app_screen_spacing_goes_through_the_scale():
+    """Every padding/margin/gap length on a non-marketing rule resolves through
+    the spacing scale.
+
+    FAILS TODAY, on purpose. The assertion message is the migration worklist and
+    another agent works from it, so it is grouped and complete rather than short.
+    Do not add an exemption to shrink it: the two admissible categories are spelled
+    out above, and anything outside them is real drift.
+    """
+    violations = sorted(set(_app_spacing_violations()))
+    by_prefix: dict[str, list[str]] = {}
+    for v in violations:
+        m = re.search(r"\.([a-z]+)-", v)
+        by_prefix.setdefault(m.group(1) + "-" if m else "(page shells)", []).append(v)
+    report = "\n".join(
+        f"\n  === .{prefix} ({len(items)}) ==="
+        + "".join(f"\n    {i}" for i in items)
+        for prefix, items in sorted(by_prefix.items())
+    )
+    assert not violations, (
+        f"{len(violations)} off-scale app-screen spacing declarations:{report}\n\n"
+        "Use --s-1(4) --s-2(8) --s-3(12) --s-4(16) --s-5(20) --s-6(24) --s-8(32) "
+        "--s-10(40) --s-12(48); there is deliberately no --s-7/--s-9/--s-11 and "
+        "adding one is out of scope. --row-px is the +EV row's shared horizontal "
+        "padding. A calc()/clamp()/min()/max() must name at least one var(--…) or "
+        "it is not a derived value, it is a literal in a wrapper."
+    )
+
+
+def test_every_app_spacing_exemption_still_matches_a_real_site():
+    """A stale exemption is a standing permission for whatever lands on its key
+    next. This is the guard test_ios_tokens.py added after the same realisation;
+    it caught a mis-keyed entry within hours of being written.
+    """
+    seen = {
+        f"{sel} -> {prop}:{value}"
+        for sel, prop, value in _spacing_declarations(
+            lambda s: _has_class(s) and not is_marketing(s)
+        )
+    }
+    stale = sorted(set(APP_SPACING_EXEMPT) - seen)
+    assert not stale, (
+        "these app-spacing exemptions match no declaration — the site moved or "
+        "was migrated, and the exemption is now a blank cheque. Delete or fix "
+        "the key:\n  " + "\n  ".join(stale)
+    )
+
+
+def test_the_two_spacing_scopes_partition_the_stylesheet():
+    """Every rule with a class is owned by exactly one of the two spacing tests.
+
+    This is the point of writing the app scope as `not is_marketing` rather than as
+    a second prefix list: a new page prefix (a `.st-*` settings screen, say) is
+    covered the moment it is written, and the bare `.lp` / `.pp` shells — which
+    matched neither list while the marketing filter was the only one — cannot fall
+    between them again.
+
+    Rules with NO class are in neither scope, deliberately: `html,body{margin:0}`
+    and `body{padding-bottom:env(safe-area-inset-bottom)}` are the document reset
+    and the iOS home-indicator inset, neither of which is page rhythm. That set is
+    asserted small and named, so a third element-selector spacing rule shows up
+    here rather than silently escaping both tests.
+    """
+    def in_marketing_scope(sel: str) -> bool:
+        return is_marketing(sel)
+
+    def in_app_scope(sel: str) -> bool:
+        return _has_class(sel) and not is_marketing(sel)
+
+    classless, unowned, shared = set(), set(), set()
+    for selector, decls in rules(style_block(INDEX)):
+        sel = selector.strip()
+        if _has_class(sel):
+            # Asserted over the real filter functions rather than reasoned about,
+            # so a future edit to either one is checked instead of assumed.
+            owners = in_marketing_scope(sel) + in_app_scope(sel)
+            if owners == 0:
+                unowned.add(sel)
+            elif owners > 1:
+                shared.add(sel)
+            continue
+        for decl in declarations(decls):
+            prop, _, value = decl.partition(":")
+            prop = prop.strip().lower()
+            if prop in _SPACING_PROPS or prop.startswith(("padding-", "margin-")):
+                classless.add(f"{sel} -> {prop}:{' '.join(value.split())}")
+    assert not unowned, f"class rules owned by neither spacing test: {sorted(unowned)}"
+    assert not shared, f"class rules claimed by both spacing tests: {sorted(shared)}"
+    assert classless == {
+        "html,body -> margin:0",
+        "html,body -> padding:0",
+        "body -> padding-bottom:env(safe-area-inset-bottom)",
+    }, (
+        "element-selector spacing rules changed. These are in neither spacing "
+        f"scope; if a new one is page rhythm it needs a home:\n  {sorted(classless)}"
+    )
+
+
+def test_the_spacing_parser_sees_what_it_claims_to_see():
+    """The failure mode that matters is a zero denominator, not a wrong answer.
+
+    A regex that stops matching turns both spacing tests into assertions over an
+    empty list and the suite goes green while the rhythm rots. Floors are well
+    under today's counts (234 app / 87 marketing declarations) so ordinary
+    migration does not trip them.
+    """
+    app = _spacing_declarations(lambda s: _has_class(s) and not is_marketing(s))
+    marketing = _spacing_declarations(is_marketing)
+    assert len(app) >= 180, f"only {len(app)} app-screen spacing declarations found"
+    assert len(marketing) >= 60, f"only {len(marketing)} marketing ones found"
+    # The scale itself must still be reachable, or "goes through the scale" is
+    # vacuous in the other direction: a sheet with no var(--s-*) at all would
+    # fail loudly, but one where the pattern no longer matches them would not.
+    assert sum(1 for _s, _p, v in app if "var(--s-" in v) >= 60
+    assert split_lengths("calc(var(--row-px) - 3px)") == ["calc(var(--row-px) - 3px)"], (
+        "split_lengths stopped respecting parens; every calc() in the sheet would "
+        "now be reported as several off-scale literals"
     )
