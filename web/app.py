@@ -1055,6 +1055,37 @@ def _run_pipeline_body():
             and "/images/teams/" not in l.image_url
         }
 
+        # Don't publish an EMPTY board that a failed scrape produced.
+        #
+        # Two guards already exist above: all-sources-zero, and PrizePicks-zero.
+        # Neither covers the case that actually strands users on this host — PP
+        # answers fine, but the BOOKS time out ("curl: (28) Connection timed
+        # out", ~429 of them in a day on this laptop's WiFi). Devigging needs a
+        # consensus across books, so PP + one surviving book yields zero +EV
+        # bets, and the pipeline cheerfully published that empty board over a
+        # perfectly good one.
+        #
+        # Only fires when ALL of these hold, so it can never mask a genuinely
+        # empty slate (overnight, or between seasons):
+        #   * we produced nothing at all this cycle, AND
+        #   * the previous cycle had bets to preserve, AND
+        #   * at least one book actually errored — i.e. there is a mechanical
+        #     reason for the zero, not simply "no games today".
+        _book_errors = [b for b in ("fanduel", "draftkings", "pinnacle", "novig")
+                        if errors.get(b)]
+        if not serialized_bets and _book_errors:
+            with _lock:
+                _had_bets = len(_state.get("bets") or [])
+            if _had_bets:
+                logger.warning(
+                    "Pipeline: 0 +EV bets but %d book(s) failed (%s) — preserving the "
+                    "previous %d bet(s) rather than publishing an empty board.",
+                    len(_book_errors), ", ".join(_book_errors), _had_bets,
+                )
+                with _lock:
+                    _state["scrape_errors"] = errors
+                return
+
         with _lock:
             _state["bets"]         = serialized_bets
             _state["bet_map"]      = {b.bet_id: b for b in bets}

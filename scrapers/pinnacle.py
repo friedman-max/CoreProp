@@ -161,8 +161,12 @@ async def _scrape_league_id(session: requests.AsyncSession, base: str, league: s
     """Fetch matchups + markets for a specific Pinnacle league ID."""
     try:
         matchups_resp, markets_resp = await asyncio.gather(
-            session.get(f"{base}/leagues/{lid}/matchups", headers=PINNACLE_HEADERS, timeout=20),
-            session.get(f"{base}/leagues/{lid}/markets/straight", headers=PINNACLE_HEADERS, timeout=20),
+            # 30s, up from 20s: 104 of today's failures here were slow-network
+            # timeouts rather than refusals, and Pinnacle is the only book
+            # covering some leagues — losing it drops the consensus below what
+            # devigging needs.
+            session.get(f"{base}/leagues/{lid}/matchups", headers=PINNACLE_HEADERS, timeout=30),
+            session.get(f"{base}/leagues/{lid}/markets/straight", headers=PINNACLE_HEADERS, timeout=30),
         )
     except Exception as e:
         logger.error("Pinnacle [%s/%s] fetch error: %s", league, lid, e)

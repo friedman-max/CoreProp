@@ -247,7 +247,26 @@ async def _fetch_subcategory(
 
     props: List[DraftKingsProp] = []
     try:
-        r = await session.get(url, params=params, headers=DK_HEADERS, timeout=15)
+        # Retry once on a timeout. DraftKings fans out to ~21 subcategories per
+        # league, so on a flaky uplink a single dropped request used to zero the
+        # ENTIRE book for the cycle — and with DK missing there is no consensus
+        # left to devig against, so the +EV board came out empty. Measured 1309
+        # DK timeouts in one day on this host versus 0 for FanDuel, which is why
+        # this scraper gets the treatment and the others do not.
+        #
+        # 25s, not 15s: the failures are slow-network timeouts, not refusals, so
+        # the old budget was killing requests that would have completed.
+        r = None
+        for _attempt in range(2):
+            try:
+                r = await session.get(url, params=params, headers=DK_HEADERS, timeout=25)
+                break
+            except Exception:
+                if _attempt == 1:
+                    raise
+                # Brief pause so an in-progress network blip can clear rather
+                # than being hammered by an instant retry.
+                await asyncio.sleep(1.5)
         if r.status_code != 200:
             logger.warning(
                 "DraftKings [%s/%s] HTTP %d", league, subcat_name, r.status_code
