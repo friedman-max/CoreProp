@@ -84,6 +84,21 @@ enum Theme {
     /// the two, which coupled an outcome to a warning; `amber` stays the warning
     /// colour and this is the outcome colour.
     static let push    = Color(hex: 0xFBBF24)
+    /// Web's `--save` — named for the role, not the hue, because it is a
+    /// save/confirm BUTTON FILL and is a different green from `green` (#22C55E),
+    /// which is the semantic positive/outcome colour. Web spelled this as a raw
+    /// literal at seven sites until the token landed.
+    ///
+    /// **Do not put a white label on this.** White on #16A34A measures **3.30:1**
+    /// — over WCAG's 3:1 floor for non-text, under the 4.5:1 body-text minimum,
+    /// so a button label on it fails AA. That is the whole reason `primary`
+    /// (#1E6FB0, 5.31:1) is the colour every white-labelled control in this app
+    /// uses; see the note at `primary`. Web's `.cp-btn-save` does carry a white
+    /// 15px/700 label on it and is the live instance of that problem.
+    ///
+    /// Currently unreferenced on iOS — kept because it mirrors a real web token,
+    /// which is the same reason web keeps `--amber` with zero consumers. If a
+    /// save CTA ever needs it, resolve the contrast above first.
     static let saveGreen = Color(hex: 0x16A34A)
 
     // Bet side.
