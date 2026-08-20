@@ -40,16 +40,19 @@ struct SlipView: View {
 
     private var builder: some View {
         ScrollView {
-            VStack(spacing: 14) {
+            // 14 -> s4 (16). 14 is equidistant from s3 and s4 and the scale rule is
+            // ties round up, which is the same call the phase made for the 14pt
+            // card padding.
+            VStack(spacing: Theme.s4) {
                 summaryCard
                 legsCard
                 if let sr = vm.serverResult { optimizeCard(sr) }
                 actions
                 Text("EV is an independence estimate mirroring the web calculator. \"Optimize\" runs the server's correlation-aware model.")
                     .font(Theme.ui(11)).foregroundColor(Theme.text3)
-                    .multilineTextAlignment(.center).padding(.horizontal, 8)
+                    .multilineTextAlignment(.center).padding(.horizontal, Theme.s2)
             }
-            .padding(16)
+            .padding(Theme.s4)
         }
         .safeAreaInset(edge: .bottom) { bannerView }
     }
@@ -61,20 +64,20 @@ struct SlipView: View {
         let flex = SlipEV.flexEV(probs)
         let combined = probs.reduce(1.0, *)
         let be = SlipEV.breakEven(n: n, type: vm.slipType)
-        return VStack(spacing: 14) {
+        return VStack(spacing: Theme.s4) {
             Picker("Slip type", selection: $vm.slipType) {
                 Text("Power").tag(SlipType.power)
                 Text("Flex").tag(SlipType.flex)
             }
             .pickerStyle(.segmented)
 
-            HStack(spacing: 12) {
+            HStack(spacing: Theme.s3) {
                 statBlock("LEGS", "\(n)", Theme.text)
                 statBlock("ALL-HIT", Fmt.percent(combined), Theme.text)
                 statBlock("BREAK-EVEN/LEG", Fmt.percent(be), Theme.primary2)
             }
 
-            HStack(spacing: 12) {
+            HStack(spacing: Theme.s3) {
                 evBlock("POWER EV", power, highlight: vm.slipType == .power)
                 evBlock("FLEX EV", flex, highlight: vm.slipType == .flex)
             }
@@ -82,9 +85,17 @@ struct SlipView: View {
         .cpCard()
     }
 
+    // `statBlock`'s and `evBlock`'s labels stay UPPERCASE. Web de-capsed its *tile*
+    // labels (.bt-card-label)
+    // because an all-caps label competes with the 22px number it introduces, but
+    // LEGS / ALL-HIT / POWER EV are section labels over a numeric block, which is
+    // web's kept-caps case. What changes is the API: tracking, not kerning —
+    // tracking is letter-spacing, kerning adjusts specific glyph pairs. Web's
+    // micro-label rate is .04em, which at 9pt is 0.36, not the flat 0.5 that was
+    // here for both sizes.
     private func statBlock(_ label: String, _ value: String, _ color: Color) -> some View {
-        VStack(spacing: 4) {
-            Text(label).font(Theme.ui(9, .semibold)).kerning(0.5).foregroundColor(Theme.text3)
+        VStack(spacing: Theme.s1) {
+            Text(label).font(Theme.ui(9, .semibold)).tracking(0.36).foregroundColor(Theme.text3)
                 .multilineTextAlignment(.center)
             Text(value).font(Theme.mono(16, .bold)).foregroundColor(color)
         }
@@ -92,13 +103,16 @@ struct SlipView: View {
     }
 
     private func evBlock(_ label: String, _ ev: Double?, highlight: Bool) -> some View {
+        // `text4` is legitimate here and only here: this is the *disabled* site —
+        // there is no EV to show — not muted text a user is meant to read.
         let color: Color = ev == nil ? Theme.text4 : (ev! >= 0 ? Theme.green : Theme.red2)
-        return VStack(spacing: 4) {
-            Text(label).font(Theme.ui(9, .semibold)).kerning(0.5).foregroundColor(Theme.text3)
+        return VStack(spacing: Theme.s1) {
+            Text(label).font(Theme.ui(9, .semibold)).tracking(0.36).foregroundColor(Theme.text3)
             Text(ev == nil ? "n/a" : Fmt.signedPercent(ev)).font(Theme.mono(18, .bold)).foregroundColor(color)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
+        // 10 -> s3 (12): ties round up.
+        .padding(.vertical, Theme.s3)
         .background(highlight ? Theme.primaryHi : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSm, style: .continuous))
     }
@@ -106,16 +120,22 @@ struct SlipView: View {
     // MARK: Legs
 
     private var legsCard: some View {
+        // A structural zero, deliberately off the spacing scale: the legs are
+        // separated by the `Divider()` below, and any gap here would double up
+        // with the rows' own vertical padding and float the rules off-centre.
         VStack(spacing: 0) {
             ForEach(Array(slip.bets.enumerated()), id: \.element.betId) { idx, bet in
-                HStack(spacing: 10) {
+                // 10 -> s3 (12): ties round up.
+                HStack(spacing: Theme.s3) {
                     Text("\(idx + 1)")
                         .font(Theme.mono(12, .bold)).foregroundColor(Theme.primary2)
                         .frame(width: 24, height: 24)
                         .background(Theme.primaryHi).clipShape(Circle())
-                    VStack(alignment: .leading, spacing: 2) {
+                    // 2 -> s1 and 6 -> s2 (ties round up), the same pair of calls
+                    // SlipCard's leg row makes for the same name-over-prop shape.
+                    VStack(alignment: .leading, spacing: Theme.s1) {
                         Text(bet.playerName).font(Theme.ui(14, .semibold)).foregroundColor(Theme.text).lineLimit(1)
-                        HStack(spacing: 6) {
+                        HStack(spacing: Theme.s2) {
                             SideBadge(side: bet.sideLabel)
                             Text("\(bet.propType) \(Fmt.line(bet.ppLine))")
                                 .font(Theme.ui(12)).foregroundColor(Theme.text2).lineLimit(1)
@@ -131,7 +151,7 @@ struct SlipView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Remove \(bet.playerName) from slip")
                 }
-                .padding(.vertical, 8)
+                .padding(.vertical, Theme.s2)
                 if idx < slip.bets.count - 1 { Divider().overlay(Theme.hair) }
             }
         }
@@ -141,14 +161,18 @@ struct SlipView: View {
     // MARK: Server optimize result
 
     private func optimizeCard(_ sr: SlipResult) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Theme.s2) {
             HStack {
                 Text("CORRELATION-AWARE (SERVER)")
-                    .font(Theme.ui(10, .semibold)).kerning(0.6).foregroundColor(Theme.text3)
+                    // tracking, not kerning, at the same value: 0.6 at 10pt is
+                    // .06em, which is what BookBadgeView already tracks at 10pt.
+                    // There is no web twin for this label to source a rate from,
+                    // so this is an API fix, not a value change.
+                    .font(Theme.ui(10, .semibold)).tracking(0.6).foregroundColor(Theme.text3)
                 Spacer()
                 if let k = sr.optimalK { Text("best \(k)-leg").font(Theme.mono(11)).foregroundColor(Theme.text3) }
             }
-            HStack(spacing: 12) {
+            HStack(spacing: Theme.s3) {
                 statBlock("BEST PLAY", sr.bestPlayType ?? "—", Theme.text)
                 evBlock("BEST EV", sr.bestEvPct, highlight: true)
             }
@@ -171,7 +195,8 @@ struct SlipView: View {
     // MARK: Actions
 
     private var actions: some View {
-        VStack(spacing: 10) {
+        // 10 -> s3 (12): ties round up.
+        VStack(spacing: Theme.s3) {
             Button {
                 Task { await vm.optimize(betIds: slip.betIds, client: model.client, model: model) }
             } label: {
@@ -198,17 +223,19 @@ struct SlipView: View {
     @ViewBuilder
     private var bannerView: some View {
         if let banner = vm.banner {
-            HStack(spacing: 8) {
+            HStack(spacing: Theme.s2) {
                 Image(systemName: banner.isError ? "exclamationmark.triangle" : "checkmark.circle")
                 Text(banner.text).font(Theme.ui(13, .medium))
                 Spacer()
                 Button { vm.banner = nil } label: { Image(systemName: "xmark") }
             }
             .foregroundColor(banner.isError ? Theme.red2 : Theme.green)
-            .padding(12)
+            .padding(Theme.s3)
             .background(banner.isError ? Theme.redHi : Theme.greenHi)
             .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSm, style: .continuous))
-            .padding(.horizontal, 16).padding(.bottom, 8)
+            // s4 matches the builder's own page gutter, so the banner lines up with
+            // the cards it floats over instead of sitting 16 in from a 16 gutter.
+            .padding(.horizontal, Theme.s4).padding(.bottom, Theme.s2)
         }
     }
 }
