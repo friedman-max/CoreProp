@@ -21,12 +21,12 @@ struct LinesView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 10) {
+            VStack(spacing: Theme.s3) {
                 Picker("Board", selection: $segment) {
                     ForEach(Segment.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Theme.s4)
 
                 if segment == .sportsbooks {
                     Picker("Book", selection: $book) {
@@ -35,12 +35,12 @@ struct LinesView: View {
                         Text("Pinnacle").tag(BoardSource.pinnacle)
                     }
                     .pickerStyle(.segmented)
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, Theme.s4)
                 }
 
                 content
             }
-            .padding(.top, 8)
+            .padding(.top, Theme.s2)
             .background(Theme.bg.ignoresSafeArea())
             .navigationTitle("Lines")
             .navigationBarTitleDisplayMode(.inline)
@@ -103,8 +103,8 @@ struct LineRow: View {
     let source: BoardSource
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: Theme.s2) {
+            HStack(spacing: Theme.s2) {
                 Text(line.playerName ?? "—").font(Theme.ui(15, .semibold)).foregroundColor(Theme.text).lineLimit(1)
                 if let lg = line.league { LeaguePill(league: lg) }
                 Spacer()
@@ -112,7 +112,7 @@ struct LineRow: View {
                     Text(Fmt.percentValue(pct)).font(Theme.mono(13, .bold)).foregroundColor(Theme.primary2)
                 }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: Theme.s2) {
                 if !line.sideLabel.isEmpty { SideBadge(side: line.sideLabel) }
                 Text(line.prop).font(Theme.ui(13)).foregroundColor(Theme.text2).lineLimit(1)
                 if let v = line.lineValue {
@@ -124,12 +124,14 @@ struct LineRow: View {
             }
             oddsRow
         }
-        .padding(.vertical, 10).padding(.horizontal, 12)
+        // s4/s5, the same airy-row geometry as BetRow — the two row types sit in
+        // sibling lists and any mismatch reads as a bug.
+        .padding(.vertical, Theme.s4).padding(.horizontal, Theme.s5)
     }
 
     @ViewBuilder
     private var oddsRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Theme.s2) {
             if source == .combined {
                 bookChip(.fanduel, line.fd)
                 bookChip(.draftkings, line.dk)
@@ -157,7 +159,7 @@ struct LineRow: View {
     @ViewBuilder
     private func bookChip(_ book: Book, _ odds: Int?) -> some View {
         if let odds {
-            HStack(spacing: 3) {
+            HStack(spacing: Theme.s1) {
                 BookBadgeView(book: book)
                 Text(Fmt.americanOdds(odds)).font(Theme.mono(11, .medium)).foregroundColor(Theme.text3)
             }
@@ -165,8 +167,14 @@ struct LineRow: View {
     }
 
     private func labelled(_ label: String, _ value: String, _ color: Color) -> some View {
+        // spacing 0 is deliberate: the label is the value's baseline caption.
         VStack(alignment: .trailing, spacing: 0) {
-            Text(label).font(Theme.ui(8, .semibold)).foregroundColor(Theme.text4)
+            // Was 8pt `text4` — the worst contrast site in these two surfaces:
+            // 2.3:1 at a size below anything else the app asks a user to read.
+            // `text3` is the readable muted colour, and 9pt is the app's floor
+            // for muted micro-type (SlipView's stat labels, AnalyticsView's
+            // legend). BEST / FAIR / the book name are labels, not glyphs.
+            Text(label).font(Theme.ui(9, .semibold)).foregroundColor(Theme.text3)
             Text(value).font(Theme.mono(12, .semibold)).foregroundColor(color)
         }
     }

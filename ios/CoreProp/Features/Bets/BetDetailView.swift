@@ -11,14 +11,14 @@ struct BetDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: Theme.s4) {
                 header
                 keyNumbers
                 if !bet.bookOdds.isEmpty { bookOdds }
                 evBySlip
                 addButton
             }
-            .padding(16)
+            .padding(Theme.s4)
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle(bet.playerName)
@@ -31,13 +31,15 @@ struct BetDetailView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: Theme.s3) {
+            HStack(spacing: Theme.s2) {
                 LeaguePill(league: bet.league)
                 if let team = bet.team, !team.isEmpty {
                     Text(team).font(Theme.ui(12, .semibold)).foregroundColor(Theme.text3)
                 }
                 if bet.isGreenDevil {
+                    // Intra-badge padding, as in BetRow — these size the pill
+                    // itself, so they stay off the spacing scale.
                     Text("GOBLIN").font(Theme.ui(9, .bold)).foregroundColor(Theme.green)
                         .padding(.horizontal, 5).padding(.vertical, 2)
                         .background(Theme.greenHi).clipShape(Capsule())
@@ -45,7 +47,7 @@ struct BetDetailView: View {
                 Spacer()
             }
             Text(bet.playerName).font(Theme.ui(22, .bold)).foregroundColor(Theme.text)
-            HStack(spacing: 8) {
+            HStack(spacing: Theme.s2) {
                 SideBadge(side: bet.sideLabel)
                 Text(bet.propType).font(Theme.ui(15)).foregroundColor(Theme.text2)
                 Text(Fmt.line(bet.ppLine)).font(Theme.mono(15, .bold)).foregroundColor(Theme.text)
@@ -60,7 +62,7 @@ struct BetDetailView: View {
     }
 
     private var keyNumbers: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Theme.s3) {
             numberTile("True prob", Fmt.percentValue(bet.truePct), Theme.primary2)
             numberTile("Fair odds", Fmt.americanOdds(bet.trueOdds), Theme.text)
             numberTile("Edge", Fmt.signedPercent(bet.edge),
@@ -69,17 +71,30 @@ struct BetDetailView: View {
     }
 
     private func numberTile(_ label: String, _ value: String, _ color: Color) -> some View {
-        VStack(spacing: 6) {
-            Text(label.uppercased()).font(Theme.ui(10, .semibold)).kerning(0.5).foregroundColor(Theme.text3)
+        VStack(spacing: Theme.s2) {
+            // De-capsed, and the letter-spacing goes with the caps: "True prob"
+            // / "Fair odds" / "Edge" are micro-labels for the 20pt number beside
+            // them, not section headers, and an all-caps tracked label competes
+            // with the number it labels. Web de-capsed its stat-tile labels for
+            // the same reason (see StatTile in Components.swift). Sentence case
+            // wants no .04em tracking, so the `.kerning(0.5)` is simply gone
+            // rather than converted.
+            Text(label).font(Theme.ui(10, .semibold)).foregroundColor(Theme.text3)
             Text(value).font(Theme.mono(20, .bold)).foregroundColor(color)
         }
         .frame(maxWidth: .infinity)
-        .cpCard(radius: 12, padding: 14)
+        // `Theme.rMd` rather than a bare 12 — same value, now on the scale.
+        // padding stays 14: that is cpCard's own default and what StatTile uses,
+        // so moving this one tile to s4 would desync the two tile shapes.
+        .cpCard(radius: Theme.rMd, padding: 14)
     }
 
     private var bookOdds: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("BOOK PRICES").font(Theme.ui(10.5, .semibold)).kerning(0.6).foregroundColor(Theme.text3)
+        VStack(alignment: .leading, spacing: Theme.s3) {
+            // Stays UPPERCASE: this is a real section header, unlike numberTile's
+            // labels. `.tracking`, not `.kerning` — tracking is letter-spacing,
+            // kerning adjusts glyph pairs; .04em at 10.5pt is 0.42.
+            Text("BOOK PRICES").font(Theme.ui(10.5, .semibold)).tracking(0.42).foregroundColor(Theme.text3)
             ForEach(bet.bookOdds, id: \.book) { bo in
                 HStack {
                     BookBadgeView(book: bo.book)
@@ -102,16 +117,20 @@ struct BetDetailView: View {
     }
 
     private var evBySlip: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("PER-LEG EV BY SLIP").font(Theme.ui(10.5, .semibold)).kerning(0.6).foregroundColor(Theme.text3)
+        VStack(alignment: .leading, spacing: Theme.s3) {
+            // Also a real section header — uppercase stays; kerning -> tracking.
+            Text("PER-LEG EV BY SLIP").font(Theme.ui(10.5, .semibold)).tracking(0.42).foregroundColor(Theme.text3)
             Text("This leg's EV as a share of stake in each slip size (independence model).")
                 .font(Theme.ui(11)).foregroundColor(Theme.text3)
+            // `text3`, not `text4`: this is a column header a user reads, and
+            // text4 is 2.3:1 — decorative/disabled glyphs only. 44 is the SIZE
+            // column's width, so it stays literal.
             HStack {
                 Text("SIZE").frame(width: 44, alignment: .leading)
                 Text("POWER").frame(maxWidth: .infinity, alignment: .trailing)
                 Text("FLEX").frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .font(Theme.ui(10, .semibold)).foregroundColor(Theme.text4)
+            .font(Theme.ui(10, .semibold)).foregroundColor(Theme.text3)
 
             ForEach(2...6, id: \.self) { n in
                 HStack {
@@ -121,6 +140,9 @@ struct BetDetailView: View {
                     if n >= 3 {
                         evCell(SlipEV.scoreLeg(bet.trueProb, n: n, type: .flex))
                     } else {
+                        // The em dash is the one legitimate `text4` here: it is a
+                        // decorative "no such cell" glyph (there is no 2-leg
+                        // Flex), not text.
                         Text("—").font(Theme.mono(13)).foregroundColor(Theme.text4)
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }

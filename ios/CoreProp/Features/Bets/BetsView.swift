@@ -85,9 +85,9 @@ struct BetsView: View {
     // MARK: Filters
 
     private var filterBar: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: Theme.s3) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: Theme.s2) {
                     FilterChip(title: "All", selected: vm.selectedLeagues.isEmpty) {
                         vm.selectedLeagues.removeAll(); vm.pruneProps()
                     }
@@ -100,12 +100,12 @@ struct BetsView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Theme.s4)
             }
 
             if vm.availableProps.count > 1 {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: Theme.s2) {
                         FilterChip(title: "All props", selected: vm.selectedProps.isEmpty) {
                             vm.selectedProps.removeAll()
                         }
@@ -116,12 +116,12 @@ struct BetsView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, Theme.s4)
                 }
             }
 
-            HStack(spacing: 10) {
-                HStack(spacing: 6) {
+            HStack(spacing: Theme.s3) {
+                HStack(spacing: Theme.s2) {
                     Text("Min true")
                         .font(Theme.ui(11, .semibold)).foregroundColor(Theme.text3)
                     Stepper(value: $vm.minTruePct, in: 50...75, step: 1) {
@@ -150,15 +150,21 @@ struct BetsView: View {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(Theme.primary2)
+                        // 34x34 is the filter-control contract, and it is why
+                        // FilterChip pins an explicit 34pt height rather than
+                        // padding to ~28: a 28pt chip beside this button has no
+                        // shared baseline. Both numbers are intrinsic control
+                        // sizes and stay off the spacing scale.
                         .frame(width: 34, height: 34)
                         .background(Theme.controlBg)
+                        // radiusXs resolves to 8 — unchanged by the radius scale.
                         .clipShape(RoundedRectangle(cornerRadius: Theme.radiusXs, style: .continuous))
                         .accessibilityLabel("Filters and sorting")
                 }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, Theme.s4)
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, Theme.s3)
         .background(Theme.bg2)
         .overlay(alignment: .bottom) { Divider().overlay(Theme.hair) }
     }
