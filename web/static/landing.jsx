@@ -1125,7 +1125,12 @@ function LpVigViz({ r }) {
   return (
     <figure className="lp-vig">
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} aria-hidden="true" className="lp-vig-svg">
-        <rect x="0" y="0" width={fairW} height={H} rx="4" fill="#1E6FB0" />
+        {/* var() in an SVG presentation attribute, not the accent hex: this bar
+          * is paired with the `.lp-vig-key.is-fair` legend swatch, which already
+          * uses var(--primary), so a literal here could silently disagree with
+          * its own key. The sibling bar's #FF4A4A is PrizePicks' loss red, not a
+          * site token, and stays literal. */}
+        <rect x="0" y="0" width={fairW} height={H} rx="4" fill="var(--primary)" />
         <rect x={fairW + 2} y="0" width={Math.max(vigW - 2, 1)} height={H} rx="4" fill="#FF4A4A" />
       </svg>
       <figcaption className="lp-vig-cap">

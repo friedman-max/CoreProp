@@ -177,7 +177,7 @@ function PricingPage({ onStart, onBack, loggedIn, locked, comped }) {
           <button className="cp-btn pp-cta" onClick={onCta} disabled={cta === "loading"}>
             {cta === "loading" ? "Redirecting to checkout…" : `Start ${trialDays} days free`}
           </button>
-          {ctaErr && <div className="pp-cta-sub" role="alert" style={{color:"#FCA5A5"}}>{friendlyBillingError(ctaErr)}</div>}
+          {ctaErr && <div className="pp-cta-sub is-err" role="alert">{friendlyBillingError(ctaErr)}</div>}
           {/* The word "cancel" appeared six times on this page. It's in the
             * header and the FAQ; this line just needs to state the price. */}
           <div className="pp-cta-sub">
@@ -186,8 +186,7 @@ function PricingPage({ onStart, onBack, loggedIn, locked, comped }) {
           {loggedIn && !comped && (
             <button
               type="button"
-              className="cp-link cp-center"
-              style={{ marginTop: 4 }}
+              className="cp-link cp-center pp-portal-btn"
               disabled={portalBusy}
               onClick={async () => {
                 if (portalBusy) return;

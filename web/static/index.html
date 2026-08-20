@@ -699,7 +699,13 @@ a{color:inherit;text-decoration:none}
 .lp-game-evchip{position:absolute;padding:4px 11px;border-radius:999px;background:#0A2A12;border:1px solid rgba(110,255,0,.4);color:#6EFF00;font-weight:800;font-size:13px;letter-spacing:.04em;white-space:nowrap}
 .lp-game-wash{position:absolute;inset:0;background:rgba(255,74,74,.5);border-radius:22px}
 .lp-game-stamp{position:absolute;left:50%;top:50%;line-height:0}
-.lp-game-err{margin:12px 0 0;font-size:12.5px;color:#FCA5A5;text-align:center}
+/* The one `lp-game-*` rule on the site palette rather than the PrizePicks clone
+ * palette, and so the one deliberate exception to "do not touch the minigame".
+ * #FCA5A5 is CoreProp's error red (--red-2); PP's loss red is #FF4A4A and stays
+ * literal everywhere it appears. This element is also the only part of the game
+ * that renders *outside* the PP card — it is the role="alert" status line beneath
+ * it. Value-identical swap. */
+.lp-game-err{margin:12px 0 0;font-size:12.5px;color:var(--red-2);text-align:center}
 /* THE next action, on the card. Ben on v1: "the next pick button has to be
  * easier to reach or easier to see, it should be largely shown maybe even on
  * the player 'card' itself". So: full card width, 54px tall, filled --primary
@@ -1160,72 +1166,108 @@ a{color:inherit;text-decoration:none}
 /* The two blurred radial orbs that used to sit behind this page are gone with
  * the landing page's, for the same reason. The empty divs are removed from
  * pricing.jsx too, so these class names have no markup left. */
-.pp-back{position:relative;z-index:1;margin-bottom:14px}
-.pp-hd{position:relative;z-index:1;text-align:center;margin-bottom:36px}
-.pp-h1{font-size:clamp(40px,5.4vw,64px);line-height:1.05;letter-spacing:-.025em;font-weight:700;margin:0 0 14px;text-wrap:balance}
+.pp-back{position:relative;z-index:1;margin-bottom:var(--s-4)}
+.pp-hd{position:relative;z-index:1;text-align:center;margin-bottom:var(--s-8)}
+.pp-h1{font-size:clamp(40px,5.4vw,64px);line-height:1.05;letter-spacing:-.025em;font-weight:700;margin:0 0 var(--s-4);text-wrap:balance}
 /* Flat, not gradient-clipped text. */
 .pp-h1-g{color:var(--green)}
-.pp-h1-sub{color:var(--text-2);font-size:17px;margin:0 0 26px}
-.pp-toggle{display:inline-flex;background:#0c0c14;border:1px solid var(--hair);padding:5px;border-radius:var(--r-pill);gap:4px}
-.pp-tg-btn{background:transparent;border:0;color:var(--text-3);padding:10px 22px;border-radius:var(--r-pill);font-weight:600;font-size:13.5px;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:8px}
+.pp-h1-sub{color:var(--text-2);font-size:17px;margin:0 0 var(--s-6)}
+.pp-toggle{display:inline-flex;background:#0c0c14;border:1px solid var(--hair);padding:var(--s-1);border-radius:var(--r-pill);gap:var(--s-1)}
+.pp-tg-btn{background:transparent;border:0;color:var(--text-3);padding:var(--s-3) var(--s-6);border-radius:var(--r-pill);font-weight:600;font-size:13.5px;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:var(--s-2)}
 .pp-tg-btn.is-on{background:#1f1f2e;color:white}
-.pp-save{color:var(--green);font-size:11px;font-weight:700;letter-spacing:.04em;background:rgba(34,197,94,.12);padding:2px 8px;border-radius:var(--r-pill);white-space:nowrap}
+/* The 2px vertical pad is exempt from the spacing scale (test_css_tokens.py's
+ * MARKETING_SPACING_LITERAL_OK): this is an 11px micro-badge inside the toggle
+ * button, and --s-1 (4px) would fatten the pill by 4px against a 13.5px label.
+ * The horizontal pad is on the scale. */
+.pp-save{color:var(--green);font-size:11px;font-weight:700;letter-spacing:.04em;background:rgba(34,197,94,.12);padding:2px var(--s-2);border-radius:var(--r-pill);white-space:nowrap}
 .pp-tg-btn{white-space:nowrap}
 
 .pp-card-wrap{position:relative;z-index:1;display:flex;justify-content:center;max-width:620px;margin:0 auto}
 .pp-card-wrap .pp-card{width:100%}
 
-.pp-card{position:relative;background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-xl);padding:36px 32px 28px;box-shadow:var(--shadow-card);overflow:hidden}
+/* Fluid padding, because at 320px the card has 208px of content width and a flat
+ * 36/32/28 spends 64px of it. Both clamps top out at --s-8 (32px) from ~800px up,
+ * so the desktop card loses 4px of top pad and gains 4px of bottom pad — its
+ * height is unchanged and its content sits 4px higher inside it. The gain is that
+ * a phone gets 24px/20px instead of 36px/32px. */
+.pp-card{position:relative;background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-xl);padding:clamp(var(--s-6),4vw,var(--s-8)) clamp(var(--s-5),4vw,var(--s-8)) var(--s-8);box-shadow:var(--shadow-card);overflow:hidden}
 /* A 1px hairline, not a masked two-tone gradient border. */
 .pp-card-glow{position:absolute;inset:-1px;border-radius:calc(var(--r-xl) + 1px);border:1px solid var(--hair-2);pointer-events:none}
-.pp-card-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
-.pp-card-tag{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;font-weight:700;letter-spacing:.04em;color:var(--primary-2)}
+/* `gap` + `flex-wrap` are load-bearing, not polish. The two children's intrinsic
+ * widths sum to ~296px, so with `space-between` and no wrap they overlapped at
+ * 320, 360 and 390px and cleared by only ~6px at 414px. Wrapping is made
+ * deterministic by .pp-card-trial's `white-space:nowrap` below: the badge drops
+ * to its own line whole, instead of both texts breaking into ragged two-line
+ * blocks. */
+.pp-card-hd{display:flex;justify-content:space-between;align-items:center;gap:var(--s-3);flex-wrap:wrap;margin-bottom:var(--s-5)}
+.pp-card-tag{display:inline-flex;align-items:center;gap:var(--s-2);font-size:11.5px;font-weight:700;letter-spacing:.04em;color:var(--primary-2)}
 /* A solid 7px dot, not a 10px accent halo — same "no colored glow" rule as the
  * buttons. Not enumerated in the task; caught by the accent-glow guard. */
 .pp-card-dot{width:7px;height:7px;border-radius:50%;background:var(--primary)}
-.pp-card-trial{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);padding:5px 11px;border-radius:var(--r-pill)}
+.pp-card-trial{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);padding:var(--s-1) var(--s-3);border-radius:var(--r-pill);white-space:nowrap}
 
-.pp-price{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
+.pp-price{display:flex;flex-direction:column;gap:var(--s-2);margin-bottom:var(--s-5)}
+/* The 2px gap is exempt from the spacing scale (MARKETING_SPACING_LITERAL_OK):
+ * these three children are the parts of one number ("$", "50", "/mo") on a shared
+ * baseline, so the gap is kerning between glyph runs, not layout spacing. --s-1
+ * would double it and open a visible hole after the currency symbol. */
 .pp-price-row{display:flex;align-items:baseline;gap:2px;line-height:1;font-family:"Inter",sans-serif}
-.pp-price-cur{font-size:30px;font-weight:700;color:var(--text-2);align-self:flex-start;margin-top:8px}
-.pp-price-d{font-size:64px;font-weight:800;letter-spacing:-.035em;color:var(--text)}
+.pp-price-cur{font-size:30px;font-weight:700;color:var(--text-2);align-self:flex-start;margin-top:var(--s-2)}
+/* Fluid, because 64px of a 208px content box at 320px is most of the card. 8vw
+ * reaches 64px at 800px, so the desktop figure is unchanged. */
+.pp-price-d{font-size:clamp(44px,8vw,64px);font-weight:800;letter-spacing:-.035em;color:var(--text)}
 /* The billing period, at label size next to the amount. Replaces .pp-price-c
  * (the cents of a per-day figure) and .pp-price-strike (a struck-through daily
  * rate) — see the note in pricing.jsx about why the per-day framing is gone. */
-.pp-price-per{font-size:22px;font-weight:600;color:var(--text-3);margin-left:4px}
-.pp-price-sub{color:var(--text-3);font-size:14px;margin-top:10px;line-height:1.5}
+.pp-price-per{font-size:22px;font-weight:600;color:var(--text-3);margin-left:var(--s-1)}
+.pp-price-sub{color:var(--text-3);font-size:14px;margin-top:var(--s-3);line-height:1.5}
 .pp-price-sub b{color:var(--text);font-weight:600}
 
 /* The book names now come from /api/public/coverage as full words, so they get
  * one neutral chip style instead of three per-book brand tints keyed off
  * hardcoded FD/DK/PIN abbreviations. Adding a book server-side no longer needs
  * a matching CSS rule here. */
-.pp-books-strip{display:flex;align-items:center;gap:8px;margin-bottom:18px;flex-wrap:wrap}
-.pp-book-logo{font-size:11px;font-weight:600;letter-spacing:.02em;padding:5px 10px;border-radius:var(--r-sm);background:rgba(255,255,255,.06);color:var(--text-2)}
-.pp-books-plus{font-size:12px;color:var(--text-3);margin-left:4px}
+.pp-books-strip{display:flex;align-items:center;gap:var(--s-2);margin-bottom:var(--s-5);flex-wrap:wrap}
+.pp-book-logo{font-size:11px;font-weight:600;letter-spacing:.02em;padding:var(--s-1) var(--s-3);border-radius:var(--r-sm);background:rgba(255,255,255,.06);color:var(--text-2)}
+.pp-books-plus{font-size:12px;color:var(--text-3);margin-left:var(--s-1)}
 
 /* The primary conversion button. Was a three-stop peach -> lilac -> blue
  * pastel gradient with a colored bloom, which matched nothing else in the
  * product and read as stock template art. Flat brand accent, same as every
  * other primary button on the site, and cursor:pointer because it is a button. */
 .pp-cta{
-  width:100%;padding:16px;font-size:15px;font-weight:700;border-radius:var(--r-md);
+  width:100%;padding:var(--s-4);font-size:15px;font-weight:700;border-radius:var(--r-md);
   background:var(--primary);color:#fff;border:0;cursor:pointer;transition:background .15s ease;
 }
 .pp-cta:hover{background:#195F97}
 .pp-cta:disabled{opacity:.65;cursor:not-allowed}
-.pp-cta-sub{text-align:center;font-size:12.5px;color:var(--text-3);margin:10px 0 22px}
+.pp-cta-sub{text-align:center;font-size:12.5px;color:var(--text-3);margin:var(--s-3) 0 var(--s-6)}
+/* The checkout error, as a modifier rather than an inline colour in pricing.jsx.
+ * Deliberately NOT .cp-state-err: that block also sets padding and a font-size,
+ * which would change this line's geometry. Colour only, so the error reads as the
+ * same line it replaces. */
+.pp-cta-sub.is-err{color:var(--red-2)}
+/* The "Manage subscription" button's 4px offset, previously a style={{marginTop:4}}
+ * in pricing.jsx — the last inline spacing on either marketing page. */
+.pp-portal-btn{margin-top:var(--s-1)}
 
-.pp-benefits{list-style:none;padding:0;margin:0 0 22px;display:flex;flex-direction:column;gap:14px;border-top:1px solid var(--hair);padding-top:20px}
-.pp-benefit{display:flex;gap:12px;align-items:flex-start}
+.pp-benefits{list-style:none;padding:0;margin:0 0 var(--s-6);display:flex;flex-direction:column;gap:var(--s-4);border-top:1px solid var(--hair);padding-top:var(--s-5)}
+.pp-benefit{display:flex;gap:var(--s-3);align-items:flex-start}
+/* The 1px offset is exempt from the spacing scale (MARKETING_SPACING_LITERAL_OK):
+ * it optically seats the 22px circle against the cap height of the 14.5px title
+ * beside it. A 1px nudge is alignment, not spacing. */
 .pp-check{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:rgba(30,111,176,.18);color:var(--primary-2);display:grid;place-items:center;margin-top:1px}
 .pp-b-t{font-size:14.5px;font-weight:600;color:var(--text);letter-spacing:-.005em}
+/* The 2px offset is exempt from the spacing scale (MARKETING_SPACING_LITERAL_OK):
+ * it is a half-leading correction between the benefit title and its description
+ * inside one text block, on top of the description's own line-height:1.5. --s-1
+ * would double the gap and separate the two into unrelated lines. */
 .pp-b-d{font-size:13px;color:var(--text-2);line-height:1.5;margin-top:2px}
 
-.pp-card-foot{display:flex;justify-content:space-between;align-items:center;padding-top:18px;border-top:1px solid var(--hair);color:var(--text-3);font-size:12px;gap:12px;flex-wrap:wrap}
-.pp-trust{display:inline-flex;align-items:center;gap:6px}
-.pp-pay{display:inline-flex;gap:6px}
-.pp-pay-chip{font-size:9.5px;font-weight:800;letter-spacing:.05em;background:#0a0a12;border:1px solid var(--hair);padding:4px 7px;border-radius:var(--r-sm);color:var(--text-2)}
+.pp-card-foot{display:flex;justify-content:space-between;align-items:center;padding-top:var(--s-5);border-top:1px solid var(--hair);color:var(--text-3);font-size:12px;gap:var(--s-3);flex-wrap:wrap}
+.pp-trust{display:inline-flex;align-items:center;gap:var(--s-2)}
+.pp-pay{display:inline-flex;gap:var(--s-2)}
+.pp-pay-chip{font-size:9.5px;font-weight:800;letter-spacing:.05em;background:#0a0a12;border:1px solid var(--hair);padding:var(--s-1) var(--s-2);border-radius:var(--r-sm);color:var(--text-2)}
 .pp-pay-apple{font-family:"Inter",sans-serif}
 
 /* The pricing page's sticky side column (a testimonial card + a stat tile +
@@ -1233,30 +1275,37 @@ a{color:inherit;text-decoration:none}
  * were left behind with no markup to style. The testimonial it held was one
  * of the invented ones. */
 
-.pp-foot-trust{position:relative;z-index:1;margin-top:60px;display:grid;grid-template-columns:repeat(4,1fr);gap:18px;padding:36px 0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair)}
+/* 60px is above the scale's top step (--s-12 is 48px; there is no --s-16), so it
+ * follows the same precedent as .pp's 56px gutter below: the clamp's minimum
+ * moves onto a token and its maximum stays the literal. 5vw reaches 60px at
+ * 1200px, so a desktop is unchanged and a phone gets --s-10 (40px). */
+.pp-foot-trust{position:relative;z-index:1;margin-top:clamp(var(--s-10),5vw,60px);display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s-5);padding:var(--s-8) 0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair)}
 @media (max-width:780px){.pp-foot-trust{grid-template-columns:repeat(2,1fr)}}
 .pp-ft-item{text-align:center}
 .pp-ft-item b{display:block;font-size:24px;font-weight:700;letter-spacing:-.01em;color:var(--text)}
-.pp-ft-item em{font-style:normal;color:var(--text-3);font-size:13px;margin-top:4px;display:block}
+.pp-ft-item em{font-style:normal;color:var(--text-3);font-size:13px;margin-top:var(--s-1);display:block}
 
 /* --text-3, not --text-4: this is the responsible-gambling notice, and --text-4
  * measures 2.27:1 on the page background (AA needs 4.5:1). Same fix as
  * .lp-foot-disc. */
-.pp-respo{text-align:center;color:var(--text-3);font-size:12.5px;line-height:1.55;padding:20px 0 0;max-width:80ch;margin:0 auto}
+.pp-respo{text-align:center;color:var(--text-3);font-size:12.5px;line-height:1.55;padding:var(--s-5) 0 0;max-width:80ch;margin:0 auto}
 
 /* Pricing FAQ */
-.pp-faq{position:relative;z-index:1;max-width:880px;margin:48px auto 0}
-.pp-faq-h{font-size:22px;font-weight:700;letter-spacing:-.015em;margin:0 0 18px;text-align:center}
-.pp-faq-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pp-faq{position:relative;z-index:1;max-width:880px;margin:var(--s-12) auto 0}
+/* Shares .lp-h2's clamp. These are the two section headings on the signed-out
+ * surface and a fixed 22px here against a fluid 24-32px there meant they read as
+ * different levels on the same page family. Keep the two in step. */
+.pp-faq-h{font-size:clamp(24px,2.6vw,32px);font-weight:700;letter-spacing:-.015em;margin:0 0 var(--s-5);text-align:center}
+.pp-faq-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--s-2)}
 @media (max-width:680px){.pp-faq-grid{grid-template-columns:1fr}}
-.pp-faq details{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);padding:14px 18px;transition:border-color .15s}
+.pp-faq details{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);padding:var(--s-4) var(--s-5);transition:border-color .15s}
 .pp-faq details:hover{border-color:var(--hair-2)}
 .pp-faq details[open]{border-color:rgba(30,111,176,.3)}
-.pp-faq summary{cursor:pointer;font-size:14.5px;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.pp-faq summary{cursor:pointer;font-size:14.5px;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:var(--s-3)}
 .pp-faq summary::-webkit-details-marker{display:none}
 .pp-faq summary::after{content:"+";color:var(--text-3);font-weight:300;font-size:22px;line-height:1;transition:transform .2s;flex-shrink:0}
 .pp-faq details[open] summary::after{transform:rotate(45deg);color:var(--primary-2)}
-.pp-faq p{font-size:13.5px;color:var(--text-2);line-height:1.55;margin:10px 0 0}
+.pp-faq p{font-size:13.5px;color:var(--text-2);line-height:1.55;margin:var(--s-3) 0 0}
 
 /* ═══════════════════════════════════════════ BOARD PAGES (shared) ═══════════════════════════════════════════ */
 /* Both re-declared in the density-overrides block (and .bd-page again at
@@ -2060,16 +2109,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=1a5956e50e"></script>
-<script src="/static/dist/tweaks-panel.js?v=1a5956e50e"></script>
-<script src="/static/dist/components.js?v=1a5956e50e"></script>
-<script src="/static/dist/landing.js?v=1a5956e50e"></script>
-<script src="/static/dist/ev-page.js?v=1a5956e50e"></script>
-<script src="/static/dist/page-boards.js?v=1a5956e50e"></script>
-<script src="/static/dist/page-backtest.js?v=1a5956e50e"></script>
-<script src="/static/dist/page-analytics.js?v=1a5956e50e"></script>
-<script src="/static/dist/pricing.js?v=1a5956e50e"></script>
-<script src="/static/dist/app-main.js?v=1a5956e50e"></script>
+<script src="/static/dist/api.js?v=d76e8e67f2"></script>
+<script src="/static/dist/tweaks-panel.js?v=d76e8e67f2"></script>
+<script src="/static/dist/components.js?v=d76e8e67f2"></script>
+<script src="/static/dist/landing.js?v=d76e8e67f2"></script>
+<script src="/static/dist/ev-page.js?v=d76e8e67f2"></script>
+<script src="/static/dist/page-boards.js?v=d76e8e67f2"></script>
+<script src="/static/dist/page-backtest.js?v=d76e8e67f2"></script>
+<script src="/static/dist/page-analytics.js?v=d76e8e67f2"></script>
+<script src="/static/dist/pricing.js?v=d76e8e67f2"></script>
+<script src="/static/dist/app-main.js?v=d76e8e67f2"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

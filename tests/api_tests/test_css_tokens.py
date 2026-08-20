@@ -357,14 +357,13 @@ def test_no_mobile_ev_row_min_width():
     assert "min-width:620px" not in squash(css), "the +EV row still forces a 620px scroll"
 
 
-# `.lp-game-err` is the landing-page minigame's error line. The whole `lp-game-`
-# surface is Phase 3's, and this phase does not touch it — not even for a
-# value-identical token swap, because touching it means re-reviewing the landing
-# page. Phase 3 should migrate it and delete this exemption; it is spelled as a
-# literal selector, not a prefix, so it cannot silently cover a new rule.
-RED2_EXEMPT = {".lp-game-err"}
-
-
+# Phase 2b carried a `RED2_EXEMPT = {".lp-game-err"}` here so the landing-page
+# minigame stayed untouched for one more phase. Phase 3 migrated that rule to
+# var(--red-2) and deleted the exemption, so this invariant is now unconditional:
+# no rule outside :root may spell #FCA5A5. `.lp-game-err` was the only `lp-game-*`
+# rule using a site-palette colour at all — PP's loss red is #FF4A4A, which is a
+# different value and stays literal — and it renders outside the PP card as the
+# game's role="alert" status line.
 def test_error_red_is_tokenized():
     """#FCA5A5 is the error/miss red. It appeared in ~10 rules with no token, so
     a change meant finding every site by hand. --red-2 is that token.
@@ -386,7 +385,7 @@ def test_error_red_is_tokenized():
     # No rule outside :root may hardcode it.
     violations = []
     for selector, decls in rules(css):
-        if selector.strip() == ":root" or selector.strip() in RED2_EXEMPT:
+        if selector.strip() == ":root":
             continue
         if "#fca5a5" in squash(decls):
             violations.append(selector.strip())
@@ -504,10 +503,11 @@ MARKETING_SPACING_EXEMPT = (
 )
 
 # Rules whose spacing is deliberately literal because the 4px scale cannot
-# express it. Spelled as whole selectors, not prefixes (RED2_EXEMPT's precedent),
-# so an exemption cannot silently widen to a new rule. Every entry is a 1-3px
-# value: a sub-scale nudge is optical alignment or a hairline, not spacing — the
-# same reasoning Phase 1 used to keep its 1-4px decorative radii literal.
+# express it. Spelled as whole selectors, not prefixes (the deleted RED2_EXEMPT's
+# precedent), so an exemption cannot silently widen to a new rule. Every entry is
+# a 1-3px value: a sub-scale nudge is optical alignment or a hairline, not
+# spacing — the same reasoning Phase 1 used to keep its 1-4px decorative radii
+# literal.
 #
 #   .lp-sr-only           : `margin:-1px` is half of the visually-hidden recipe
 #                           (1x1px box, negative margin, clip). Not spacing at
@@ -520,11 +520,35 @@ MARKETING_SPACING_EXEMPT = (
 #                           pad is tokenized.
 #   .lp-why-steps div span: `margin-top:3px` aligns the step description's cap
 #                           height with the digit in its circle beside it.
+#
+# Phase 3 (pricing) added four more, on the same 1-3px reasoning:
+#
+#   .pp-check             : `margin-top:1px` optically seats the 22px check circle
+#                           against the cap height of the 14.5px benefit title
+#                           beside it. Alignment, not spacing.
+#   .pp-price-row         : `gap:2px` separates the three parts of one number
+#                           ("$", "50", "/mo") on a shared baseline, so it is
+#                           kerning between glyph runs. --s-1 doubles it and opens
+#                           a visible hole after the currency symbol.
+#   .pp-b-d               : `margin-top:2px` is a half-leading correction between
+#                           a benefit's title and its description inside one text
+#                           block, on top of the description's own line-height.
+#                           --s-1 would read as two unrelated lines.
+#   .pp-save              : `padding:2px var(--s-2)` — an 11px micro-badge inside
+#                           the billing-toggle button; 4px of vertical pad fattens
+#                           the pill against a 13.5px label. Only the vertical
+#                           component is literal; the horizontal one is on the
+#                           scale, and the exemption exists only because this test
+#                           judges a declaration as a whole.
 MARKETING_SPACING_LITERAL_OK = {
     ".lp-sr-only",
     ".lp-cov-grid",
     ".lp-bk-head",
     ".lp-why-steps div span",
+    ".pp-check",
+    ".pp-price-row",
+    ".pp-b-d",
+    ".pp-save",
 }
 
 # Lengths that are legal without a token: zero, auto-centring, and the two
