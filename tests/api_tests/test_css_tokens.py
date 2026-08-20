@@ -1320,3 +1320,134 @@ def test_shadow_card_is_still_a_live_token():
         "surface is an elevation decision — record it in CARD_ELEVATION. Removing "
         "both leaves a token nothing reads."
     )
+
+
+# ── Micro-label tracking ──────────────────────────────────────────────────────
+# The typography pass narrowed micro-label `letter-spacing` from `.1em` to
+# `.04em` (`.04em` is now the house value: 22 rules use it, on every column
+# header, field label, uppercase section head and badge). The pass was driven by a
+# grep for `.1em`, which does not match the `.10em` spelling — so it missed two
+# rules, and one of them renders: the Backtest WIN/LOSS/PUSH/PENDING badge
+# (`.bt-slip-compact .bt-slip-badge`) still ships full caps tracking.
+#
+# THE LESSON THIS TEST ENCODES, because it is the lesson that caused the defect:
+# `.1em`, `.10em`, `0.1em` and `0.100em` are the same value, and a value-matching
+# check must NORMALISE before comparing. So this parses each value to a float and
+# compares numerically. A grep never can.
+#
+# Negative tracking is out of scope entirely: `-.005em` to `-.035em` is optical
+# tightening on large display type, the opposite concern, and 20 rules use it.
+_MAX_TRACKING_EM = 0.04
+_EM = re.compile(r"^(-?(?:\d+)?\.?\d+)em$")
+
+# Deliberately wider than .04em. Every entry is a rule whose tracking predates the
+# micro-label pass and was not part of it; each is listed with what it is and why
+# the wider value is the right one, because "it was already like that" is not a
+# reason. Whole selectors, matched entire.
+#
+# The two `.10em` sites are ABSENT on purpose and this test fails on them. Do not
+# add them: they are the defect the pass missed, one of them renders, and an
+# exemption here would delete the only record of the remaining work.
+TRACKING_ABOVE_04_OK = {
+    # ── Landing-page section heads. Genuinely uppercase 11px/10px eyebrow
+    # headings above a content column, where the app's equivalents (.an-section-h,
+    # .bd-tbl thead th) are 10.5px labels INSIDE a dense grid. An eyebrow with
+    # nothing beside it can carry wider tracking without pushing anything out of
+    # alignment, which is the constraint that set .04em everywhere else.
+    ".lp-why-h,.lp-books-h":
+        ".07em on an 11px uppercase eyebrow heading over a content column",
+    ".lp-bk-head":
+        ".08em on a 10px uppercase column label over the book tiles; its 1px "
+        "bottom pad is exempt in MARKETING_SPACING_LITERAL_OK for the same "
+        "optical-seating reason",
+    # ── Small-caps status/price badges. At 9.5-11px in a pill, tracking is what
+    # keeps an all-caps word from reading as one blob; the badge is its own box, so
+    # widening it moves nothing else.
+    ".bt-slip-badge":
+        ".08em on the 10px WIN/LOSS/PUSH/PENDING badge — the BASE copy. The "
+        "compact override at .10em is a separate declaration and is NOT exempt",
+    ".obs-pill":
+        ".08em on the 10px observatory status pill, the same component shape",
+    ".pp-card-trial":
+        ".08em on the 11px 'N-DAY FREE TRIAL' pill on the pricing card",
+    ".pp-pay-chip":
+        ".05em on a 9.5px payout chip",
+    ".cp-book":
+        ".06em on a 9.5px book abbreviation chip (FD/DK/PIN/NOV) — the smallest "
+        "type in the app, where .04em is not enough to separate three capitals",
+    ".bt-leg-league":
+        ".05em on an 11px league pill inside a slip leg",
+    # ── OVER / UNDER. Two words that must be told apart at a glance in a dense
+    # scanning column, and they are the datum, not a label for one.
+    ".ev-side": ".05em on the 12.5px OVER/UNDER side word in the +EV row",
+    ".bd-side": ".05em on the 12px OVER/UNDER side word in the board tables",
+}
+
+
+def _tracking_declarations() -> list[tuple[str, float, str]]:
+    """`(selector, em value, raw text)` for every parseable `letter-spacing`."""
+    out = []
+    for selector, decls in rules(style_block(INDEX)):
+        for decl in declarations(decls):
+            prop, _, value = decl.partition(":")
+            if prop.strip().lower() != "letter-spacing":
+                continue
+            raw = value.strip()
+            m = _EM.match(squash(raw))
+            if m:
+                out.append((selector.strip(), float(m.group(1)), raw))
+            elif squash(raw) in ("0", "normal"):
+                out.append((selector.strip(), 0.0, raw))
+            else:
+                # px/rem tracking, or a var(). None today. Reported rather than
+                # skipped, so an unparseable unit cannot smuggle .1em past this.
+                out.append((selector.strip(), float("nan"), raw))
+    return out
+
+
+def test_micro_label_tracking_stays_at_or_below_04em():
+    violations = []
+    for selector, em, raw in _tracking_declarations():
+        if selector in TRACKING_ABOVE_04_OK:
+            continue
+        if em != em:                                    # NaN: unparseable unit
+            violations.append(f"{selector} -> letter-spacing:{raw} (unit not em)")
+        elif em > _MAX_TRACKING_EM + 1e-9:
+            violations.append(f"{selector} -> letter-spacing:{raw} ({em}em > .04em)")
+    assert not violations, (
+        f"{len(violations)} letter-spacing value(s) above the .04em micro-label "
+        "house value:\n  " + "\n  ".join(sorted(set(violations)))
+        + "\n\n`.1em`, `.10em` and `0.1em` are the SAME value — the pass that was "
+          "supposed to fix these grepped for `.1em` and missed the `.10em` "
+          "spelling, which is why this test parses the number instead of matching "
+          "the text. If a value is deliberately wider, it goes in "
+          "TRACKING_ABOVE_04_OK with a reason, not a wider threshold here."
+    )
+
+
+def test_every_tracking_exemption_still_matches_a_real_site():
+    """Stale-exemption guard. A renamed rule leaves its entry as a standing
+    permission for whatever takes the name next."""
+    seen = {sel for sel, _em, _raw in _tracking_declarations()}
+    stale = sorted(set(TRACKING_ABOVE_04_OK) - seen)
+    assert not stale, (
+        "these tracking exemptions match no letter-spacing declaration — delete "
+        "them or fix the key:\n  " + "\n  ".join(stale)
+    )
+
+
+def test_the_tracking_parser_normalises_and_sees_everything():
+    """The normalisation is the whole point of this test, so it is asserted
+    directly rather than trusted, and the denominator is floored."""
+    found = _tracking_declarations()
+    assert len(found) >= 50, f"only {len(found)} letter-spacing declarations found"
+    assert sum(1 for _s, em, _r in found if abs(em - 0.04) < 1e-9) >= 15, (
+        "the .04em house value is barely present — either the pattern broke or the "
+        "convention changed, and either way this test is measuring nothing"
+    )
+    for spelling in (".1em", "0.1em", ".10em", "0.100em"):
+        m = _EM.match(squash(spelling))
+        assert m and abs(float(m.group(1)) - 0.1) < 1e-9, (
+            f"{spelling} must normalise to 0.1 — treating these as different "
+            "strings is exactly the bug that shipped"
+        )
