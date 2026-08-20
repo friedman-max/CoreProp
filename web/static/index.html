@@ -713,7 +713,19 @@ a{color:inherit;text-decoration:none}
  * app" cards and beside .lp-books / .lp-cov-grid / .lp-step / .lp-method-card,
  * all 16px — so as the landing page's own hero it is a peer of those cards, not
  * of the pricing hero. --r-xl's two consumers are .pp-card and .pp-card-glow. */
-.lp-cta-card{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-lg);padding:clamp(36px,4.5vw,56px) var(--s-6);text-align:center}
+/* The clamp's endpoints were BOTH literal (`36px … 56px`), which made this the
+ * one declaration in the stylesheet that derived from nothing while still looking
+ * derived — and the reason the marketing and app-screen spacing invariants could
+ * not share one pattern, since the app one requires a var() inside any
+ * calc()/clamp() and the marketing one had to keep waving any clamp() through.
+ *
+ * The minimum moves onto the scale (36 is a tie between --s-8 and --s-10, ties
+ * round up, so 36 -> 40px) and the maximum stays literal because 56px has no step
+ * — --s-12 is 48 and the next would be 64. Token minimum with a literal maximum
+ * is the in-file precedent for exactly this: `.pp`'s gutter clamp and
+ * `.pp-foot-trust`'s margin-top both do it, and the note above `.pp` in the
+ * density-override block spells out the same 56px arithmetic. */
+.lp-cta-card{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-lg);padding:clamp(var(--s-10),4.5vw,56px) var(--s-6);text-align:center}
 .lp-cta-card .lp-h2-sub{margin:0 auto var(--s-6)}
 
 /* FOOTER */
