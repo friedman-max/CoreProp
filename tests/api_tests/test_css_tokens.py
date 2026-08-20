@@ -516,6 +516,8 @@ MARKETING_SPACING_EXEMPT = (
 MARKETING_SPACING_LITERAL_OK = {
     ".lp-sr-only",
     ".lp-cov-grid",
+    ".lp-bk-head",
+    ".lp-why-steps div span",
 }
 
 # Lengths that are legal without a token: zero, auto-centring, and the two

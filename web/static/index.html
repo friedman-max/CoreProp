@@ -458,24 +458,27 @@ a{color:inherit;text-decoration:none}
 }
 
 /* Left column: what CoreProp does, in the space beside the card. */
-.lp-why-h,.lp-books-h{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);font-weight:600;margin:0 0 13px}
-.lp-why-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:13px}
-.lp-why-steps li{display:grid;grid-template-columns:24px minmax(0,1fr);gap:11px;align-items:start}
+.lp-why-h,.lp-books-h{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);font-weight:600;margin:0 0 var(--s-3)}
+.lp-why-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--s-3)}
+.lp-why-steps li{display:grid;grid-template-columns:24px minmax(0,1fr);gap:var(--s-3);align-items:start}
 .lp-why-n{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--primary-hi);color:var(--primary-2);font-size:11.5px;font-weight:600}
 .lp-why-steps b{display:block;font-size:14px;font-weight:600;letter-spacing:-.01em}
 /* `div span` scopes this to the step DESCRIPTION only. The step NUMBER is also
  * a <span> (.lp-why-n) but a direct child of the <li>; a bare `.lp-why-steps
  * span` matched it too and, at (0,1,1) vs .lp-why-n's (0,1,0), WON — forcing the
  * digit to display:block (killing place-items:center), nudging it down 3px and
- * recoloring it, so the numbers rendered outside their circles. */
+ * recoloring it, so the numbers rendered outside their circles.
+ * The 3px margin-top stays literal: it aligns this line's cap height with the
+ * digit in the circle beside it, which is optical alignment, not spacing (the
+ * scale's first step is 4px). Exempted by name in test_css_tokens.py. */
 .lp-why-steps div span{display:block;margin-top:3px;font-size:12.5px;line-height:1.55;color:var(--text-2)}
 /* The vig visual. --primary as a FILL (never as text — see the token note at
  * the top of this file) and the game's loss red for the overround, so "the
  * red part is theirs" reads the same here as it does on the card. */
-.lp-vig{margin:16px 0 0;padding:13px 14px;border:1px solid var(--hair);border-radius:var(--radius-sm);background:var(--card)}
+.lp-vig{margin:var(--s-4) 0 0;padding:var(--s-3) var(--s-4);border:1px solid var(--hair);border-radius:var(--radius-sm);background:var(--card)}
 .lp-vig-svg{display:block}
-.lp-vig-cap{display:flex;gap:16px;margin:9px 0 0;font-size:11.5px;color:var(--text-3);flex-wrap:wrap}
-.lp-vig-cap span{display:inline-flex;align-items:center;gap:6px}
+.lp-vig-cap{display:flex;gap:var(--s-4);margin:var(--s-2) 0 0;font-size:11.5px;color:var(--text-3);flex-wrap:wrap}
+.lp-vig-cap span{display:inline-flex;align-items:center;gap:var(--s-2)}
 .lp-vig-key{width:9px;height:9px;border-radius:2px;display:inline-block;flex-shrink:0}
 .lp-vig-key.is-fair{background:var(--primary)}
 .lp-vig-key.is-vig{background:#FF4A4A}
@@ -483,17 +486,17 @@ a{color:inherit;text-decoration:none}
 /* Right column: the reveal. Own tile per book, BookBadge's colours (see
  * components.jsx) so a book is the same colour here as it is on the +EV board.
  * v1 rendered this as 12.5px mono rows crammed under the card. */
-.lp-books{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--radius);padding:16px 17px}
+.lp-books{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--radius);padding:var(--s-4)}
 .lp-books-idle{background:transparent;border-style:dashed;border-color:var(--hair)}
 .lp-books-idle-b{margin:0;font-size:13px;line-height:1.6;color:var(--text-3)}
 /* Ghost rows hold roughly the height the receipt will need, so the column
  * doesn't jump when the first reveal lands. */
-.lp-bk-ghosts{display:flex;flex-direction:column;gap:7px;margin-top:14px}
+.lp-bk-ghosts{display:flex;flex-direction:column;gap:var(--s-2);margin-top:var(--s-4)}
 .lp-bk-ghosts span{height:34px;border-radius:var(--r-md);background:rgba(255,255,255,.02);border:1px solid var(--hair)}
 .lp-books-live{animation:lpRevealIn .35s ease both}
 @keyframes lpRevealIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 @keyframes lpFadeIn{from{opacity:0}to{opacity:1}}
-.lp-books-verdict{margin:0 0 13px;font-weight:700;font-size:16px}
+.lp-books-verdict{margin:0 0 var(--s-3);font-weight:700;font-size:16px}
 .lp-books-verdict.is-good{color:#6EFF00}
 .lp-books-verdict.is-bad{color:#FF4A4A} /* the one loss red (dots/buttons/X) — no third red */
 .lp-books-bars{display:flex;flex-direction:column;gap:9px;margin:0 0 18px}
@@ -506,23 +509,30 @@ a{color:inherit;text-decoration:none}
 .lp-books-barfill.is-fav{background:#6EFF00}
 @keyframes lpBarGrow{from{transform:scaleX(0)}to{transform:scaleX(var(--p,0))}}
 .lp-books-barpct{text-align:right;color:var(--text);font-size:13px;font-variant-numeric:tabular-nums}
-.lp-bk-list{display:flex;flex-direction:column;gap:6px}
-.lp-bk-head,.lp-bk-row{display:grid;grid-template-columns:minmax(0,1fr) 58px 58px;align-items:center;gap:10px}
-.lp-bk-head{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:600;padding:0 12px 1px}
+.lp-bk-list{display:flex;flex-direction:column;gap:var(--s-2)}
+.lp-bk-head,.lp-bk-row{display:grid;grid-template-columns:minmax(0,1fr) 58px 58px;align-items:center;gap:var(--s-3)}
+/* The 1px bottom pad stays literal — it optically seats the uppercase column
+ * labels on the first book tile, below the scale's 4px floor. Exempted by name
+ * in test_css_tokens.py; the horizontal pad matches .lp-bk-row's --s-3. */
+.lp-bk-head{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:600;padding:0 var(--s-3) 1px}
 .lp-bk-head span{text-align:right}
 .lp-bk-row{background:var(--bg-2);border:1px solid var(--hair);border-radius:var(--r-md);padding:var(--s-3);min-height:42px}
-.lp-bk-id{display:flex;align-items:center;gap:9px;min-width:0}
-.lp-bk-pill{flex-shrink:0;display:inline-grid;place-items:center;min-width:40px;height:22px;padding:0 8px;border-radius:var(--r-sm);font-size:11px;font-weight:700;letter-spacing:.04em}
+.lp-bk-id{display:flex;align-items:center;gap:var(--s-2);min-width:0}
+.lp-bk-pill{flex-shrink:0;display:inline-grid;place-items:center;min-width:40px;height:22px;padding:0 var(--s-2);border-radius:var(--r-sm);font-size:11px;font-weight:700;letter-spacing:.04em}
 .lp-bk-name{font-size:13px;line-height:1.5;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lp-bk-q{text-align:right;font-size:13.5px;line-height:1.5;color:var(--text-3);font-variant-numeric:tabular-nums}
 /* The favoured side is the whole point of the tile — it gets the weight. */
 .lp-bk-q.is-fav{color:#6EFF00;font-weight:700}
-.lp-books-vig{margin:14px 0 0;font-size:12.5px;color:var(--text-3);font-variant-numeric:tabular-nums}
-.lp-books-close{margin:8px 0 0;font-size:13px;line-height:1.5;color:var(--text-2)}
+.lp-books-vig{margin:var(--s-4) 0 0;font-size:12.5px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.lp-books-close{margin:var(--s-2) 0 0;font-size:13px;line-height:1.5;color:var(--text-2)}
 @media (max-width:1023px){
   /* Stacked under the card: the bars and rows read the same, the panel just
-   * loses its column framing so it doesn't look like a second card. */
-  .lp-books{padding:15px 16px}
+   * loses its column framing so it doesn't look like a second card.
+   * This used to be 15px 16px against the base rule's 16px 17px — a 1px
+   * tightening the 4px scale cannot express, so both now resolve to --s-4 and
+   * this declaration is value-identical to the base. Kept as the seam for a
+   * real narrow-viewport value; it is a no-op today. */
+  .lp-books{padding:var(--s-4)}
 }
 
 /* COVERAGE — a definition list, because that's what it is. */
