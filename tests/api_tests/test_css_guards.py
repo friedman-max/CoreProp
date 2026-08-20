@@ -6,11 +6,24 @@ removed, and re-adding one is a visual regression, not a flourish."
 
 These are regression guards, not migration checks — the Phase-1 migration
 invariants live in test_css_tokens.py.
+
+**The three bans run over all four stylesheets, not just index.html.** They were
+specified to hold "against every file in the set" and for three phases each one
+iterated `rules(style_block(INDEX))` and nothing else, even though
+`css_helpers.py` already knew all four paths. The gap that mattered most was the
+runtime-injected sheet in `app-main.jsx`: it is appended to <head> LAST, so it
+wins every equal-specificity tie against index.html — its own comment says so, and
+three `.ev-row-data` tints over there carry `!important` for no other reason than
+to survive it. The highest-priority stylesheet in the app had zero ban coverage.
+`css_helpers.style_sources()` is the fixed set and `pytest.mark.parametrize` is
+what makes adding a fifth source one line rather than three.
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
+
+import pytest
 
 from tests.api_tests.css_helpers import (
     APP_MAIN_DIST,
@@ -20,14 +33,23 @@ from tests.api_tests.css_helpers import (
     declarations,
     gradient_declarations,
     has_accent,
+    injected_style_block,
     is_minigame,
     rules,
     squash,
     style_block,
+    style_sources,
 )
 
+# `(label, css)` per stylesheet, resolved once at import so the parametrize ids
+# name the file in the test report — a failure reads
+# `test_no_accent_gradients[app-main.jsx injected sheet]` rather than `[2]`.
+_SOURCES = style_sources()
+_SOURCE_IDS = [label for label, _ in _SOURCES]
 
-def test_no_accent_gradients() -> None:
+
+@pytest.mark.parametrize("css", [css for _l, css in _SOURCES], ids=_SOURCE_IDS)
+def test_no_accent_gradients(css: str) -> None:
     """No gradient may contain an accent color.
 
     Semantic gradients (--green/--red/--amber and their rgba forms) and the
@@ -37,7 +59,7 @@ def test_no_accent_gradients() -> None:
     plan.
     """
     violations = []
-    for selector, decls in rules(style_block(INDEX)):
+    for selector, decls in rules(css):
         if is_minigame(selector):
             continue
         for decl in gradient_declarations(decls):
@@ -81,7 +103,8 @@ def test_primary_hi_never_backs_inherited_text() -> None:
     )
 
 
-def test_no_blurred_decorative_orbs() -> None:
+@pytest.mark.parametrize("css", [css for _l, css in _SOURCES], ids=_SOURCE_IDS)
+def test_no_blurred_decorative_orbs(css: str) -> None:
     """A glow orb is a round element plus a blur or a radial-gradient background.
 
     Both halves are narrower than they look, and both narrowings are deliberate:
@@ -106,7 +129,7 @@ def test_no_blurred_decorative_orbs() -> None:
     Zero today; this guards against re-adding the removed `.lp-orb` discs.
     """
     violations = []
-    for selector, decls in rules(style_block(INDEX)):
+    for selector, decls in rules(css):
         if is_minigame(selector):          # .lp-game-flash is exactly this pair, and stays
             continue
         body = squash(decls)
@@ -126,19 +149,64 @@ def test_no_blurred_decorative_orbs() -> None:
     )
 
 
-def test_no_gradient_clipped_text() -> None:
+@pytest.mark.parametrize("css", [css for _l, css in _SOURCES], ids=_SOURCE_IDS)
+def test_no_gradient_clipped_text(css: str) -> None:
     """Zero instances today; regression guard.
 
     Matched on the squashed declaration, so the `-webkit-background-clip:text`
     spelling is caught by the same substring.
     """
     violations = []
-    for selector, decls in rules(style_block(INDEX)):
+    for selector, decls in rules(css):
         for decl in declarations(decls):
             if "background-clip:text" in squash(decl):
                 violations.append(f"{selector} -> {decl}")
     assert not violations, (
         "gradient-clipped text found:\n  " + "\n  ".join(violations)
+    )
+
+
+def test_the_ban_sources_are_all_four_and_all_parse() -> None:
+    """Four sources, each with rules in it.
+
+    A ban parametrized over a source that yields no rules passes vacuously, which
+    is exactly the state the three bans above were in for three phases with respect
+    to the other three files. The injected sheet is the smallest by far (3 rules),
+    so its floor is 3 rather than something comfortable — that is the honest number,
+    and it is still not zero.
+
+    The injected sheet is also checked to be the SAME in the source and in the
+    committed bundle. `dist/` is served directly and Render cannot run ./build.sh,
+    so a `.jsx` edit without a rebuild ships the old sheet; that is the failure
+    `test_accent_agrees_in_all_three_copies` exists for on the accent literal, and
+    the injected stylesheet has the same exposure.
+    """
+    assert _SOURCE_IDS == [
+        "index.html <style>",
+        "app-main.jsx injected sheet",
+        "dist/app-main.js injected sheet",
+        "extension.html <style>",
+    ], f"the ban source set changed: {_SOURCE_IDS}"
+
+    floors = {
+        "index.html <style>": 200,
+        "app-main.jsx injected sheet": 3,
+        "dist/app-main.js injected sheet": 3,
+        "extension.html <style>": 10,
+    }
+    counts = {label: len(list(rules(css))) for label, css in _SOURCES}
+    short = {k: (counts[k], floors[k]) for k in floors if counts[k] < floors[k]}
+    assert not short, (
+        "a stylesheet source stopped yielding rules — the three bans above now "
+        f"pass vacuously for it: {short} (counted {counts})"
+    )
+
+    assert squash(injected_style_block(APP_MAIN_JSX)) == squash(
+        injected_style_block(APP_MAIN_DIST)
+    ), (
+        "the injected stylesheet differs between app-main.jsx and its committed "
+        "bundle — ./build.sh was not re-run, and the browser is running the old "
+        "sheet while the bans check the new one"
     )
 
 
