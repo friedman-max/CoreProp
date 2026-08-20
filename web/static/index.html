@@ -1733,9 +1733,15 @@ a{color:inherit;text-decoration:none}
  * classes' background-IMAGE gradient; the state fills are flat now and defend
  * themselves by specificity instead (see below), so for THIS button the choice
  * has stopped mattering. It stays because a hover should touch the narrowest
- * thing that produces the effect, and because the parallel rule on
- * .bt-slip-place still genuinely needs it — .bt-slip-place-install is an <a>,
- * cannot be :disabled, and is still a gradient.
+ * thing that produces the effect.
+ *
+ * This note also used to carry the parallel rule on .bt-slip-place, saying it
+ * "still genuinely needs it" because .bt-slip-place-install is an <a> that
+ * cannot be :disabled and is still a gradient. Half of that has expired: the
+ * install <a> is flat now and defends itself with the same doubled class these
+ * state rules use, so nothing on either button depends on the longhand any
+ * more. It is still true that an <a> can never be :disabled, which is why that
+ * link matches .bt-slip-place:hover:not(:disabled) at all — read the note there.
  *
  * :not(:disabled) because this button is disabled while prefs load and while
  * saving — a hover response there advertises a click that does nothing. (The
@@ -1783,8 +1789,16 @@ a{color:inherit;text-decoration:none}
   transition:transform .08s ease, background .2s ease;
 }
 /* Flat, hover DARKENS, `background-color` only, and not while disabled — see
- * .ev-prefs-save:hover for all three reasons. Here the shorthand would also
- * flatten the install <a>'s gradient, which is still a gradient (Phase 2b). */
+ * .ev-prefs-save:hover for all three reasons.
+ *
+ * That note used to add a fourth reason specific to this rule: the `background`
+ * shorthand would set background-image:none at (0,3,0) and so erase the install
+ * <a>'s hover GRADIENT. That gradient is gone (see .bt-slip-place-install), and
+ * with it the last thing on this button that the shorthand-vs-longhand choice
+ * changed — every state fill below is now flat and defends itself by
+ * specificity, so a shorthand here would compute the same pixels. It stays for
+ * the reason .ev-prefs-save gives: a hover should touch the narrowest thing that
+ * produces the effect. Do not read it as protecting anything. */
 .bt-slip-place:hover:not(:disabled){background-color:#195F97}
 .bt-slip-place:active{transform:translateY(1px)}
 .bt-slip-place:disabled{opacity:.55;cursor:default;transform:none}
@@ -1811,16 +1825,41 @@ a{color:inherit;text-decoration:none}
    do, so it is kept rather than dropped. */
 .bt-slip-place.bt-slip-place-sending,
 .bt-slip-place.bt-slip-place-sending:hover:not(:disabled){background:#4b5563;cursor:progress}
-/* Rendered as an <a> to the install page when no extension is detected. Left on
- * its gradient deliberately — Phase 2b owns this one, and note before touching
- * it that its :hover LIGHTENS, against the hover-darkens rule the two buttons
- * above now follow. */
-.bt-slip-place-install{
+/* Rendered as an <a> to the install page when no extension is detected. It was
+ * the last gradient button in the app and the last :hover that LIGHTENED, and
+ * both were live UI: the CTA every user without the extension sees on every
+ * Backtest card. No test could see it — test_no_accent_gradients matches the
+ * accent blues (#1E6FB0 / #6FBCEC / #195F97) and their rgb() forms, and
+ * #1e3a5f / #26527f are none of those, which is why the dropped Phase 2a→2b
+ * hand-off survived two phases of review.
+ *
+ * Both fills are stops of the gradients they replace, so no new colour enters
+ * the palette: rest is the old rest gradient's top stop, hover is its BOTTOM
+ * stop — which is what makes the hover darken. Measured: the fill goes from
+ * luminance .0413 to .0284 (a 1.31:1 step, so the state change is still
+ * plainly visible), and the label's #9fd0f5 → #cfe8fb lightening takes contrast
+ * UP with it, 7.02:1 → 10.58:1. Both clear AA and AAA for 12.5px/700. The old
+ * hover gradient's own top stop measured 6.39:1 under the same label, so this is
+ * better than what it replaces at both ends.
+ *
+ * DOUBLED CLASS, and it is load-bearing — this is the trap the .ev-prefs-save
+ * note describes, arriving one rule later. The <a> carries both classes, so
+ * .bt-slip-place:hover:not(:disabled) at (0,3,0) also matches it (an <a> can
+ * never be :disabled, so the :not() always passes). The gradient used to hide
+ * that: a background-IMAGE cannot be overridden by that rule's
+ * `background-color`. A flat colour is only a colour, so a single-class
+ * (0,1,0)/(0,2,0) install rule would LOSE the background-color longhand and this
+ * link would go accent BLUE on hover — the exact regression flattening the
+ * .ev-prefs-save/.bt-slip-place state fills already had to defend against. So it
+ * takes the same two-selector shape as -queued / -error / -sending: (0,2,0) at
+ * rest, (0,4,0) on hover. `:not(:disabled)` is inert on an <a> and is there only
+ * to match those three siblings' specificity arithmetic. */
+.bt-slip-place.bt-slip-place-install{
   display:block;text-align:center;text-decoration:none;
-  background:linear-gradient(180deg,#1e3a5f,#15304f);color:#9fd0f5;
+  background:#1e3a5f;color:#9fd0f5;
   box-shadow:none;border:1px solid #26527f;
 }
-.bt-slip-place-install:hover{background:linear-gradient(180deg,#26527f,#1b3d63);color:#cfe8fb}
+.bt-slip-place.bt-slip-place-install:hover:not(:disabled){background:#15304f;color:#cfe8fb}
 /* Placement messages get their own classes — these used to borrow
    .bt-del-error from the delete-slip modal, so restyling deletion silently
    restyled betting errors. */
