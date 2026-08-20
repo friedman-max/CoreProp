@@ -39,12 +39,15 @@ struct AccountView: View {
 
     private var profileSection: some View {
         Section {
-            HStack(spacing: 14) {
+            // 14 was a tie between s3 (12) and s4 (16); ties round up, so the
+            // avatar gains 2pt of breathing room. The 52pt circle itself is
+            // control geometry, not spacing, and stays off the scale.
+            HStack(spacing: Theme.s4) {
                 Text(initial)
                     .font(Theme.ui(22, .bold)).foregroundColor(.white)
                     .frame(width: 52, height: 52)
                     .background(Theme.primary).clipShape(Circle())
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: Theme.s1) {
                     Text(displayName).font(Theme.ui(17, .bold)).foregroundColor(Theme.text)
                     if let email = auth.user?.email, email != displayName {
                         Text(email).font(Theme.ui(13)).foregroundColor(Theme.text3)

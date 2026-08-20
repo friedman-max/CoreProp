@@ -25,7 +25,9 @@ struct RootView: View {
 struct SplashView: View {
     var error: String?
     var body: some View {
-        VStack(spacing: 18) {
+        // 18 was a tie between s4 (16) and s5 (20); ties round up. The 40pt
+        // wordmark height is component geometry, not spacing, and stays put.
+        VStack(spacing: Theme.s5) {
             BrandWordmark(height: 40)
             Text(CorePropConstants.tagline)
                 .font(Theme.ui(14))
@@ -35,11 +37,11 @@ struct SplashView: View {
                     .font(Theme.ui(12))
                     .foregroundColor(Theme.amber)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                    .padding(.horizontal, Theme.s8)
             } else {
                 ProgressView()
                     .tint(Theme.primary2)
-                    .padding(.top, 8)
+                    .padding(.top, Theme.s2)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
