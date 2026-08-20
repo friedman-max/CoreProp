@@ -11,11 +11,43 @@
 /* ═══════════════════════════════════════════════════════════════
    Standalone harness for the REAL Analytics component
    (web/static/dist/page-analytics.js). It stubs window.cpApi with
-   sample settled-slip data so the P&L chart + the new custom
+   sample settled-slip data so the P&L chart + the custom
    date-range picker can be used without a logged-in account.
    Not wired into the app; safe to open directly.
-   CSS below is copied verbatim from index.html so the component
-   looks exactly as it does in production.
+
+   ⚠ STALE — DO NOT TRUST THIS FOR VISUAL REVIEW.
+
+   This block used to say the CSS was "copied verbatim from
+   index.html so the component looks exactly as it does in
+   production". That has not been true for a long time and is the
+   reason this warning replaced it. Measured divergences:
+
+     * --primary here is #6366F1 (indigo). Production is #1E6FB0.
+       The whole accent was rebranded and this file kept the old
+       one, so every accent surface renders the wrong colour.
+     * --primary-2 #818cf8 vs production #6FBCEC; --text-3
+       #7a7a8b vs #8A8A9B.
+     * --radius/-sm/-xs are the pre-scale 14/10/8px literals.
+       Production has a full --r-xl..--r-sm scale, and
+       --radius-xs was DELETED as unused.
+     * 27 of its 30 spacing declarations are off the --s-* scale,
+       including .bt-card{padding:14px 16px} and
+       .bt-summary{gap:10px} — the exact two declarations the
+       modernization spec names as its examples of drift.
+
+   It also makes CLAUDE.md's ":root in index.html is the whole
+   palette; there is no second source" false. Neither spacing
+   invariant nor the palette-mirror test reads this file
+   (test_extension_palette_mirror_matches covers extension.html
+   only), so nothing stops it drifting further.
+
+   Note this file IS served — web/static/ is static-mounted, so it
+   is reachable at /static/analytics-preview.html.
+
+   It wants a decision, not another patch: delete it (it is
+   referenced by nothing), or point it at the real palette and add
+   it to the mirror test. Patching the values again just resets
+   the clock on the same drift.
    ═══════════════════════════════════════════════════════════════ */
 :root{
   --bg:#0a0a0d;--bg-2:#11111a;--card:#14141e;--card-2:#1a1a25;--card-3:#22222f;

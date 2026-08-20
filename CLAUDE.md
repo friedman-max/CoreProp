@@ -37,8 +37,22 @@ Adding or removing a `.jsx` means editing **both** lists plus `dist/`.
 
 ### Design tokens
 
-`:root` in `index.html` is the whole palette; there is no second source. Two
-rules that are load-bearing and easy to break silently:
+`:root` in `index.html` is the palette for the app. Two other files carry their
+own copy, and the difference between them matters:
+
+- `web/static/extension.html` mirrors five roles **deliberately**, and
+  `test_css_guards.py::test_extension_palette_mirror_matches` pins the mirror, so
+  it cannot drift.
+- `web/static/analytics-preview.html` is a standalone dev harness that renders the
+  real compiled Analytics bundle against **its own stale `:root`** — `--primary` is
+  still the pre-rebrand indigo `#6366F1`, the radii are the pre-scale `14/10/8px`
+  literals including the deleted `--radius-xs`, and 27 of its 30 spacing
+  declarations are off the scale. Nothing reads it and no test pins it. It is
+  referenced by no code but **is served** (`/static/analytics-preview.html`). Its
+  header comment carries the full divergence list; it needs deleting or
+  re-pointing, not another patch.
+
+Two rules that are load-bearing and easy to break silently:
 
 - **`--primary` is fill/border only, `--primary-2` is text only.** `--primary`
   (`#1E6FB0`) is dark enough that white button labels clear WCAG AA;
