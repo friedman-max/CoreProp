@@ -57,7 +57,7 @@ struct NotificationsView: View {
     private var statusColor: Color {
         switch notifications.authorizationStatus {
         case .authorized, .provisional, .ephemeral: return Theme.green
-        case .denied: return Color(hex: 0xFCA5A5)
+        case .denied: return Theme.red2
         default: return Theme.text3
         }
     }

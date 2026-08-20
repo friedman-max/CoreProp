@@ -78,7 +78,7 @@ struct AccountView: View {
     }
     private var subscriptionColor: Color {
         guard let b = model.billing else { return Theme.text3 }
-        return b.isUnlocked ? Theme.green : Color(hex: 0xFCA5A5)
+        return b.isUnlocked ? Theme.green : Theme.red2
     }
 
     private var notificationsSection: some View {

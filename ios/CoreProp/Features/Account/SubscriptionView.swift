@@ -60,7 +60,7 @@ struct SubscriptionView: View {
     private var statusPill: some View {
         let unlocked = billing?.isUnlocked ?? true
         return Text(unlocked ? "Active" : "Inactive")
-            .font(Theme.ui(11, .bold)).foregroundColor(unlocked ? Color(hex: 0x86EFAC) : Color(hex: 0xFCA5A5))
+            .font(Theme.ui(11, .bold)).foregroundColor(unlocked ? Theme.green2 : Theme.red2)
             .padding(.horizontal, 9).padding(.vertical, 4)
             .background(unlocked ? Theme.greenHi : Theme.redHi).clipShape(Capsule())
     }
@@ -76,7 +76,7 @@ struct SubscriptionView: View {
             .buttonStyle(PrimaryButtonStyle())
             .disabled(openingPortal)
             if let portalError {
-                Text(portalError).font(Theme.ui(12)).foregroundColor(Color(hex: 0xFCA5A5))
+                Text(portalError).font(Theme.ui(12)).foregroundColor(Theme.red2)
             }
             Text("Opens the secure Stripe portal in Safari to update payment or cancel.")
                 .font(Theme.ui(11)).foregroundColor(Theme.text3).multilineTextAlignment(.center)

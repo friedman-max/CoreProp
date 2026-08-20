@@ -148,7 +148,7 @@ struct StatTile: View {
         switch tone {
         case .neutral: return Theme.text
         case .good:    return Theme.green
-        case .bad:     return Color(hex: 0xFCA5A5)
+        case .bad:     return Theme.red2
         }
     }
 

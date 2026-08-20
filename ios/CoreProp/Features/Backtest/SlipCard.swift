@@ -2,7 +2,7 @@ import SwiftUI
 import CorePropKit
 
 /// A logged slip, tinted by its recomputed outcome (win green / loss red /
-/// push amber / pending blue). Payout/hits are computed client-side from the
+/// push #FBBF24 / pending blue). Payout/hits are computed client-side from the
 /// legs (`BacktestScoring`) so the payout table is the single ruler.
 struct SlipCard: View {
     let slip: BacktestSlip
@@ -15,7 +15,10 @@ struct SlipCard: View {
         switch outcome.status {
         case .win:     return Theme.green
         case .loss:    return Theme.red
-        case .push:    return Theme.amber
+        // `Theme.push` (#FBBF24), not `Theme.amber` (#F59E0B): amber is the
+        // warning colour, and a pushed slip is an outcome, not a warning. Web
+        // has always used two different hues here; iOS conflated them.
+        case .push:    return Theme.push
         case .pending: return Theme.pending
         }
     }
@@ -63,10 +66,10 @@ struct SlipCard: View {
     private var statusBadge: some View {
         let (text, fg, bg): (String, Color, Color) = {
             switch outcome.status {
-            case .win:     return ("WIN", Color(hex: 0x86EFAC), Theme.greenHi)
-            case .loss:    return ("LOSS", Color(hex: 0xFCA5A5), Theme.redHi)
-            case .push:    return ("PUSH", Color(hex: 0xFDE68A), Theme.amber.opacity(0.14))
-            case .pending: return ("PENDING", Color(hex: 0x93C5FD), Theme.pending.opacity(0.14))
+            case .win:     return ("WIN", Theme.green2, Theme.greenHi)
+            case .loss:    return ("LOSS", Theme.red2, Theme.redHi)
+            case .push:    return ("PUSH", Theme.amber2, Theme.push.opacity(0.14))
+            case .pending: return ("PENDING", Theme.blue2, Theme.pending.opacity(0.14))
             }
         }()
         return Text(text)
@@ -100,10 +103,10 @@ struct SlipCard: View {
         let (text, color): (String, Color) = {
             switch result {
             case .hit:     return ("HIT", Theme.green)
-            case .miss:    return ("MISS", Color(hex: 0xFCA5A5))
-            case .push:    return ("PUSH", Color(hex: 0xFDE68A))
+            case .miss:    return ("MISS", Theme.red2)
+            case .push:    return ("PUSH", Theme.amber2)
             case .dnp:     return ("DNP", Theme.text3)
-            case .pending: return ("•", Color(hex: 0x93C5FD))
+            case .pending: return ("•", Theme.blue2)
             }
         }()
         return Text(text)

@@ -79,7 +79,7 @@ struct AuthView: View {
             if let errorMessage {
                 Text(errorMessage)
                     .font(Theme.ui(13))
-                    .foregroundColor(Color(hex: 0xFCA5A5))
+                    .foregroundColor(Theme.red2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 

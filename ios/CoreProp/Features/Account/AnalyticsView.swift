@@ -83,7 +83,7 @@ struct AnalyticsView: View {
                 Spacer()
                 Text("\(last >= 0 ? "+" : "")\(String(format: "%.2f", last))u")
                     .font(Theme.mono(18, .bold))
-                    .foregroundColor(last >= 0 ? Theme.green : Color(hex: 0xFCA5A5))
+                    .foregroundColor(last >= 0 ? Theme.green : Theme.red2)
             }
             Chart {
                 ForEach(points) { p in

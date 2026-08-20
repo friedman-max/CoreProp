@@ -53,7 +53,7 @@ struct DeveloperView: View {
                         .listRowBackground(Theme.card)
                 }
                 if let err = notifications.lastError {
-                    Text(err).font(Theme.ui(12)).foregroundColor(Color(hex: 0xFCA5A5))
+                    Text(err).font(Theme.ui(12)).foregroundColor(Theme.red2)
                         .listRowBackground(Theme.card)
                 }
             } header: {

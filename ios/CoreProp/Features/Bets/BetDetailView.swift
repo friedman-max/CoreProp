@@ -64,7 +64,7 @@ struct BetDetailView: View {
             numberTile("True prob", Fmt.percentValue(bet.truePct), Theme.primary2)
             numberTile("Fair odds", Fmt.americanOdds(bet.trueOdds), Theme.text)
             numberTile("Edge", Fmt.signedPercent(bet.edge),
-                       (bet.edge ?? 0) >= 0 ? Theme.green : Color(hex: 0xFCA5A5))
+                       (bet.edge ?? 0) >= 0 ? Theme.green : Theme.red2)
         }
     }
 
@@ -134,7 +134,7 @@ struct BetDetailView: View {
     private func evCell(_ ev: Double) -> some View {
         Text(Fmt.signedPercent(ev))
             .font(Theme.mono(13, .semibold))
-            .foregroundColor(ev >= 0 ? Theme.green : Color(hex: 0xFCA5A5))
+            .foregroundColor(ev >= 0 ? Theme.green : Theme.red2)
             .frame(maxWidth: .infinity, alignment: .trailing)
     }
 

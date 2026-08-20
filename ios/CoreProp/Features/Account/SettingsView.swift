@@ -89,7 +89,7 @@ struct SettingsView: View {
                 .foregroundColor(.white)
                 if let banner {
                     Text(banner.text).font(Theme.ui(13))
-                        .foregroundColor(banner.error ? Color(hex: 0xFCA5A5) : Theme.green)
+                        .foregroundColor(banner.error ? Theme.red2 : Theme.green)
                         .listRowBackground(Theme.card)
                 }
             }
@@ -156,7 +156,7 @@ struct SettingsView: View {
 
                 if let b = apBanner {
                     Text(b.text).font(Theme.ui(13))
-                        .foregroundColor(b.error ? Color(hex: 0xFCA5A5) : Theme.green)
+                        .foregroundColor(b.error ? Theme.red2 : Theme.green)
                         .listRowBackground(Theme.card)
                 }
             } header: {

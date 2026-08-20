@@ -25,7 +25,7 @@ struct SlipView: View {
                 if !slip.bets.isEmpty {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Clear") { slip.clear(); vm.clearServerResult() }
-                            .foregroundColor(Color(hex: 0xFCA5A5))
+                            .foregroundColor(Theme.red2)
                     }
                 }
             }
@@ -92,7 +92,7 @@ struct SlipView: View {
     }
 
     private func evBlock(_ label: String, _ ev: Double?, highlight: Bool) -> some View {
-        let color: Color = ev == nil ? Theme.text4 : (ev! >= 0 ? Theme.green : Color(hex: 0xFCA5A5))
+        let color: Color = ev == nil ? Theme.text4 : (ev! >= 0 ? Theme.green : Theme.red2)
         return VStack(spacing: 4) {
             Text(label).font(Theme.ui(9, .semibold)).kerning(0.5).foregroundColor(Theme.text3)
             Text(ev == nil ? "n/a" : Fmt.signedPercent(ev)).font(Theme.mono(18, .bold)).foregroundColor(color)
@@ -204,7 +204,7 @@ struct SlipView: View {
                 Spacer()
                 Button { vm.banner = nil } label: { Image(systemName: "xmark") }
             }
-            .foregroundColor(banner.isError ? Color(hex: 0xFCA5A5) : Theme.green)
+            .foregroundColor(banner.isError ? Theme.red2 : Theme.green)
             .padding(12)
             .background(banner.isError ? Theme.redHi : Theme.greenHi)
             .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSm, style: .continuous))
