@@ -38,10 +38,11 @@ struct BetDetailView: View {
                     Text(team).font(Theme.ui(12, .semibold)).foregroundColor(Theme.text3)
                 }
                 if bet.isGreenDevil {
-                    // Intra-badge padding, as in BetRow — these size the pill
-                    // itself, so they stay off the spacing scale.
+                    // Identical to BetRow's copy and must stay identical: the 2pt
+                    // vertical is the badge's own optical inset (below the scale's
+                    // 4pt floor), the horizontal 5 takes the nearest step, s1.
                     Text("GOBLIN").font(Theme.ui(9, .bold)).foregroundColor(Theme.green)
-                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .padding(.horizontal, Theme.s1).padding(.vertical, 2)
                         .background(Theme.greenHi).clipShape(Capsule())
                 }
                 Spacer()
@@ -83,10 +84,12 @@ struct BetDetailView: View {
             Text(value).font(Theme.mono(20, .bold)).foregroundColor(color)
         }
         .frame(maxWidth: .infinity)
-        // `Theme.rMd` rather than a bare 12 — same value, now on the scale.
-        // padding stays 14: that is cpCard's own default and what StatTile uses,
-        // so moving this one tile to s4 would desync the two tile shapes.
-        .cpCard(radius: Theme.rMd, padding: 14)
+        // `Theme.rMd` rather than a bare 12 — same value, now on the scale. The
+        // padding is `Theme.s4` for the same reason it used to be 14: it tracks
+        // cpCard's own default, which is what StatTile also passes. The default
+        // moved 14 -> 16 with the spacing scale and all three moved together, so
+        // the two tile shapes stay identical.
+        .cpCard(radius: Theme.rMd, padding: Theme.s4)
     }
 
     private var bookOdds: some View {

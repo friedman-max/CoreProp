@@ -64,11 +64,12 @@ struct SubscriptionView: View {
         let unlocked = billing?.isUnlocked ?? true
         return Text(unlocked ? "Active" : "Inactive")
             .font(Theme.ui(11, .bold)).foregroundColor(unlocked ? Theme.green2 : Theme.red2)
-            // Deliberately off the spacing scale: 9/4 is badge geometry, not
-            // layout rhythm, and it matches the pills in Components.swift
-            // (LeaguePill 3/8, DataAgePill 4/9). Snapping it to s2/s1 would make
-            // this pill the only one in the app that doesn't match its siblings.
-            .padding(.horizontal, 9).padding(.vertical, 4)
+            // Follows its siblings onto the scale rather than off it: 9 -> s2 (8),
+            // the nearest step, and 4 was already s1's value. DataAgePill made the
+            // identical 9 -> s2 move, so the two pills still match — which was the
+            // real point of the note that used to sit here, and it survives the
+            // migration intact.
+            .padding(.horizontal, Theme.s2).padding(.vertical, Theme.s1)
             .background(unlocked ? Theme.greenHi : Theme.redHi).clipShape(Capsule())
     }
 
