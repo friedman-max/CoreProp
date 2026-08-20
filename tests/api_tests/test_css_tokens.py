@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from tests.api_tests.css_helpers import (
     INDEX,
     declarations,
@@ -423,39 +425,309 @@ def test_no_mobile_ev_row_min_width():
     assert "min-width:620px" not in squash(css), "the +EV row still forces a 620px scroll"
 
 
-# Phase 2b carried a `RED2_EXEMPT = {".lp-game-err"}` here so the landing-page
-# minigame stayed untouched for one more phase. Phase 3 migrated that rule to
-# var(--red-2) and deleted the exemption, so this invariant is now unconditional:
-# no rule outside :root may spell #FCA5A5. `.lp-game-err` was the only `lp-game-*`
-# rule using a site-palette colour at all — PP's loss red is #FF4A4A, which is a
-# different value and stays literal — and it renders outside the PP card as the
-# game's role="alert" status line.
-def test_error_red_is_tokenized():
-    """#FCA5A5 is the error/miss red. It appeared in ~10 rules with no token, so
-    a change meant finding every site by hand. --red-2 is that token.
+# ── Hex-colour helpers, shared by every colour guard below ────────────────────
 
-    --red (#EF4444) is the *semantic* red for bars, borders and fills; --red-2 is
-    the lighter text red that reads on a red tint (it measures 8.5-10.7:1 over
-    the logged-row tints where --text-3 fails). They are not interchangeable.
+_HEX = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+
+
+def _expand_hex(value: str) -> str:
+    """Normalize a hex colour for comparison: lowercased, shorthand expanded.
+
+    `#ABC` and `#aabbcc` are the same colour, and a migration that leaves one
+    spelling behind is still a migration that left something behind. Nothing in
+    the stylesheet spells a token value in shorthand today; this exists so the
+    comparison is about the colour rather than about the typing.
     """
-    css = style_block(INDEX)
-    tokens = {}
-    root = re.search(r":root\s*\{(.*?)\}", css, re.S)
-    for decl in declarations(root.group(1)):
-        if decl.startswith("--"):
-            name, _, value = decl.partition(":")
-            tokens[name.strip()] = value.strip()
-    assert squash(tokens.get("--red-2", "")) == "#fca5a5", (
-        f"--red-2 should be #FCA5A5, got {tokens.get('--red-2')!r}"
+    v = squash(value)
+    if len(v) in (4, 5):          # #rgb / #rgba
+        v = "#" + "".join(c * 2 for c in v[1:])
+    return v
+
+
+def _hex_forms(literal: str) -> set[str]:
+    """The token values one literal could be hiding.
+
+    An 8-digit hex is a 6-digit colour with an alpha byte stapled on, so
+    `#16a34a40` hardcodes --save just as surely as `#16a34a` does — it simply
+    cannot be *written* as `var(--save)40` (see the .cp-btn-save.is-dis note in
+    index.html). Both forms are returned so the guard sees it and the exemption
+    has to be spelled out rather than granted by a blind spot.
+    """
+    v = _expand_hex(literal)
+    return {v, v[:7]} if len(v) == 9 else {v}
+
+
+def _hex_literals(decl: str) -> set[str]:
+    """Every token value any hex literal in this declaration could be hiding."""
+    return {form for m in _HEX.finditer(decl) for form in _hex_forms(m.group())}
+
+
+def _root_hex_tokens() -> dict[str, str]:
+    """`token -> normalized hex value`, for the plain-hex tokens only.
+
+    rgba() tokens (--green-hi, --primary-lo, --hair) are excluded on purpose:
+    those are tints, and a rule that spells one of them out as an rgba() literal
+    is a different — weaker, and harder to match — finding than one that hardcodes
+    a base palette colour. Stated again in the limits note further down.
+    """
+    return {
+        name: _expand_hex(value)
+        for name, value in _root_tokens().items()
+        if re.fullmatch(r"#[0-9a-fA-F]{3,8}", squash(value))
+    }
+
+
+# Whole selectors, never prefixes, each with a written reason — the idiom the
+# deleted RED2_EXEMPT established, and for the same stated reason: an exemption
+# justified by a property the test does not inspect is a hole, not an exemption.
+# Shared by the per-family guard and the general one, so a site cannot be exempt
+# from one and caught by the other.
+#
+#   .cp-btn-save.is-dis : `background:#16a34a40;color:#86EFAC80` — --save at 25%
+#       alpha and --green-2 at 50%, as 8-digit hex. It cannot be tokenized:
+#       `var(--save)40` does not concatenate, because var() substitutes into the
+#       token stream and the trailing `40` becomes a separate component value, so
+#       the declaration is invalid at computed-value time. Measured in Chromium it
+#       computes to rgba(0,0,0,0) — the button silently loses its fill — and
+#       CSS.supports() still answers true, because a declaration containing var()
+#       defers its validity check. color-mix(in srgb, var(--save) 25%, transparent)
+#       does render the same pixel and was rejected on value-identity grounds: it
+#       computes to a color(srgb …) value rather than an rgba() one, and its 25%
+#       only equals 0x40 (25.098%) because Chromium quantizes the hex's alpha to 8
+#       bits first — so the equality would rest on a rounding behaviour instead of
+#       on a value. The rule in index.html carries the same note, plus the
+#       standing obligation that follows from it: if --save or --green-2 moves,
+#       these two move by hand.
+HEX_LITERAL_OK = {".cp-btn-save.is-dis"}
+
+
+# ── The light-label family, and the save fill ─────────────────────────────────
+#
+# Phase 2b created --red-2, migrated its ~10 literal sites, and pinned exactly
+# one of them here as `test_error_red_is_tokenized`. The other three members of
+# the same pattern were never created: a light TEXT colour on a tint of its base
+# was still a raw hex at 6 green (#86EFAC), 4 amber (#FDE68A) and 4 blue
+# (#93C5FD) sites, and #16A34A — the save/confirm button FILL, a third green that
+# is NOT --green — had no token at all.
+#
+# The tell that this was half-done rather than deliberate: all four already
+# existed in ios/CoreProp/Theme/Theme.swift, and three of that file's doc comments
+# read "Web's --green-2" / "--amber-2" / "--blue-2" for tokens web did not have.
+# A design-system port had made the client more consistent than its source of
+# truth. So this test is parameterized: the family cannot be migrated a quarter at
+# a time again, and adding a fifth member means adding a row here.
+#
+# Phase 2b also carried a `RED2_EXEMPT = {".lp-game-err"}` so the landing-page
+# minigame stayed untouched for one more phase. Phase 3 migrated that rule and
+# deleted the exemption, which is why the red row below needs none: `.lp-game-err`
+# was the only `lp-game-*` rule using a site-palette colour at all (PP's loss red
+# is #FF4A4A, a different value that stays literal) and it renders outside the PP
+# card as the game's role="alert" status line.
+#
+# `min_refs` is a FLOOR and is exact today, so ordinary growth passes and a drop
+# fails. It is what stops a row passing vacuously: without it, deleting every
+# consumer of --amber-2 would leave "the token is defined and nothing spells its
+# hex" trivially true.
+FAMILY = {
+    #  token         value      min_refs  what it labels
+    "--green-2": ("#86efac", 6, "hit / positive / OVER"),
+    "--amber-2": ("#fde68a", 4, "push"),
+    "--blue-2": ("#93c5fd", 4, "pending / DNP / UNDER"),
+    "--red-2": ("#fca5a5", 16, "error / miss / negative"),
+    "--save": ("#16a34a", 5, "save / confirm button fill"),
+}
+
+
+@pytest.mark.parametrize("token", sorted(FAMILY))
+def test_label_family_token_is_defined_with_the_right_value(token):
+    value, _min_refs, _role = FAMILY[token]
+    tokens = _root_tokens()
+    assert token in tokens, (
+        f"{token} is missing from :root. It is the {FAMILY[token][2]} colour and "
+        f"ios/CoreProp/Theme/Theme.swift documents it as existing here."
     )
-    # No rule outside :root may hardcode it.
-    violations = []
+    assert _expand_hex(tokens[token]) == value, (
+        f"{token} should be {value}, got {tokens[token]!r}"
+    )
+
+
+@pytest.mark.parametrize("token", sorted(FAMILY))
+def test_label_family_colour_is_never_a_literal(token):
+    """No rule outside :root may spell the family's hexes.
+
+    The pairs are not interchangeable, which is the whole reason each needs its
+    own name: --red / --green / the push amber are the *semantic* fill-and-border
+    colours, and the -2 variants are the lighter text that reads on a tint of one
+    (--red-2 measures 8.5-10.7:1 over the logged-row tints, where --text-3 fails
+    AA). --save is a third green again, distinguished from --green by being a fill
+    under a white label rather than an outcome colour.
+    """
+    value, _min_refs, _role = FAMILY[token]
+    violations = [
+        f"{selector} -> {decl.strip()}"
+        for selector, decls in rules(style_block(INDEX))
+        if selector.strip() != ":root" and selector.strip() not in HEX_LITERAL_OK
+        for decl in declarations(decls)
+        if value in _hex_literals(decl)
+    ]
+    assert not violations, (
+        f"hardcoded {value} ({FAMILY[token][2]}) outside :root — use var({token}):"
+        "\n  " + "\n  ".join(violations)
+    )
+
+
+@pytest.mark.parametrize("token", sorted(FAMILY))
+def test_label_family_token_is_actually_used(token):
+    """Non-vacuity, per member. A token nothing references cannot fail the ban
+    above, so the ban would pass for the wrong reason."""
+    _value, min_refs, role = FAMILY[token]
+    refs = sum(
+        squash(decls).count(f"var({token})")
+        for selector, decls in rules(style_block(INDEX))
+        if selector.strip() != ":root"
+    )
+    assert refs >= min_refs, (
+        f"var({token}) has {refs} references, expected at least {min_refs}. Either "
+        f"the {role} sites were renamed/deleted (update the floor and say why) or "
+        f"a migration was reverted."
+    )
+
+
+# ── The same rule, generalized to every hex token ─────────────────────────────
+#
+# The per-family test above is the faithful generalization of what guarded
+# --red-2. This one asks the wider question — "does ANY colour with a token still
+# appear as a literal?" — and the reason to have both is that they fail in
+# different directions. This one is *discovered*: it reads :root and compares, so
+# it automatically covers the next family somebody names, but it also goes silent
+# if :root changes shape or a token is deleted. The five rows above are *named*,
+# so they cannot.
+#
+# Going general was a measurement, not a preference. Before deciding, every hex
+# literal outside :root was bucketed against the 21 hex-valued tokens: 101
+# literals over 38 distinct values, and after this pass **zero** of those values
+# equals a token. The near-misses are near-misses on purpose and are already
+# documented at their sites (#0a0a12 vs --bg #0a0a0d, #1a1a26 vs --card-2
+# #1a1a25, #FECACA vs --red-2 #FCA5A5, #FBBF24 vs --amber #F59E0B) — a
+# value-equality guard passes all of them, correctly, because they are different
+# colours and folding them together would be a visual change wearing a
+# refactor's clothes. So the exemption list is ONE selector against a guarded set
+# of 21 tokens. When the exemption list is that much shorter than the guarded set,
+# general is the answer.
+#
+# What this deliberately does NOT catch, so nobody reads it as airtight:
+#   * rgb()/rgba()/hsl() spellings of a token's colour. `.ev-row-data.is-sel`
+#     used a raw rgba() before Phase 1 and css_helpers.ACCENT_RGB exists because
+#     of it. Only the --*-hi/--*-lo tints are rgba() today and they are excluded
+#     from _root_hex_tokens by design; a base colour re-spelled as rgb() would
+#     pass here.
+#   * Inline styles in .jsx. `ev-page.jsx` still carries #16a34a/#22c55e in three
+#     style={} objects and components.jsx/landing.jsx carry #86EFAC/#FDE68A in
+#     their book-badge maps. Those are real duplicates of this palette, they are
+#     out of this test's file, and migrating them means rebuilding dist/.
+
+def _literal_token_colours(css: str) -> tuple[list[str], int]:
+    """`(violations, literals_inspected)` for one stylesheet.
+
+    Returns the count so the caller can prove the scan saw something, and takes
+    `css` rather than reading INDEX so the checker itself can be exercised on a
+    synthetic fixture.
+    """
+    by_value = {v: k for k, v in _root_hex_tokens().items()}
+    violations, inspected = [], 0
     for selector, decls in rules(css):
-        if selector.strip() == ":root":
+        sel = selector.strip()
+        if sel == ":root":
             continue
-        if "#fca5a5" in squash(decls):
-            violations.append(selector.strip())
-    assert not violations, "hardcoded #FCA5A5 outside :root: " + ", ".join(violations)
+        for decl in declarations(decls):
+            for m in _HEX.finditer(decl):
+                inspected += 1
+                hit = next(
+                    (by_value[f] for f in _hex_forms(m.group()) if f in by_value), None
+                )
+                if hit and sel not in HEX_LITERAL_OK:
+                    violations.append(f"{sel} -> {decl.strip()}  (that is {hit})")
+    return violations, inspected
+
+
+def test_no_literal_hex_for_a_colour_that_has_a_token():
+    tokens = _root_hex_tokens()
+    violations, inspected = _literal_token_colours(style_block(INDEX))
+    # Floors, not counts: today 21 tokens and 101 literals. A scan that stops
+    # matching turns this into an assertion over nothing.
+    assert len(tokens) >= 15, f"only {len(tokens)} hex tokens parsed out of :root"
+    assert inspected >= 60, f"only {inspected} hex literals inspected"
+    assert not violations, (
+        f"{len(violations)} literal(s) spell a colour that has a token:\n  "
+        + "\n  ".join(violations)
+    )
+
+
+def test_the_literal_hex_guard_can_actually_fail():
+    """Prove the checker on a fixture, because the real stylesheet is clean and a
+    clean run cannot distinguish "no violations" from "no scan".
+
+    Pins the two normalizations as well: shorthand and 8-digit alpha both have to
+    resolve onto the token, and a near-miss has to be left alone.
+    """
+    real = _root_hex_tokens()
+    assert real.get("--save") == "#16a34a" and real.get("--card") == "#14141e", (
+        "this fixture is written against --save/--card; :root moved"
+    )
+    fixture = """
+      .fx-plain{background:#16A34A}
+      .fx-alpha{background:#16a34a40}
+      .fx-short{color:#fff}
+      .fx-nearmiss{background:#14141f}
+      .fx-fallback{background:var(--card,#14141e)}
+      .cp-btn-save.is-dis{background:#16a34a40}
+    """
+    violations, inspected = _literal_token_colours(fixture)
+    assert inspected == 6, inspected
+    flagged = {v.split(" ->")[0] for v in violations}
+    assert flagged == {".fx-plain", ".fx-alpha", ".fx-fallback"}, flagged
+
+
+def test_every_hex_literal_exemption_still_matches_a_real_site():
+    """A stale exemption is a standing permission for whatever moves onto that
+    selector next. Borrowed from test_ios_tokens.py, which pays for the same guard
+    twice."""
+    live = {
+        selector.strip()
+        for selector, decls in rules(style_block(INDEX))
+        if any(_hex_literals(decl) for decl in declarations(decls))
+    }
+    stale = sorted(HEX_LITERAL_OK - live)
+    assert not stale, (
+        "these exemptions match no rule that contains a hex literal — the site was "
+        "fixed or renamed, so the entry is now a blank cheque. Delete it:\n  "
+        + "\n  ".join(stale)
+    )
+
+
+def test_no_hex_fallback_inside_a_var_reference():
+    """`var(--red,#ef4444)` is a second source of truth for a palette value, and
+    the fallback only ever fires when the token is missing — which, for a token
+    defined in :root, means never. Phase 2b removed this shape from
+    `var(--card,#13131c)`; .bt-del-confirm carried the same thing on --red for two
+    more phases, matching value and all, which is exactly why a matching fallback
+    is worth banning rather than tolerating: nothing goes wrong until the token
+    moves and one of the two copies doesn't.
+
+    Scoped to COLOUR fallbacks. `@keyframes lpBarGrow`'s `scaleX(var(--p,0))` is a
+    real default — landing.jsx sets --p inline per bar, so it genuinely is absent
+    until then — and needs no exemption under this wording.
+    """
+    bad = re.compile(r"var\(\s*--[a-z0-9-]+\s*,\s*(#|rgb|hsl)", re.I)
+    violations = [
+        f"{selector} -> {decl.strip()}"
+        for selector, decls in rules(style_block(INDEX))
+        for decl in declarations(decls)
+        if bad.search(decl)
+    ]
+    assert not violations, (
+        "var() colour fallbacks duplicate the palette:\n  " + "\n  ".join(violations)
+    )
 
 
 # The four Backtest outcome cards. Named explicitly rather than discovered, so a
@@ -510,11 +782,17 @@ def test_backtest_pending_is_blue_on_every_surface():
 
     Pinned by the rgba/hex family rather than an exact value: the three surfaces
     deliberately differ in alpha and lightness (a .14 tint, a #60A5FA bar, a
-    #93C5FD badge label), so equality would be wrong. What must hold is that none
-    of them is in the amber family.
+    var(--blue-2) badge label), so equality would be wrong. What must hold is that
+    none of them is in the amber family.
+
+    Both notations of each family are listed. The badge's label used to be a
+    literal #93C5FD and is var(--blue-2) now, so a hex-only AMBER tuple would no
+    longer notice `color:var(--amber-2)` landing on it — the tokenization pass
+    would have quietly hollowed this test out. Naming a new -2 token means adding
+    it to whichever family it belongs to.
     """
-    AMBER = ("rgba(251,191,36", "#fbbf24", "#fde68a")
-    BLUE = ("rgba(96,165,250", "#60a5fa", "#93c5fd")
+    AMBER = ("rgba(251,191,36", "#fbbf24", "#fde68a", "var(--amber-2)")
+    BLUE = ("rgba(96,165,250", "#60a5fa", "#93c5fd", "var(--blue-2)")
     targets = {
         ".bt-slip-compact.is-pending",
         ".bt-slip.is-pending::before",

@@ -96,7 +96,34 @@
    * FAMILY, not intensity: --red-hi is also .10. */
   --primary-lo:rgba(30,111,176,.10);
   --green:     #22C55E;
+  /* --green-2, --amber-2 and --blue-2 are the same shape as --red-2 below: the
+   * light TEXT colour that reads on a tint of its base, where the base is the
+   * fill or the border. Same split as --primary/--primary-2, and just as
+   * non-interchangeable. This one is the hit / positive / OVER label.
+   *
+   * It is NOT a button fill — that is --save, a third green, for the reason
+   * written there. All four already existed on iOS
+   * (ios/CoreProp/Theme/Theme.swift: green2/amber2/blue2/saveGreen) and three of
+   * that file's doc comments cited a web token that did not exist yet, because
+   * the phase that introduced --red-2 migrated only the red. */
+  --green-2:   #86EFAC;
   --green-hi:  rgba(34,197,94,.14);
+  /* The save/confirm/committed-action button FILL, and deliberately not --green:
+   * --green is the semantic outcome colour (a result bar, a "+EV" number, a hit
+   * border) and this is the fill under a white button label, so the two have to
+   * be free to move independently. Like --primary it is fill/border only, never
+   * text.
+   *
+   * Measured while naming it, and left as-is because a tokenization pass may not
+   * move a pixel: white on #16A34A is 3.30:1, which clears the 3:1 non-text
+   * floor but NOT AA for .cp-btn-save's 15px/700 label. --primary carries the
+   * same note the other way round (it was darkened to #1E6FB0 precisely to fix
+   * this). It is now a one-line fix in one place, which it was not before.
+   *
+   * Hover darkens to #15803D (.cp-btn-save:hover). That has a single consumer
+   * and no sibling, so it stays literal — as does the disabled pair at
+   * .cp-btn-save.is-dis; see the note there. */
+  --save:      #16A34A;
   --red:       #EF4444;
   /* The lighter error/miss red, for TEXT on a red tint. --red (#EF4444) is the
    * semantic red for bars, borders and fills; this one is what reads on top of
@@ -105,6 +132,18 @@
   --red-2:     #FCA5A5;
   --red-hi:    rgba(239,68,68,.10);
   --amber:     #F59E0B;
+  /* The push label. Its base is the push outcome #FBBF24, NOT --amber — --amber
+   * is the WARNING colour, and the two are separate on purpose (the iOS port
+   * conflated them, which coupled an outcome to a caution state). So this is the
+   * one -2 whose name does not point at the token above it. */
+  --amber-2:   #FDE68A;
+  /* The pending label. There is no --blue base: the pending blue is a raw
+   * #60A5FA at three sites, and tokenizing it is a separate call. Pending reads
+   * blue and not amber because it means "not settled yet", not "caution" —
+   * test_backtest_pending_is_blue_on_every_surface pins that, and it is why this
+   * and --amber-2 must not be swapped for each other despite being adjacent
+   * here. */
+  --blue-2:    #93C5FD;
   --logo-1:    #7EE7F5;
   --logo-2:    #3DA9F0;
   /* Radius scale. Five steps replace 18 distinct literal sizes. The old names
@@ -284,8 +323,31 @@ a{color:inherit;text-decoration:none}
 /* Flat: no white top-edge inset, no green drop-glow. The glow is green rather
  * than accent so the accent-glow guard cannot see it — "flat buttons, no glow"
  * still applies, so it is removed by hand and recorded here. */
-.cp-btn-save{background:#16a34a;color:white;border-radius:var(--r-md);padding:13px;font-weight:700;width:100%;font-size:15px;border:0;cursor:pointer}
+.cp-btn-save{background:var(--save);color:white;border-radius:var(--r-md);padding:13px;font-weight:700;width:100%;font-size:15px;border:0;cursor:pointer}
 .cp-btn-save:hover{background:#15803d}
+/* The one pair in this family that stays literal, and the only tokenizable-looking
+ * site that is not tokenizable. Both values are 8-digit hex — --save at 25% alpha
+ * and --green-2 at 50% — and `var(--save)40` does NOT concatenate: var()
+ * substitutes into the token stream, so the trailing `40` becomes a separate
+ * component value and the declaration is invalid at computed-value time.
+ * Measured: it computes to rgba(0,0,0,0), i.e. the button loses its fill
+ * entirely, and CSS.supports() still answers true because a declaration
+ * containing var() defers its validity check. That is a silent no-op, not a
+ * failure you would notice in a diff.
+ *
+ * color-mix(in srgb, var(--save) 25%, transparent) does work and renders the same
+ * pixel, and was rejected on two counts: it computes to a `color(srgb …)` value
+ * rather than an rgba() one, and 25% is not 0x40 (64/255 = 25.098%) — it only
+ * matches because Chromium quantizes the hex's alpha to 8 bits first, so the
+ * equality would rest on a rounding behaviour instead of on a value. The
+ * stylesheet's existing idiom for "base colour at alpha" is a dedicated rgba()
+ * token (--green-hi, --red-hi, --primary-lo), and this state would need two of
+ * them for one rule.
+ *
+ * So: if --save or --green-2 ever moves, these two move BY HAND. Same standing
+ * obligation as the 4px in .ev-auto-gd's focus ring. Exempted by whole selector
+ * in tests/api_tests/test_css_tokens.py::HEX_LITERAL_OK, which carries the same
+ * reasoning and is the only entry in that set. */
 .cp-btn-save.is-dis{background:#16a34a40;color:#86EFAC80;cursor:not-allowed;box-shadow:none}
 
 .cp-link{background:transparent;border:0;color:var(--primary-2);font-weight:500;cursor:pointer;font-size:13px;padding:6px 8px;border-radius:var(--r-sm)}
@@ -1035,7 +1097,7 @@ a{color:inherit;text-decoration:none}
  * match the `.10em` spelling, so this and .bt-slip-compact .bt-slip-badge were
  * the two sites it missed. Leaving a dead rule on the pre-pass value is how the
  * next person rediscovers the same too-narrow grep. */
-.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.04em;background:rgba(96,165,250,.14);color:#93C5FD;padding:2px 6px;border-radius:var(--r-sm);margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
+.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.04em;background:rgba(96,165,250,.14);color:var(--blue-2);padding:2px 6px;border-radius:var(--r-sm);margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
 
 /* Logged-bet row: bet is already in this user's backtest, so it will not
  * be selected for future auto-built slips. Painted red end-to-end so the
@@ -1145,7 +1207,10 @@ a{color:inherit;text-decoration:none}
 .ev-auto{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3);cursor:pointer;user-select:none}
 /* Custom themed checkbox: hide the native box, drive a styled .ev-check off its
  * :checked state. Matches the accent (--primary) with a drawn checkmark; the
- * green-devils variant (.ev-auto-gd) uses the green accent. */
+ * green-devils variant (.ev-auto-gd) is the same two-token shape in green —
+ * the dark fill when checked, the bright one as the hover border — so the two
+ * pairs of rules below should read as parallels of each other. --save is the
+ * green that plays --primary's part; --green plays --primary-2's. */
 .ev-auto input{position:absolute;opacity:0;width:0;height:0;margin:0;pointer-events:none}
 /* 5px, deliberately off the radius scale: this box is 16px square, so --r-sm
  * (8px) is exactly half its side and renders a perfect circle. It fronts two
@@ -1159,8 +1224,8 @@ a{color:inherit;text-decoration:none}
 .ev-auto input:checked ~ .ev-check::after{transform:rotate(45deg) scale(1)}
 .ev-auto:hover .ev-check{border-color:var(--primary-2)}
 .ev-auto input:focus-visible ~ .ev-check{box-shadow:var(--ring)}
-.ev-auto-gd input:checked ~ .ev-check{background:#16a34a;border-color:#16a34a}
-.ev-auto-gd:hover .ev-check{border-color:#22c55e}
+.ev-auto-gd input:checked ~ .ev-check{background:var(--save);border-color:var(--save)}
+.ev-auto-gd:hover .ev-check{border-color:var(--green)}
 /* NOT var(--ring): the green-devils toggle's ring is green on purpose, and the
  * token is accent-blue. Only the width is normalized to the token's 4px so the
  * two rings on this same 16px box are the same size — a 3px green ring beside a
@@ -1474,7 +1539,7 @@ a{color:inherit;text-decoration:none}
 .bd-time{color:var(--text-3);font-size:12px;white-space:nowrap}
 .bd-odds{font-family:"JetBrains Mono",monospace;font-weight:500}
 .bd-odds.is-best{color:var(--green);font-weight:700;background:rgba(34,197,94,.10);padding:2px 7px;border-radius:var(--r-sm)}
-.bd-odds.is-plus{color:#86EFAC}
+.bd-odds.is-plus{color:var(--green-2)}
 .bd-odds-empty{color:var(--text-4)}
 .bd-edge-cell{font-family:"JetBrains Mono",monospace;font-weight:700;color:var(--text-4)}
 .bd-edge-cell.is-edge{color:var(--green)}
@@ -1518,10 +1583,10 @@ a{color:inherit;text-decoration:none}
  * carried is exactly how the typography pass came to miss it. The colour rules
  * below are single-class and do render. */
 .bt-slip-badge{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:var(--r-sm)}
-.bt-slip-badge.is-win{background:rgba(34,197,94,.14);color:#86EFAC}
+.bt-slip-badge.is-win{background:rgba(34,197,94,.14);color:var(--green-2)}
 .bt-slip-badge.is-loss{background:rgba(239,68,68,.14);color:var(--red-2)}
-.bt-slip-badge.is-push{background:rgba(251,191,36,.14);color:#FDE68A}
-.bt-slip-badge.is-pending{background:rgba(96,165,250,.14);color:#93C5FD}
+.bt-slip-badge.is-push{background:rgba(251,191,36,.14);color:var(--amber-2)}
+.bt-slip-badge.is-pending{background:rgba(96,165,250,.14);color:var(--blue-2)}
 /* --text-3, not --text-4: this is an interactive control's icon, not a
  * decorative glyph. --text-4 put the resting ✕ at 2.21:1, under the 3:1 WCAG
  * 1.4.11 floor for non-text UI, and only the hover state cleared it — a control
@@ -1537,7 +1602,7 @@ a{color:inherit;text-decoration:none}
 .bt-del-error{margin:10px 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:8px 10px}
 .bt-del-actions{display:flex;gap:10px;justify-content:center;margin-top:20px}
 .bt-del-actions .cp-btn{min-width:118px;padding:10px 16px}
-.bt-del-confirm{background:var(--red,#ef4444);color:#fff;border:1px solid var(--red,#ef4444)}
+.bt-del-confirm{background:var(--red);color:#fff;border:1px solid var(--red)}
 .bt-del-confirm:hover:not(:disabled){background:#dc2626;border-color:#dc2626}
 .bt-del-confirm:disabled{opacity:.6;cursor:default}
 
@@ -1550,10 +1615,10 @@ a{color:inherit;text-decoration:none}
 .bt-leg-prop{font-size:11.5px;color:var(--text-3)}
 .bt-leg-pct{font-size:12px;color:var(--text-2);font-family:"JetBrains Mono",monospace}
 .bt-leg-actual{font-size:13px;font-weight:700;font-family:"JetBrains Mono",monospace;padding:2px 8px;border-radius:var(--r-sm)}
-.bt-leg-actual.leg-hit{background:rgba(34,197,94,.14);color:#86EFAC}
+.bt-leg-actual.leg-hit{background:rgba(34,197,94,.14);color:var(--green-2)}
 .bt-leg-actual.leg-miss{background:rgba(239,68,68,.14);color:var(--red-2)}
-.bt-leg-actual.leg-push{background:rgba(251,191,36,.14);color:#FDE68A}
-.bt-leg-actual.leg-dnp,.bt-leg-actual.leg-pending{background:rgba(96,165,250,.14);color:#93C5FD}
+.bt-leg-actual.leg-push{background:rgba(251,191,36,.14);color:var(--amber-2)}
+.bt-leg-actual.leg-dnp,.bt-leg-actual.leg-pending{background:rgba(96,165,250,.14);color:var(--blue-2)}
 
 .bt-slip-foot{display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid var(--hair);gap:8px}
 .bt-slip-foot-c{display:flex;flex-direction:column;gap:2px;flex:1}
@@ -1799,7 +1864,7 @@ a{color:inherit;text-decoration:none}
  * are load-bearing; deleting either reopens the trap in a state nothing tests.
  * Verified: hovering the saved button holds rgb(22,163,74). */
 .ev-prefs-save.ev-prefs-save-saved,
-.ev-prefs-save.ev-prefs-save-saved:hover:not(:disabled){background:#16a34a}
+.ev-prefs-save.ev-prefs-save-saved:hover:not(:disabled){background:var(--save)}
 .ev-prefs-save.ev-prefs-save-error,
 .ev-prefs-save.ev-prefs-save-error:hover:not(:disabled){background:#dc2626}
 
@@ -1842,7 +1907,7 @@ a{color:inherit;text-decoration:none}
  * expression staying the way it is. -error is NOT disabled, so for that one the
  * hover half is doing real work. */
 .bt-slip-place.bt-slip-place-queued,
-.bt-slip-place.bt-slip-place-queued:hover:not(:disabled){background:#16a34a}
+.bt-slip-place.bt-slip-place-queued:hover:not(:disabled){background:var(--save)}
 .bt-slip-place.bt-slip-place-error,
 .bt-slip-place.bt-slip-place-error:hover:not(:disabled){background:#dc2626}
 /* In-flight state needs to look distinct from idle, or a slow connection reads
@@ -1974,7 +2039,7 @@ a{color:inherit;text-decoration:none}
   padding:var(--s-1) 9px;border-radius:var(--r-sm);
   white-space:nowrap;
 }
-.bt-slip-ev.is-pos{color:#86EFAC;background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.40)}
+.bt-slip-ev.is-pos{color:var(--green-2);background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.40)}
 .bt-slip-ev.is-neg{color:var(--red-2);background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.40)}
 
 /* Leg rows: player + prop on the left, True % in the middle, actual on the right */
@@ -2057,8 +2122,8 @@ a{color:inherit;text-decoration:none}
  * fully rendered. Now the name ellipsises and the line is always visible. */
 .bt-leg-prop-name{color:var(--text);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:13px;padding:3px 8px;border-radius:var(--r-sm);margin-left:auto;flex-shrink:0}
-.bt-leg-side-over{color:#86EFAC;background:rgba(34,197,94,.16)}
-.bt-leg-side-under{color:#93C5FD;background:rgba(96,165,250,.16)}
+.bt-leg-side-over{color:var(--green-2);background:rgba(34,197,94,.16)}
+.bt-leg-side-under{color:var(--blue-2);background:rgba(96,165,250,.16)}
 
 /* Result pill — never empty; shows actual stat number, DNP, P, ✓/✕, or — */
 .bt-slip-compact .bt-leg-actual{
@@ -2077,11 +2142,27 @@ a{color:inherit;text-decoration:none}
   font-family:"JetBrains Mono",monospace;
   border:1px solid transparent;
 }
-.bt-slip-compact .bt-leg-actual.leg-hit    {background:rgba(34,197,94,.28);  color:#86EFAC; border-color:rgba(34,197,94,.45)}
-.bt-slip-compact .bt-leg-actual.leg-miss   {background:rgba(239,68,68,.34);  color:#FECACA; border-color:rgba(239,68,68,.65)}
-.bt-slip-compact .bt-leg-actual.leg-push   {background:rgba(251,191,36,.26); color:#FDE68A; border-color:rgba(251,191,36,.45)}
-.bt-slip-compact .bt-leg-actual.leg-dnp    {background:rgba(156,163,175,.22);color:#D1D5DB; border-color:rgba(156,163,175,.4)}
-.bt-slip-compact .bt-leg-actual.leg-pending{background:rgba(251,191,36,.22); color:#FDE68A; border-color:rgba(251,191,36,.4)}
+/* THESE (0,3,0) copies are the ones that render: page-backtest.jsx emits
+ * .bt-leg-actual in exactly one place, inside `<article class="bt-slip
+ * bt-slip-compact …">`, so a result-pill colour has to be migrated HERE. The
+ * (0,2,0) `.bt-leg-actual.leg-*` rules far above cover the same states and are
+ * unreachable for `color`. Both sets were migrated anyway — a stale value on an
+ * unreachable rule is how the typography pass lost a whole micro-label.
+ *
+ * Two colours here own no token and stay literal, because giving either one would
+ * mean changing a rendered colour and this pass may not:
+ *   leg-miss  #FECACA is a FOURTH red — lighter than --red-2 (#FCA5A5), which is
+ *             what the unreachable base copy uses. So the two miss pills disagree
+ *             and the one you can see is the untokenized one. The --red-2 guard
+ *             cannot catch that: it bans a value, and this is a different value.
+ *             Resolving it is a colour decision (pick one red), not a
+ *             tokenization.
+ *   leg-dnp   #D1D5DB is the neutral "did not play" grey and has no family. */
+.bt-slip-compact .bt-leg-actual.leg-hit    {background:rgba(34,197,94,.28);  color:var(--green-2); border-color:rgba(34,197,94,.45)}
+.bt-slip-compact .bt-leg-actual.leg-miss   {background:rgba(239,68,68,.34);  color:#FECACA;        border-color:rgba(239,68,68,.65)}
+.bt-slip-compact .bt-leg-actual.leg-push   {background:rgba(251,191,36,.26); color:var(--amber-2); border-color:rgba(251,191,36,.45)}
+.bt-slip-compact .bt-leg-actual.leg-dnp    {background:rgba(156,163,175,.22);color:#D1D5DB;        border-color:rgba(156,163,175,.4)}
+.bt-slip-compact .bt-leg-actual.leg-pending{background:rgba(251,191,36,.22); color:var(--amber-2); border-color:rgba(251,191,36,.4)}
 
 /* ─────────── mobile / narrow-screen fixes ───────────
  * The density-override block above redeclares `.ev` and `.cp-nav` grids
