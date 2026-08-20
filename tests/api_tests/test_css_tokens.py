@@ -1091,3 +1091,92 @@ def test_every_filter_bar_selector_still_exists():
         "filter-bar selectors named by the 34px contract no longer exist — "
         f"renamed? {missing}"
     )
+
+
+# ── Derived radii ─────────────────────────────────────────────────────────────
+# `test_every_radius_goes_through_a_token` above only asks whether `var(--r`
+# appears SOMEWHERE in the value, so `calc(var(--r-lg) + 1px)` where the design
+# needs `- 1px` passes it, and the symptom is a corner that misses its container by
+# 2px — which reads as a rendering bug, not as a style choice. These three rules
+# compute a radius against a neighbour's radius and must stay exactly right.
+#
+# The arithmetic follows one rule with two directions, and it is the reason the
+# offsets are not interchangeable:
+#
+#   * A ring OUTSIDE a box needs `+ border-width`. `.pp-card-glow` is
+#     `position:absolute;inset:-1px` over a `--r-xl` `.pp-card`, i.e. its own box
+#     is 1px larger on every side. A circle of radius R offset outward by 1px has
+#     radius R+1; at plain `var(--r-xl)` the glow's corner cuts across the card's.
+#   * A fill INSIDE a bordered box needs `- border-width`. `.ev-slip-toggle`
+#     (mobile) sits flush on the bottom inside edge of the `--r-lg` `.ev-filters`
+#     tile, whose 1px border occupies the outer 1px of that curve. The inner curve
+#     is therefore R-1; at plain `var(--r-lg)` the fill's corner pokes through the
+#     border.
+#   * `.ev-slip.ev-slip-mobile` takes the radius UNCHANGED, and that is not an
+#     inconsistency: the drawer is a sibling of the tile, not a child, and paints
+#     its own 1px border, so its outer curve is the tile's outer curve.
+#
+# All three are the BOTTOM corners only (`0 0 <r> <r>`) because each joins a
+# square-cornered edge above it. A four-corner value on any of them is the same bug
+# in a different disguise, so the whole expression is pinned rather than just the
+# calc.
+DERIVED_RADII = {
+    ".pp-card-glow": (
+        "calc(var(--r-xl) + 1px)",
+        "a ring 1px OUTSIDE a --r-xl card (inset:-1px) — outward offset ADDS the "
+        "border width; .pp-card must stay --r-xl for this to hold",
+    ),
+    ".ev-slip-toggle": (
+        "0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px)",
+        "a fill flush INSIDE the --r-lg .ev-filters tile's 1px border — inward "
+        "offset SUBTRACTS the border width; top corners square because the "
+        "toggle's top edge is a straight seam against the filter fields",
+    ),
+    ".ev-slip.ev-slip-mobile": (
+        "0 0 var(--r-lg) var(--r-lg)",
+        "the drawer is a SIBLING that paints its own 1px border, so its outer "
+        "curve equals the tile's outer curve — no offset; top corners square "
+        "because it joins the tile below its border (border-top:0)",
+    ),
+}
+
+
+def test_derived_radii_keep_their_exact_offsets():
+    problems = []
+    for selector, (expected, why) in DERIVED_RADII.items():
+        got = [v for p, v in _decls_for(selector) if p == "border-radius"]
+        if not got:
+            problems.append(f"{selector} declares no border-radius (renamed?) — {why}")
+            continue
+        # Every copy must agree. `.ev-slip-toggle` is declared twice (a base rule
+        # with no radius plus the @media 900 rule that has it) and `.is-on`
+        # squares it off in a third; only the ones that DO set a radius are here,
+        # and all of them must be the pinned expression.
+        for value in got:
+            if squash(value) != squash(expected):
+                problems.append(
+                    f"{selector} -> border-radius:{value}\n      expected: "
+                    f"{expected}\n      because:  {why}"
+                )
+    assert not problems, (
+        "derived radii drifted — a wrong offset here reads as a rendering bug:\n  "
+        + "\n  ".join(problems)
+    )
+
+
+def test_the_radius_offsets_still_have_the_containers_they_derive_from():
+    """The premise of the test above. `calc(var(--r-xl) + 1px)` is only correct
+    while `.pp-card` is `--r-xl`; if the card moves to `--r-lg` the glow silently
+    becomes 5px too round, and pinning the expression alone would defend the bug.
+    """
+    for owner, token in ((".pp-card", "var(--r-xl)"), (".ev-filters", "var(--r-lg)")):
+        radii = [squash(v) for p, v in _decls_for(owner) if p == "border-radius"]
+        assert radii and all(r == squash(token) for r in radii), (
+            f"{owner} must stay {token} — the derived radii above are computed "
+            f"against it, got {radii}"
+        )
+    # And .ev-filters' border must still be the 1px the `- 1px` subtracts.
+    border = [v for p, v in _decls_for(".ev-filters") if p == "border"]
+    assert border and border[0].startswith("1px"), (
+        f".ev-filters' border is what `calc(var(--r-lg) - 1px)` subtracts: {border}"
+    )
