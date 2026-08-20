@@ -952,13 +952,13 @@ def test_the_spacing_parser_sees_what_it_claims_to_see():
 
     A regex that stops matching turns both spacing tests into assertions over an
     empty list and the suite goes green while the rhythm rots. Floors are well
-    under today's counts (234 app / 87 marketing declarations) so ordinary
+    under today's counts (234 app / 160 marketing declarations) so ordinary
     migration does not trip them.
     """
     app = _spacing_declarations(lambda s: _has_class(s) and not is_marketing(s))
     marketing = _spacing_declarations(is_marketing)
     assert len(app) >= 180, f"only {len(app)} app-screen spacing declarations found"
-    assert len(marketing) >= 60, f"only {len(marketing)} marketing ones found"
+    assert len(marketing) >= 120, f"only {len(marketing)} marketing ones found"
     # The scale itself must still be reachable, or "goes through the scale" is
     # vacuous in the other direction: a sheet with no var(--s-*) at all would
     # fail loudly, but one where the pattern no longer matches them would not.
