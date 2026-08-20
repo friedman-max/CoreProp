@@ -272,8 +272,8 @@ a{color:inherit;text-decoration:none}
 
 /* ─────────── buttons ─────────── */
 .cp-btn{
-  display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  padding:10px var(--s-4);border-radius:var(--r-pill);border:1px solid transparent;
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--s-2);
+  padding:var(--s-3) var(--s-4);border-radius:var(--r-pill);border:1px solid transparent;
   background:transparent;color:var(--text);font-weight:600;font-size:14px;
   cursor:pointer;transition:transform .08s ease, background .15s ease, border-color .15s ease, box-shadow .2s ease;
   letter-spacing:.005em;white-space:nowrap;
@@ -287,19 +287,33 @@ a{color:inherit;text-decoration:none}
 .cp-btn-primary:hover{background:#195F97}
 .cp-btn-ghost{background:transparent;border-color:var(--hair-2);color:var(--text)}
 .cp-btn-ghost:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.18)}
-/* One height scale, measured in Chromium: 34 / 39 / 46px for sm / base / lg.
- * The vertical padding comes off the spacing scale where a step lands on the
- * target — --s-2 (8px) for sm, and 10/13px for base/lg, which no step
- * expresses. sm was 7px/32px; on the scale it becomes 34px, which is also the
- * height of .cp-input-sm, so the one place a .cp-btn-sm sits beside an input
- * (the slip builder's Min Leg % "Reset") now matches natively instead of being
- * stretched to fit by the flex row.
+/* One height scale, now 34 / 43 / 52px for sm / base / lg — measured in Chromium
+ * at 1440 with Inter loaded, on the real sheet.
+ *
+ * It USED to be 34 / 39 / 46, off a vertical padding of --s-2 / 10px / 13px, and
+ * the note here said 10 and 13 were literal because "no step expresses" them.
+ * That was true and it is exactly the drift the spacing scale exists to remove: a
+ * three-rung ladder standing on one token and two hand-typed numbers. The rungs
+ * are now one step apart on the scale — --s-2 / --s-3 / --s-4 — and the heights
+ * fall out of that.
+ *
+ * The lg rung is the one place plain nearest-step rounding was NOT applied. 13px
+ * rounds to --s-3 (12px), which would have measured 44px against base's 43px and
+ * collapsed the top two rungs into each other; the ladder's job is to be legibly
+ * three sizes, so lg takes the step ABOVE. Same override the .bt-summary gap
+ * takes, for the same kind of reason: the relationship the value encodes outranks
+ * the arithmetic. Cost: base grows 4px and lg grows 5px. .cp-btn-save is NOT a
+ * rung on this ladder (one-off full-width CTA) and does take nearest-step.
+ *
+ * sm stays 34px, which is also the height of .cp-input-sm, so the one place a
+ * .cp-btn-sm sits beside an input (the slip builder's Min Leg % "Reset") still
+ * matches natively instead of being stretched to fit by the flex row.
  *
  * Filter-bar buttons (.bd-clear, .ev-clear, .bd-pag*) are deliberately NOT on
  * this scale — they share a 34px baseline with .bd-badge and .bd-f select, and
- * pulling them to 32 or 39 breaks that row's alignment. */
-.cp-btn-sm{padding:var(--s-2) 14px;font-size:13px}
-.cp-btn-lg{padding:13px 22px;font-size:15px}
+ * pulling them to 32 or 43 breaks that row's alignment. */
+.cp-btn-sm{padding:var(--s-2) var(--s-4);font-size:13px}
+.cp-btn-lg{padding:var(--s-4) var(--s-6);font-size:15px}
 
 /* Keyboard focus. Every interactive control on the page previously had NO
  * visible focus state, which makes the landing page unusable by keyboard and
@@ -323,7 +337,7 @@ a{color:inherit;text-decoration:none}
 /* Flat: no white top-edge inset, no green drop-glow. The glow is green rather
  * than accent so the accent-glow guard cannot see it — "flat buttons, no glow"
  * still applies, so it is removed by hand and recorded here. */
-.cp-btn-save{background:var(--save);color:white;border-radius:var(--r-md);padding:13px;font-weight:700;width:100%;font-size:15px;border:0;cursor:pointer}
+.cp-btn-save{background:var(--save);color:white;border-radius:var(--r-md);padding:var(--s-3);font-weight:700;width:100%;font-size:15px;border:0;cursor:pointer}
 .cp-btn-save:hover{background:#15803d}
 /* The one pair in this family that stays literal, and the only tokenizable-looking
  * site that is not tokenizable. Both values are 8-digit hex — --save at 25% alpha
@@ -350,13 +364,13 @@ a{color:inherit;text-decoration:none}
  * reasoning and is the only entry in that set. */
 .cp-btn-save.is-dis{background:#16a34a40;color:#86EFAC80;cursor:not-allowed;box-shadow:none}
 
-.cp-link{background:transparent;border:0;color:var(--primary-2);font-weight:500;cursor:pointer;font-size:13px;padding:6px 8px;border-radius:var(--r-sm)}
+.cp-link{background:transparent;border:0;color:var(--primary-2);font-weight:500;cursor:pointer;font-size:13px;padding:var(--s-2);border-radius:var(--r-sm)}
 .cp-link:hover{background:rgba(30,111,176,.10)}
 .cp-center{text-align:center;align-self:center}
 
 .cp-input{
   background:#0e0e16;border:1px solid var(--hair);color:var(--text);
-  border-radius:var(--r-md);padding:12px 14px;font-size:14px;width:100%;outline:none;
+  border-radius:var(--r-md);padding:var(--s-3) var(--s-4);font-size:14px;width:100%;outline:none;
   transition:border-color .15s ease, box-shadow .15s ease;
   font-family:inherit;
 }
@@ -366,7 +380,11 @@ a{color:inherit;text-decoration:none}
  * already applied to .lp-foot-disc and .pp-respo. */
 .cp-input::placeholder{color:var(--text-3)}
 .cp-input:focus{border-color:var(--primary);box-shadow:var(--ring)}
-.cp-input-sm{padding:8px 10px;font-size:13px}
+/* --s-2 vertical is the measured half of the filter-bar's 34px contract and does
+ * not move; only the horizontal 10px was off the scale (-> --s-3, +2px a side).
+ * `.bd-f input` carries the identical recipe and must move with it — that pairing
+ * is pinned by test_the_padding_derived_filter_inputs_share_one_recipe. */
+.cp-input-sm{padding:var(--s-2) var(--s-3);font-size:13px}
 
 /* ─────────── top nav ─────────── */
 .cp-nav{
@@ -384,7 +402,7 @@ a{color:inherit;text-decoration:none}
 /* Only in the installed app: keep content off the home indicator. */
 @media (display-mode: standalone){ body{ padding-bottom: env(safe-area-inset-bottom); } }
 .cp-logo-btn{background:transparent;border:0;cursor:pointer;padding:0}
-.cp-logo{display:flex;align-items:center;gap:9px}
+.cp-logo{display:flex;align-items:center;gap:var(--s-2)}
 /* logo_full.png is now a transparent-background wordmark, so the artwork
  * sits cleanly on the dark nav with no rectangular edge. We keep it free of
  * any drop-shadow glow per the brand look. The "showHalo" tweak stays a
@@ -408,20 +426,20 @@ a{color:inherit;text-decoration:none}
 }
 .cp-tab:hover{background:rgba(255,255,255,.04);color:var(--text)}
 .cp-tab.is-active{background:#1d1d2a;color:#fff;border:1px solid var(--hair-2)}
-.cp-nav-r{display:flex;gap:10px;align-items:center}
+.cp-nav-r{display:flex;gap:var(--s-3);align-items:center}
 .cp-user{position:relative;display:flex;align-items:center}
 .cp-avatar{width:32px;height:32px;border-radius:50%;background:var(--primary);display:grid;place-items:center;color:white;font-weight:700;font-size:13px}
 /* Profile button — just the avatar; clicking it opens the account dropdown. */
 .cp-avatar-btn{display:flex;align-items:center;background:transparent;border:1px solid transparent;border-radius:50%;padding:0;cursor:pointer;transition:.15s}
 .cp-avatar-btn:hover .cp-avatar{box-shadow:0 0 0 2px var(--hair-2)}
 .cp-avatar-btn:hover{border-color:transparent}
-.cp-menu{position:absolute;top:calc(100% + 8px);right:0;min-width:220px;background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);box-shadow:var(--shadow-pop);padding:8px;z-index:120;animation:popIn .18s cubic-bezier(.2,1.2,.4,1)}
-.cp-menu-hd{display:flex;align-items:center;gap:10px;padding:8px 8px 10px}
+.cp-menu{position:absolute;top:calc(100% + 8px);right:0;min-width:220px;background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);box-shadow:var(--shadow-pop);padding:var(--s-2);z-index:120;animation:popIn .18s cubic-bezier(.2,1.2,.4,1)}
+.cp-menu-hd{display:flex;align-items:center;gap:var(--s-3);padding:var(--s-2) var(--s-2) var(--s-3)}
 .cp-avatar-lg{width:38px;height:38px;font-size:15px}
 .cp-menu-id{min-width:0}
 .cp-menu-name{font-weight:600;font-size:13.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cp-menu-email{font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cp-menu-sep{height:1px;background:var(--hair);margin:2px 0 6px}
+.cp-menu-sep{height:1px;background:var(--hair);margin:var(--s-1) 0 var(--s-2)}
 .cp-menu-item{width:100%;text-align:left;background:transparent;border:0;color:var(--text-2);padding:var(--s-3);border-radius:var(--r-md);font-size:13px;font-weight:500;cursor:pointer;transition:.12s}
 /* The base hover is NEUTRAL. This class is shared with PushToggle (the "Slip
  * alerts" row in the same menu), so a blanket destructive hover painted a
@@ -440,7 +458,12 @@ a{color:inherit;text-decoration:none}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 .cp-modal{
   position:relative;width:min(420px,92vw);background:var(--card);
-  border:1px solid var(--hair);border-radius:var(--r-lg);padding:32px 28px 28px;
+  /* Was `32px 28px 28px`. 28 is a tie between --s-6 and --s-8 and ties round up,
+   * which collapses all three sides onto --s-8 — so the 4px "top heavier than
+   * sides" asymmetry goes, and the modal grows 4px on three edges. That asymmetry
+   * was sub-scale and unexplained; the ✕ it might have been clearing is
+   * absolutely positioned at top/right 14px and does not depend on it. */
+  border:1px solid var(--hair);border-radius:var(--r-lg);padding:var(--s-8);
   box-shadow:var(--shadow-card);
   max-height:90vh;overflow-y:auto;
   animation:popIn .35s cubic-bezier(.2,1.2,.4,1);
@@ -448,19 +471,24 @@ a{color:inherit;text-decoration:none}
 @keyframes popIn{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}
 .cp-modal-x{position:absolute;top:14px;right:14px;background:transparent;border:0;color:var(--text-3);width:30px;height:30px;border-radius:var(--r-sm);cursor:pointer;font-size:14px}
 .cp-modal-x:hover{background:rgba(255,255,255,.06);color:var(--text)}
-.cp-modal-logo{display:flex;justify-content:center;margin-bottom:18px}
-.cp-seg{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:#0c0c14;border:1px solid var(--hair);border-radius:var(--r-md);padding:var(--s-1);margin-bottom:16px}
+.cp-modal-logo{display:flex;justify-content:center;margin-bottom:var(--s-5)}
+.cp-seg{display:grid;grid-template-columns:1fr 1fr;gap:var(--s-2);background:#0c0c14;border:1px solid var(--hair);border-radius:var(--r-md);padding:var(--s-1);margin-bottom:var(--s-4)}
 .cp-seg-btn{background:transparent;border:0;color:var(--text-3);padding:var(--s-3);border-radius:var(--r-sm);font-weight:600;font-size:13px;cursor:pointer;transition:.15s}
 .cp-seg-btn.is-active{background:var(--primary);color:white}
-.cp-form{display:flex;flex-direction:column;gap:10px}
+.cp-form{display:flex;flex-direction:column;gap:var(--s-3)}
 .cp-form .cp-btn{margin-top:var(--s-1)}
 
 /* ─────────── league / odds / true% ─────────── */
 .cp-league{font-weight:600;font-size:12.5px;letter-spacing:.04em}
 .cp-tp{font-weight:600;font-size:14px;font-variant-numeric:tabular-nums;font-family:"JetBrains Mono",ui-monospace,monospace}
-.cp-odd{display:inline-flex;align-items:center;gap:5px;margin-right:6px}
+.cp-odd{display:inline-flex;align-items:center;gap:var(--s-1);margin-right:var(--s-2)}
 .cp-odd-n{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px;color:var(--text-2);font-weight:500}
-.cp-book{font-size:9.5px;font-weight:700;letter-spacing:.06em;padding:2px 5px;border-radius:var(--r-sm)}
+/* --s-1 both ways. 2px/5px are both sub-scale-ish, but 5px is over the scale's
+ * floor so the declaration is not exemptible as a pure optical nudge, and the
+ * micro-pill family (.bt-slip-ev, .bt-slip-compact .bt-slip-badge, .cal-legend)
+ * already reads --s-1 for its vertical pad — these join it rather than inventing
+ * a second answer. The badge gains 2px of height and loses 2px of width. */
+.cp-book{font-size:9.5px;font-weight:700;letter-spacing:.06em;padding:var(--s-1);border-radius:var(--r-sm)}
 
 /* ─────────── loading / error / empty blocks ─────────── */
 /* The six loading / error / empty blocks across Backtest and Analytics were
@@ -1786,7 +1814,12 @@ a{color:inherit;text-decoration:none}
  * The gutter clamp is the shared page gutter: keep it identical to .ev-main and
  * .bd-page below or the nav's edge stops lining up with the page content. */
 .cp-nav{padding:var(--s-3) clamp(var(--s-6),2.5vw,var(--s-10));grid-template-columns:auto 1fr auto;gap:var(--s-6)}
-.cp-nav-c{gap:6px}
+/* THIS copy of .cp-nav-c's gap is the one that renders on desktop — it is
+ * unconditional and later in source order than the base rule's `gap:var(--s-1)`,
+ * which has therefore been dead since this block was written. Both are on the
+ * scale now but they still disagree (4px vs 8px); reconciling them is a
+ * delete-a-rule decision, not a tokenization, so it is left visible here. */
+.cp-nav-c{gap:var(--s-2)}
 .cp-tab{padding:var(--s-3) var(--s-5)}
 
 /* Filter bars in app pages: keep them visually grouped at any width. These two
@@ -2183,13 +2216,19 @@ a{color:inherit;text-decoration:none}
   .cp-nav-r{order:2}
   .cp-nav-c{
     order:3;flex:1 1 100%;flex-wrap:nowrap;justify-content:flex-start;
-    gap:6px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+    gap:var(--s-2);overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
     /* The negative side margin must equal .cp-nav's clamp MINIMUM above, or the
      * scrollable tab strip stops bleeding flush to the nav edge on the narrow
      * phones where 3vw is below that minimum. Both sides read --s-4 so they
      * cannot drift; the matching positive padding keeps the first/last tab off
-     * the bezel while the strip is scrolled to either end. */
-    scrollbar-width:none;margin:2px calc(-1 * var(--s-4)) 0;padding:2px var(--s-4) 4px;
+     * the bezel while the strip is scrolled to either end.
+     * The padding was `2px var(--s-4) 4px` — two literals either side of the
+     * bezel token. Both are now --s-1: the 4px bottom was already on the scale
+     * and the 2px top was not exemptible beside it (this test judges a
+     * declaration whole), so the strip gains 2px of top pad. The `margin`'s own
+     * 2px top nudge stays literal and IS exempt — its other two parts are 0 and
+     * a derived calc(), so nothing >= 4px sits in it. */
+    scrollbar-width:none;margin:2px calc(-1 * var(--s-4)) 0;padding:var(--s-1) var(--s-4);
   }
   .cp-nav-c::-webkit-scrollbar{display:none}
   .cp-tab{flex:0 0 auto}

@@ -1305,15 +1305,23 @@ FILTER_BAR_EXPLICIT_34 = {
 # are the two, and they are UNGUARDED on the 34px outcome. What IS assertable is
 # the recipe that was measured to produce it, and the fact that the two must agree
 # with each other: they sit in different bars beside controls pinned to 34px, so if
-# one drifts, that bar's labels go out of line. So this test pins
-# `padding:8px 10px` + `font-size:13px` + a 1px border on both, and a change to any
-# of those fails here and asks for a re-measure in a browser rather than silently
-# shipping a 2px offset. Nothing in this suite renders anything, so 34px itself
-# cannot be verified for these two by any test in the repo.
+# one drifts, that bar's labels go out of line. So this test pins the padding +
+# `font-size:13px` + a 1px border on both, and a change to any of those fails here
+# and asks for a re-measure in a browser rather than silently shipping a 2px
+# offset. Nothing in this suite renders anything, so 34px itself cannot be verified
+# for these two by any test in the repo.
+#
+# The recipe was `8px 10px` and is now `var(--s-2) var(--s-3)`. Only the HORIZONTAL
+# component moved (10px -> 12px): the 34px is a function of the vertical pad, the
+# font metrics and the border, none of which changed, so the measured outcome this
+# whole contract is about is untouched. Spelled as the token text rather than the
+# resolved pixels because that is what the stylesheet says — a future `--s-2`
+# change would move both inputs together and SHOULD fail here, asking for the
+# re-measure.
 FILTER_BAR_PADDING_DERIVED = {
     ".cp-input-sm": ".bd-f input",
 }
-_INPUT_RECIPE = {"padding": "8px 10px", "font-size": "13px"}
+_INPUT_RECIPE = {"padding": "var(--s-2) var(--s-3)", "font-size": "13px"}
 
 
 def _decls_for(selector: str) -> list[tuple[str, str]]:
