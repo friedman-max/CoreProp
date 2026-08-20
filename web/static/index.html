@@ -1577,14 +1577,30 @@ a{color:inherit;text-decoration:none}
 
 
 /* ═══════════════════════════════════════════ BACKTEST ═══════════════════════════════════════════ */
-.bt-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px}
-.bt-card{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);padding:14px 16px;display:flex;flex-direction:column}
+/* The stat-tile grid, and the one rule in this pass where the spec overrides
+ * plain nearest-step rounding. It asks for LARGER gaps between the flat tiles —
+ * twice, once for Backtest ("flat tiles with larger gaps") and once for Analytics
+ * ("larger stat-grid gaps") — and both instructions land here, because
+ * page-backtest.jsx and page-analytics.jsx render the same .bt-summary (Analytics
+ * twice, for window stats and CLV). Nearest step from 10px is --s-3 (12px), which
+ * is larger by 2px and reads as a rounding artefact rather than as a decision, so
+ * the gap takes --s-4 (16px) — the next step up, and the same value as
+ * .bt-slips-grid below, so the two card grids on the two screens share one
+ * gutter. margin-bottom takes plain nearest-step (18px is a tie, ties round up)
+ * and happens to move the same direction.
+ *
+ * This rule and .bt-card below are the LAST two declarations Phases 1-2b left
+ * untouched: `gap:10px;margin-bottom:18px` had not changed since before Phase 1,
+ * and `.bt-card{padding:14px 16px}` is the spec's own headline example of the
+ * drift the scale exists to remove. */
+.bt-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--s-4);margin-bottom:var(--s-5)}
+.bt-card{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);padding:var(--s-4);display:flex;flex-direction:column}
 /* Reserve two label lines on every card so a wrapping "(sub)" doesn't push
  * one card's value down relative to its neighbors — the values must sit on a
  * common baseline across the row. */
-.bt-card-label{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text-3);display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;min-height:2.4em;line-height:1.25}
+.bt-card-label{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text-3);display:flex;align-items:baseline;gap:var(--s-2);flex-wrap:wrap;min-height:2.4em;line-height:1.25}
 .bt-card-sub{font-size:9.5px;opacity:.7;text-transform:none;letter-spacing:0}
-.bt-card-value{font-size:22px;font-weight:700;margin-top:auto;padding-top:6px;letter-spacing:-.01em;font-family:"JetBrains Mono",monospace}
+.bt-card-value{font-size:22px;font-weight:700;margin-top:auto;padding-top:var(--s-2);letter-spacing:-.01em;font-family:"JetBrains Mono",monospace}
 .bt-card.tone-good .bt-card-value{color:var(--green)}
 .bt-card.tone-bad  .bt-card-value{color:var(--red-2)}
 
@@ -1596,8 +1612,22 @@ a{color:inherit;text-decoration:none}
 .bt-card-value .cp-skel{height:22px;width:64px;vertical-align:middle}
 .bt-card-label .cp-skel{height:11px;width:90px}
 
-.bt-slips-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
-.bt-slip{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
+/* REDUNDANT, and left in place deliberately. `.bt-slips-grid` is re-declared
+ * unconditionally in the "Backtest cards: 3-up grid" block further down with
+ * `gap:16px`, and that copy is the one that renders (same specificity, later
+ * source order) — so this 14px has been dead since that block was written.
+ * Rounding 14 -> --s-4 makes the two copies identical, i.e. this declaration is
+ * now provably a no-op. It is NOT deleted here: removing a rule is a different
+ * decision from tokenizing one, and folding the two together inside a spacing
+ * pass would hide it. The marketing pass reached the same conclusion about
+ * `.lp-books` and handled it exactly this way.
+ *
+ * .bt-slip's own padding/gap are dead for the same kind of reason but a different
+ * mechanism: page-backtest.jsx only ever emits `<article class="bt-slip
+ * bt-slip-compact …">`, and `.bt-slip-compact` (0,2,0) sets both. They are
+ * migrated so a slip rendered outside a compact card still lands on the scale. */
+.bt-slips-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:var(--s-4)}
+.bt-slip{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);padding:var(--s-4);display:flex;flex-direction:column;gap:var(--s-3);position:relative;overflow:hidden}
 .bt-slip::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;opacity:.65}
 .bt-slip.is-win::before{background:linear-gradient(180deg,var(--green),rgba(34,197,94,.2))}
 .bt-slip.is-loss::before{background:linear-gradient(180deg,var(--red),rgba(239,68,68,.2))}
@@ -1613,7 +1643,7 @@ a{color:inherit;text-decoration:none}
  * compact card). Editing the tracking HERE ships a no-op — the .10em that copy
  * carried is exactly how the typography pass came to miss it. The colour rules
  * below are single-class and do render. */
-.bt-slip-badge{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:var(--r-sm)}
+.bt-slip-badge{font-size:10px;font-weight:800;letter-spacing:.08em;padding:var(--s-1) var(--s-2);border-radius:var(--r-sm)}
 .bt-slip-badge.is-win{background:rgba(34,197,94,.14);color:var(--green-2)}
 .bt-slip-badge.is-loss{background:rgba(239,68,68,.14);color:var(--red-2)}
 .bt-slip-badge.is-push{background:rgba(251,191,36,.14);color:var(--amber-2)}
@@ -1626,32 +1656,38 @@ a{color:inherit;text-decoration:none}
 .bt-slip-del:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:var(--red-2)}
 
 /* Delete-slip confirmation modal (reuses .cp-modal-back / .cp-modal shell). */
-.bt-del-modal{width:min(420px,92vw);text-align:center;padding:28px 26px 22px}
-.bt-del-icon{width:52px;height:52px;margin:0 auto 14px;border-radius:50%;display:grid;place-items:center;font-size:24px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4)}
-.bt-del-title{margin:0 0 8px;font-size:18px;font-weight:700;color:var(--text)}
-.bt-del-body{margin:0 0 6px;font-size:13.5px;line-height:1.5;color:var(--text-2)}
-.bt-del-error{margin:10px 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:8px 10px}
-.bt-del-actions{display:flex;gap:10px;justify-content:center;margin-top:20px}
-.bt-del-actions .cp-btn{min-width:118px;padding:10px 16px}
+.bt-del-modal{width:min(420px,92vw);text-align:center;padding:var(--s-8) var(--s-6) var(--s-6)}
+.bt-del-icon{width:52px;height:52px;margin:0 auto var(--s-4);border-radius:50%;display:grid;place-items:center;font-size:24px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4)}
+.bt-del-title{margin:0 0 var(--s-2);font-size:18px;font-weight:700;color:var(--text)}
+.bt-del-body{margin:0 0 var(--s-2);font-size:13.5px;line-height:1.5;color:var(--text-2)}
+.bt-del-error{margin:var(--s-3) 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:var(--s-2) var(--s-3)}
+.bt-del-actions{display:flex;gap:var(--s-3);justify-content:center;margin-top:var(--s-5)}
+/* Also now redundant: `10px 16px` was .cp-btn's own base padding written out by
+ * hand, and both sides move to the same steps, so this override sets what it
+ * would inherit. Kept for the reason .bt-slips-grid's dead gap is kept — the
+ * `min-width` beside it is doing real work, so this is not even a whole-rule
+ * deletion, it is a one-declaration one, and it belongs to whoever next reads
+ * this modal rather than to a spacing pass. */
+.bt-del-actions .cp-btn{min-width:118px;padding:var(--s-3) var(--s-4)}
 .bt-del-confirm{background:var(--red);color:#fff;border:1px solid var(--red)}
 .bt-del-confirm:hover:not(:disabled){background:#dc2626;border-color:#dc2626}
 .bt-del-confirm:disabled{opacity:.6;cursor:default}
 
-.bt-slip-legs{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:5px}
-.bt-slip-leg{display:grid;grid-template-columns:18px 1fr auto auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.bt-slip-legs{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:var(--s-1)}
+.bt-slip-leg{display:grid;grid-template-columns:18px 1fr auto auto;gap:var(--s-2);align-items:center;padding:var(--s-2) 0;border-bottom:1px solid rgba(255,255,255,.04)}
 .bt-slip-leg:last-child{border-bottom:0}
 .bt-leg-i{width:18px;height:18px;background:#0a0a12;border-radius:var(--r-sm);display:grid;place-items:center;font-size:10px;color:var(--text-3);font-weight:700}
 .bt-leg-body{min-width:0}
 .bt-leg-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bt-leg-prop{font-size:11.5px;color:var(--text-3)}
 .bt-leg-pct{font-size:12px;color:var(--text-2);font-family:"JetBrains Mono",monospace}
-.bt-leg-actual{font-size:13px;font-weight:700;font-family:"JetBrains Mono",monospace;padding:2px 8px;border-radius:var(--r-sm)}
+.bt-leg-actual{font-size:13px;font-weight:700;font-family:"JetBrains Mono",monospace;padding:var(--s-1) var(--s-2);border-radius:var(--r-sm)}
 .bt-leg-actual.leg-hit{background:rgba(34,197,94,.14);color:var(--green-2)}
 .bt-leg-actual.leg-miss{background:rgba(239,68,68,.14);color:var(--red-2)}
 .bt-leg-actual.leg-push{background:rgba(251,191,36,.14);color:var(--amber-2)}
 .bt-leg-actual.leg-dnp,.bt-leg-actual.leg-pending{background:rgba(96,165,250,.14);color:var(--blue-2)}
 
-.bt-slip-foot{display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid var(--hair);gap:8px}
+.bt-slip-foot{display:flex;justify-content:space-between;padding-top:var(--s-3);border-top:1px solid var(--hair);gap:var(--s-2)}
 .bt-slip-foot-c{display:flex;flex-direction:column;gap:2px;flex:1}
 .bt-slip-foot-k{font-size:10px;color:var(--text-3);letter-spacing:.04em;font-weight:600}
 .bt-slip-foot-v{font-size:13px;font-weight:700}
@@ -1915,7 +1951,7 @@ a{color:inherit;text-decoration:none}
   margin-top:auto;width:100%;
   background:var(--primary);
   color:white;border:0;border-radius:var(--r-sm);
-  padding:9px 12px;font-size:12.5px;font-weight:700;letter-spacing:.02em;
+  padding:var(--s-2) var(--s-3);font-size:12.5px;font-weight:700;letter-spacing:.02em;
   cursor:pointer;white-space:nowrap;
   transition:transform .08s ease, background .2s ease;
 }
@@ -1994,15 +2030,17 @@ a{color:inherit;text-decoration:none}
 /* Placement messages get their own classes — these used to borrow
    .bt-del-error from the delete-slip modal, so restyling deletion silently
    restyled betting errors. */
-.bt-place-note{margin:8px 0 0;font-size:11.5px;color:#94a3b8;line-height:1.5}
-.bt-place-error{margin:8px 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);
-  border:1px solid rgba(239,68,68,.25);border-radius:var(--r-sm);padding:7px 9px;line-height:1.5}
+.bt-place-note{margin:var(--s-2) 0 0;font-size:11.5px;color:#94a3b8;line-height:1.5}
+.bt-place-error{margin:var(--s-2) 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);
+  border:1px solid rgba(239,68,68,.25);border-radius:var(--r-sm);padding:var(--s-2);line-height:1.5}
 
 /* ─────────── Backtest cards: 3-up grid, bigger, more legible ─────────── */
+/* THIS is the copy that renders — see the note on the base rule above, which is
+ * now an exact duplicate of this gap and is left in place on purpose. */
 .bt-slips-grid{
   display:grid;
   grid-template-columns:repeat(3,minmax(0,1fr));
-  gap:16px;
+  gap:var(--s-4);
 }
 @media (max-width:1080px){.bt-slips-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:680px){.bt-slips-grid{grid-template-columns:1fr}}
@@ -2052,9 +2090,9 @@ a{color:inherit;text-decoration:none}
 }
 
 /* Header strip */
-.bt-slip-compact .bt-slip-hd{align-items:center;margin-bottom:var(--s-1);gap:10px}
+.bt-slip-compact .bt-slip-hd{align-items:center;margin-bottom:var(--s-1);gap:var(--s-3)}
 .bt-slip-compact .bt-slip-hd-l{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
-.bt-slip-compact .bt-slip-hd-r{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.bt-slip-compact .bt-slip-hd-r{display:flex;align-items:center;gap:var(--s-2);flex-shrink:0}
 .bt-slip-compact .bt-slip-type{font-size:14px;font-weight:800;letter-spacing:.02em;color:var(--text)}
 .bt-slip-compact .bt-slip-ts{font-size:12px;color:var(--text-3)}
 /* THIS is the copy that renders. page-backtest.jsx emits the WIN/LOSS/PUSH/
@@ -2066,13 +2104,13 @@ a{color:inherit;text-decoration:none}
  * typography pass missed it: that pass grepped `letter-spacing:\.1em` and this
  * file spells the value `.10em`. So the one dated-caps micro-label the pass
  * existed to fix was the one it did not reach. --s-1 is the vertical pad. */
-.bt-slip-compact .bt-slip-badge{font-size:10.5px;padding:var(--s-1) 10px;letter-spacing:.04em;font-weight:800}
+.bt-slip-compact .bt-slip-badge{font-size:10.5px;padding:var(--s-1) var(--s-3);letter-spacing:.04em;font-weight:800}
 
 /* Slip-level +EV % badge */
 .bt-slip-ev{
   font-family:"JetBrains Mono",monospace;
   font-size:11.5px;font-weight:800;letter-spacing:.04em;
-  padding:var(--s-1) 9px;border-radius:var(--r-sm);
+  padding:var(--s-1) var(--s-2);border-radius:var(--r-sm);
   white-space:nowrap;
 }
 .bt-slip-ev.is-pos{color:var(--green-2);background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.40)}
@@ -2083,9 +2121,9 @@ a{color:inherit;text-decoration:none}
 .bt-slip-compact .bt-slip-leg{
   display:grid;
   grid-template-columns:1fr auto auto;
-  gap:10px;
+  gap:var(--s-3);
   align-items:center;
-  padding:8px 4px;
+  padding:var(--s-2) var(--s-1);
   border-bottom:1px solid rgba(255,255,255,.06);
 }
 .bt-slip-compact .bt-leg-pct{
@@ -2093,7 +2131,7 @@ a{color:inherit;text-decoration:none}
   font-weight:700;
   color:var(--primary-2);
   font-family:"JetBrains Mono",monospace;
-  padding:2px 7px;
+  padding:var(--s-1) var(--s-2);
   border-radius:var(--r-sm);
   /* These two are --primary-lo and --primary-hi by value. --primary-hi is safe
    * on the border; and the background is --primary-lo with an explicit
@@ -2110,7 +2148,7 @@ a{color:inherit;text-decoration:none}
 .bt-leg-name{
   display:flex;
   align-items:baseline;
-  gap:8px;
+  gap:var(--s-2);
   font-size:15.5px;
   font-weight:800;
   letter-spacing:-.005em;
@@ -2136,7 +2174,7 @@ a{color:inherit;text-decoration:none}
 
 /* Prop type + league + side+line — clearly readable, not muted into invisibility */
 .bt-leg-prop{
-  display:flex;align-items:center;gap:8px;
+  display:flex;align-items:center;gap:var(--s-2);
   font-size:12.5px;
   color:var(--text-2);
   margin-top:3px;
@@ -2147,7 +2185,7 @@ a{color:inherit;text-decoration:none}
   color:var(--text);
   font-size:11px;
   background:rgba(255,255,255,.06);
-  padding:2px 7px;border-radius:var(--r-sm);
+  padding:var(--s-1) var(--s-2);border-radius:var(--r-sm);
   flex-shrink:0;   /* the league pill is short and fixed — only the prop name shrinks */
 }
 /* The prop NAME is the only part of this row that may be shortened. Without
@@ -2157,7 +2195,7 @@ a{color:inherit;text-decoration:none}
  * entirely on narrow cards while a long prop name ("Pts+Rebs+Asts") stayed
  * fully rendered. Now the name ellipsises and the line is always visible. */
 .bt-leg-prop-name{color:var(--text);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:13px;padding:3px 8px;border-radius:var(--r-sm);margin-left:auto;flex-shrink:0}
+.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:13px;padding:var(--s-1) var(--s-2);border-radius:var(--r-sm);margin-left:auto;flex-shrink:0}
 .bt-leg-side-over{color:var(--green-2);background:rgba(34,197,94,.16)}
 .bt-leg-side-under{color:var(--blue-2);background:rgba(96,165,250,.16)}
 
@@ -2170,7 +2208,7 @@ a{color:inherit;text-decoration:none}
    * and BOTH badge columns in that leg shift right relative to its siblings —
    * within the same card. Measured ragged by 9-18px before this. */
   min-width:71px;
-  padding:6px 12px;
+  padding:var(--s-2) var(--s-3);
   border-radius:var(--r-sm);
   font-size:15px;
   font-weight:800;
