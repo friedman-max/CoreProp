@@ -320,8 +320,20 @@ function BookBadge({ book, odds }) {
 
 // ───────── True % chip with heat color ─────────
 function TruePct({ value }) {
-  // 54–75 → green ramp
-  const t = Math.min(1, Math.max(0, (value - 54) / 18));
+  // 50–76 → green ramp. The domain is measured, not chosen: over 950 live bets
+  // the values run p0=50.0 / p5=50.4 / p50=61.6 / p95=76.0 / p100=83.8, so the
+  // old 54–72 domain clamped 45.7% of rows to one of two identical colours
+  // (30.1% at the low end, 15.6% at the high). p5→p95 rounded to 50–76 cuts that
+  // to 6.6%, so the ramp now actually encodes instead of flattening half the
+  // board. Phase 2a promoted this number to a 20px hero, which is what made the
+  // clamping worth fixing.
+  //
+  // The hue and the lightness/chroma expressions are deliberately UNCHANGED —
+  // only the domain moved. The end-to-end span is 22/255 either way; that is the
+  // ramp's designed intensity, and widening it would be a colour-scheme change
+  // rather than a fix to the mapping. This is a value→color encoding: never
+  // replace it with a flat token (see the .cp-tp note in index.html).
+  const t = Math.min(1, Math.max(0, (value - 50) / 26));
   const hue = 145; // green
   return (
     <span className="cp-tp" style={{ color: `oklch(${0.72 + t * 0.05} ${0.14 + t * 0.04} ${hue})` }}>
