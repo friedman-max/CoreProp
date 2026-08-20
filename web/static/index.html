@@ -114,16 +114,40 @@
    * be free to move independently. Like --primary it is fill/border only, never
    * text.
    *
-   * Measured while naming it, and left as-is because a tokenization pass may not
-   * move a pixel: white on #16A34A is 3.30:1, which clears the 3:1 non-text
-   * floor but NOT AA for .cp-btn-save's 15px/700 label. --primary carries the
-   * same note the other way round (it was darkened to #1E6FB0 precisely to fix
-   * this). It is now a one-line fix in one place, which it was not before.
+   * It was #16A34A, and white on that measures 3.30:1 — over the 3:1 non-text
+   * floor, under the 4.5:1 body-text minimum, so every white label on it failed
+   * AA. There were five: .cp-btn-save (15px/700), .ev-prefs-save-saved
+   * (13px/700), .bt-slip-place-queued (12.5px/700), and the Green Devils chip
+   * (12.5px/500) and GD badge (11px/700), the last two inline in ev-page.jsx.
+   * The token being one place is what made it one fix.
    *
-   * Hover darkens to #15803D (.cp-btn-save:hover). That has a single consumer
-   * and no sibling, so it stays literal — as does the disabled pair at
-   * .cp-btn-save.is-dis; see the note there. */
-  --save:      #16A34A;
+   * Darkened one step down the same ramp to #15803D, where white is 5.02:1. That
+   * is the identical move --primary took for the identical reason (#2E90D9 at
+   * 3.44:1 -> #1E6FB0 at 5.31:1), and the note up there records it the same way;
+   * the two contrast claims were computed with the same WCAG 2.x curve, so they
+   * are comparable numbers. The hue is HELD, not just "close": 142.4deg against
+   * 142.1deg, with --green (#22C55E) at 142.1 and --green-2 (#86EFAC) at 141.7
+   * on the same ramp, so the family still reads as one green rather than as a
+   * green and a teal.
+   *
+   * Darkening the FILL and not the label is the deliberate half. White-on-green
+   * is the save-button idiom, the app's other primary CTA is white-on---primary,
+   * and a dark label on green would make .cp-btn-save the only control of its
+   * kind in the app.
+   *
+   * #15803D used to BE .cp-btn-save's hover, so the hover moves down a step too,
+   * to #166534 (white 7.13:1). It still has a single consumer and no sibling, so
+   * it stays literal — as does the disabled pair at .cp-btn-save.is-dis; see the
+   * note there, which also carries this value's 8-digit form.
+   *
+   * ios/CoreProp/Theme/Theme.swift's `saveGreen` is still #16A34A and its doc
+   * comment still states the pre-fix 3.30:1 finding as live. Porting this is an
+   * iOS change; no test pins that mirror, so it will not fail loudly.
+   *
+   * One coincidence, recorded rather than fixed: app-main.jsx's accent picker
+   * offers #15803D as a user-selectable accent, so a user who picks the green
+   * accent gets --primary == --save. Cosmetic, and only off the default. */
+  --save:      #15803D;
   --red:       #EF4444;
   /* The lighter error/miss red, for TEXT on a red tint. --red (#EF4444) is the
    * semantic red for bars, borders and fills; this one is what reads on top of
@@ -131,6 +155,38 @@
    * and fails AA). Not interchangeable — see the .is-logged note. */
   --red-2:     #FCA5A5;
   --red-hi:    rgba(239,68,68,.10);
+  /* WARNING amber, and it has ZERO consumers in this stylesheet — on purpose, so
+   * that the next audit finds a decision here instead of re-raising it.
+   *
+   * The obvious precedent says delete: --radius-xs had no consumers and was
+   * deleted in Phase 2b, with test_legacy_radius_aliases_point_at_the_new_scale
+   * now asserting its absence. This is the other call, and three things separate
+   * the two cases:
+   *
+   *   1. It is not actually dead as a VALUE. web/static/extension.html spells
+   *      #f59e0b as its own `--warn` and paints .dot.off (the "extension not
+   *      connected" status dot) with it. That file is deliberately standalone —
+   *      no React, no shared stylesheet, so it still renders for an expired
+   *      session — which means it cannot read :root and its copy is not one of
+   *      the five roles test_extension_palette_mirror_matches pins. So web has a
+   *      warning surface; the app SHELL is the part that has none.
+   *   2. ios/CoreProp/Theme/Theme.swift's `amber` (#F59E0B) is live at four
+   *      sites: RootView's banner, ErrorStateView's glyph (Components.swift),
+   *      SettingsView's live-mode label and SubscriptionView's lock glyph. This
+   *      palette and that one were deliberately made to mirror each other, and
+   *      a role the client uses four times is not one web should lose the name
+   *      for.
+   *   3. Theme.swift's `saveGreen` note keeps an unreferenced iOS token "because
+   *      it mirrors a real web token, which is the same reason web keeps --amber
+   *      with zero consumers." Deleting it would falsify a written decision in a
+   *      file that is not web's to edit, and strand that comment.
+   *
+   * A radius is geometry and carries no meaning; a colour token is a ROLE. When
+   * the app shell grows a warning surface — today its error states use --red-2,
+   * which conflates "this failed" with "be careful" — this is what it uses, and
+   * --amber-2 below is the light label that reads on a tint of it. Do NOT
+   * conflate the two: --amber-2 has consumers and a different base (see its
+   * note). */
   --amber:     #F59E0B;
   /* The push label. Its base is the push outcome #FBBF24, NOT --amber — --amber
    * is the WARNING colour, and the two are separate on purpose (the iOS port
@@ -342,7 +398,10 @@ a{color:inherit;text-decoration:none}
  * than accent so the accent-glow guard cannot see it — "flat buttons, no glow"
  * still applies, so it is removed by hand and recorded here. */
 .cp-btn-save{background:var(--save);color:white;border-radius:var(--r-md);padding:var(--s-3);font-weight:700;width:100%;font-size:15px;border:0;cursor:pointer}
-.cp-btn-save:hover{background:#15803d}
+/* #166534, one ramp step below --save's new #15803D (white 7.13:1 against the
+ * base's 5.02:1) — it had to move, because #15803D IS --save now and leaving it
+ * would have made the hover a no-op AND spelled a token's value as a literal. */
+.cp-btn-save:hover{background:#166534}
 /* The one pair in this family that stays literal, and the only tokenizable-looking
  * site that is not tokenizable. Both values are 8-digit hex — --save at 25% alpha
  * and --green-2 at 50% — and `var(--save)40` does NOT concatenate: var()
@@ -365,8 +424,25 @@ a{color:inherit;text-decoration:none}
  * So: if --save or --green-2 ever moves, these two move BY HAND. Same standing
  * obligation as the 4px in .ev-auto-gd's focus ring. Exempted by whole selector
  * in tests/api_tests/test_css_tokens.py::HEX_LITERAL_OK, which carries the same
- * reasoning and is the only entry in that set. */
-.cp-btn-save.is-dis{background:#16a34a40;color:#86EFAC80;cursor:not-allowed;box-shadow:none}
+ * reasoning and is the only entry in that set.
+ *
+ * --save DID move (#16A34A -> #15803D), and this is the hand-move it obliged:
+ * the fill is #15803d40, not the old #16a34a40.
+ *
+ * Measured in Chromium off the composited PIXELS, not by hand-compositing the
+ * two alphas — the button rendered on each of its real grounds and the fill and
+ * glyph colours read back out of the screenshot. The #86EFAC80 label reads
+ * 3.81:1 on the desktop sidebar's --bg-2 and 3.72:1 on the mobile drawer's
+ * --card, up from 3.60 / 3.53. A disabled control only owes 3:1 (WCAG 1.4.3
+ * exempts it outright; 3:1 is the house floor), so both states cleared and the
+ * new one clears by more.
+ *
+ * The cost, and the reason this is worth writing down rather than just noting
+ * the pass: the fill's separation from its ground drops 1.40-1.42:1 to
+ * 1.26-1.27:1, so the disabled button sits a little flatter against the panel
+ * than it did. Still visible, and nothing requires a disabled fill to
+ * contrast — but it is the one number this fix made worse. */
+.cp-btn-save.is-dis{background:#15803d40;color:#86EFAC80;cursor:not-allowed;box-shadow:none}
 
 .cp-link{background:transparent;border:0;color:var(--primary-2);font-weight:500;cursor:pointer;font-size:13px;padding:var(--s-2);border-radius:var(--r-sm)}
 .cp-link:hover{background:rgba(30,111,176,.10)}
@@ -1949,11 +2025,14 @@ a{color:inherit;text-decoration:none}
  * Doubling the class reaches (0,2,0) — enough to beat the base .ev-prefs-save
  * (0,1,0) at rest, and NOT enough to beat the (0,3,0) hover: `:hover` and the
  * `:disabled` inside `:not()` each count. Measured in a browser on an isolated
- * replica of this exact cascade, the doubled class alone computed #16a34a at
- * rest and #195F97 on hover — i.e. it ships the regression it was meant to
+ * replica of this exact cascade, the doubled class alone computed --save's value
+ * at rest and #195F97 on hover — i.e. it ships the regression it was meant to
  * prevent. So each state also states its own hover at (0,4,0). BOTH selectors
  * are load-bearing; deleting either reopens the trap in a state nothing tests.
- * Verified: hovering the saved button holds rgb(22,163,74). */
+ * Verified: hovering the saved button holds --save. (That measurement was taken
+ * when --save was #16A34A / rgb(22,163,74); the token has since darkened to
+ * #15803D to fix this white label's contrast, which changes the pixel and not
+ * one thing about the cascade above.) */
 .ev-prefs-save.ev-prefs-save-saved,
 .ev-prefs-save.ev-prefs-save-saved:hover:not(:disabled){background:var(--save)}
 .ev-prefs-save.ev-prefs-save-error,
@@ -2242,17 +2321,39 @@ a{color:inherit;text-decoration:none}
  * unreachable for `color`. Both sets were migrated anyway — a stale value on an
  * unreachable rule is how the typography pass lost a whole micro-label.
  *
- * Two colours here own no token and stay literal, because giving either one would
- * mean changing a rendered colour and this pass may not:
- *   leg-miss  #FECACA is a FOURTH red — lighter than --red-2 (#FCA5A5), which is
- *             what the unreachable base copy uses. So the two miss pills disagree
- *             and the one you can see is the untokenized one. The --red-2 guard
- *             cannot catch that: it bans a value, and this is a different value.
- *             Resolving it is a colour decision (pick one red), not a
- *             tokenization.
- *   leg-dnp   #D1D5DB is the neutral "did not play" grey and has no family. */
+ * leg-miss WAS a fourth red. It carried #FECACA — lighter than --red-2 (#FCA5A5),
+ * which is what the unreachable base copy uses — so the two miss pills disagreed
+ * and the one you could see was the untokenized one. The --red-2 guard cannot
+ * catch that: it bans a value, and #FECACA is a different value. Resolved by
+ * picking --red-2, measured rather than assumed:
+ *
+ *   the pill's own fill is rgba(239,68,68,.34) over the card, and the card is
+ *   rgba(239,68,68,.22) over --bg, so the text sits on rgb(121,38,40)
+ *     #FECACA (what shipped) .... 6.84:1
+ *     --red-2 #FCA5A5 ........... 5.22:1
+ *   and across the other three card tints a miss leg can appear on (a Flex WIN,
+ *   a push, a pending card) --red-2 runs 5.76 / 5.97 / 5.80:1.
+ *
+ * The pill is 15px/800, which is NOT WCAG "large text" (>=18.66px bold), so the
+ * bar is 4.5:1 and --red-2 clears it everywhere with room. The lighter red was
+ * therefore not doing contrast work, which is the thing that had to be checked
+ * before choosing — if it had been, the answer would have been that the BASE
+ * rule was wrong and #FECACA needed a token.
+ *
+ * What decided it: --red-2 is what the LOSS badge in this same card already uses
+ * (.bt-slip-badge.is-loss), so the card was rendering two different reds side by
+ * side, and miss was the only one of the four outcome pills not matching its
+ * badge sibling (hit and push already pair with --green-2 / --amber-2). One red
+ * for one meaning.
+ *
+ * #FECACA survives at .ev-row-data.is-logged, where it is a different problem
+ * with its own note (it exists because --text-3 fell under AA once the logged
+ * tint was flattened) — that is not this red wearing a disguise.
+ *
+ * leg-dnp's #D1D5DB stays literal: the neutral "did not play" grey has no family
+ * and no token, and inventing one for a single site is not an improvement. */
 .bt-slip-compact .bt-leg-actual.leg-hit    {background:rgba(34,197,94,.28);  color:var(--green-2); border-color:rgba(34,197,94,.45)}
-.bt-slip-compact .bt-leg-actual.leg-miss   {background:rgba(239,68,68,.34);  color:#FECACA;        border-color:rgba(239,68,68,.65)}
+.bt-slip-compact .bt-leg-actual.leg-miss   {background:rgba(239,68,68,.34);  color:var(--red-2);   border-color:rgba(239,68,68,.65)}
 .bt-slip-compact .bt-leg-actual.leg-push   {background:rgba(251,191,36,.26); color:var(--amber-2); border-color:rgba(251,191,36,.45)}
 .bt-slip-compact .bt-leg-actual.leg-dnp    {background:rgba(156,163,175,.22);color:#D1D5DB;        border-color:rgba(156,163,175,.4)}
 .bt-slip-compact .bt-leg-actual.leg-pending{background:rgba(251,191,36,.22); color:var(--amber-2); border-color:rgba(251,191,36,.4)}
@@ -2422,16 +2523,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=d76e8e67f2"></script>
-<script src="/static/dist/tweaks-panel.js?v=d76e8e67f2"></script>
-<script src="/static/dist/components.js?v=d76e8e67f2"></script>
-<script src="/static/dist/landing.js?v=d76e8e67f2"></script>
-<script src="/static/dist/ev-page.js?v=d76e8e67f2"></script>
-<script src="/static/dist/page-boards.js?v=d76e8e67f2"></script>
-<script src="/static/dist/page-backtest.js?v=d76e8e67f2"></script>
-<script src="/static/dist/page-analytics.js?v=d76e8e67f2"></script>
-<script src="/static/dist/pricing.js?v=d76e8e67f2"></script>
-<script src="/static/dist/app-main.js?v=d76e8e67f2"></script>
+<script src="/static/dist/api.js?v=47ee4ef329"></script>
+<script src="/static/dist/tweaks-panel.js?v=47ee4ef329"></script>
+<script src="/static/dist/components.js?v=47ee4ef329"></script>
+<script src="/static/dist/landing.js?v=47ee4ef329"></script>
+<script src="/static/dist/ev-page.js?v=47ee4ef329"></script>
+<script src="/static/dist/page-boards.js?v=47ee4ef329"></script>
+<script src="/static/dist/page-backtest.js?v=47ee4ef329"></script>
+<script src="/static/dist/page-analytics.js?v=47ee4ef329"></script>
+<script src="/static/dist/pricing.js?v=47ee4ef329"></script>
+<script src="/static/dist/app-main.js?v=47ee4ef329"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

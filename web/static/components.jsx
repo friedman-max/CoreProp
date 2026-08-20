@@ -301,10 +301,17 @@ function AuthModal({ open, onClose, onSubmit }) {
 
 // ───────── Sportsbook badge ─────────
 function BookBadge({ book, odds }) {
+  // `fg` lands in a React inline style, where a var() is just a string — the same
+  // thing page-analytics.jsx relies on for stroke="var(--hair)". So the two rows
+  // whose colour has a token in :root read it instead of restating it; NV's
+  // #5EEAD4 and MGM's #7DD3FC have no token, and FD's #FCA5A5 is --red-2 spelled
+  // out at five more inline sites across this file, ev-page.jsx and landing.jsx —
+  // that one is a set, and migrating a third of a set is how --red-2's family got
+  // half-done the first time (see FAMILY in tests/api_tests/test_css_tokens.py).
   const colors = {
     FD:  { bg: "rgba(239,68,68,.16)",  fg: "#FCA5A5" },
-    DK:  { bg: "rgba(34,197,94,.16)",  fg: "#86EFAC" },
-    PIN: { bg: "rgba(250,204,21,.18)", fg: "#FDE68A" },
+    DK:  { bg: "rgba(34,197,94,.16)",  fg: "var(--green-2)" },
+    PIN: { bg: "rgba(250,204,21,.18)", fg: "var(--amber-2)" },
     NV:  { bg: "rgba(45,212,191,.18)",  fg: "#5EEAD4" },
     MGM: { bg: "rgba(56,189,248,.16)", fg: "#7DD3FC" },
   };

@@ -414,7 +414,7 @@ function EVPage() {
           <label className="ev-auto ev-auto-gd" title="Also auto-backtest green devils — logged as their own separate slip, never mixed into +EV slips. Off = green devils are display-only.">
             <input type="checkbox" checked={autoBacktestGreenDevils} onChange={e => setAutoBacktestGreenDevils(e.target.checked)} />
             <span className="ev-check" aria-hidden="true" />
-            <span style={{ color: "#22c55e" }}>Green devils</span>
+            <span style={{ color: "var(--green)" }}>Green devils</span>
           </label>
         </div>
         <div className="ev-slip-row">
@@ -576,14 +576,22 @@ function EVPage() {
           </div>
           <div className="ev-filter">
             <label>Green Devils</label>
+            {/* --save is the fill/border green and --green is the text green, the
+                same split .ev-auto-gd's rules use in index.html (there: "--save
+                is the green that plays --primary's part; --green plays
+                --primary-2's"). var() resolves in a React inline style — it is
+                just a string — so this tracks :root instead of pinning a copy of
+                it, which is how this button's ON state (white 12.5px on the
+                green) picked up --save's darkening to #15803D and stopped
+                failing AA at 3.30:1. */}
             <button
               type="button"
               className={"ev-chip " + (showGreenDevils ? "is-on" : "")}
               onClick={() => setShowGreenDevils(v => !v)}
               title="Green devils are PrizePicks goblins — discounted, higher-hit-rate lines. Toggle to see the safest 'just need to win' picks, ranked by hit probability."
               style={showGreenDevils
-                ? { background: "#16a34a", borderColor: "#16a34a", color: "#fff" }
-                : { borderColor: "#16a34a", color: "#22c55e" }}
+                ? { background: "var(--save)", borderColor: "var(--save)", color: "#fff" }
+                : { borderColor: "var(--save)", color: "var(--green)" }}
             >{showGreenDevils ? "On" : "Off"}{greenDevilCount ? ` · ${greenDevilCount}` : ""}</button>
           </div>
           <div className="ev-filter">
@@ -707,7 +715,7 @@ function EVPage() {
                         the badge with nothing failing anywhere. A plain NUMBER
                         (8) is fine — React appends px to numeric style values —
                         it just hardcodes the radius off the scale. */}
-                    {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: "var(--r-sm)", background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 700 }}>GD</span>}
+                    {b.isGreenDevil && <span className="ev-gd" title="Green devil (PrizePicks goblin) — discounted, higher-hit-rate line" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: "var(--r-sm)", background: "var(--save)", color: "#fff", fontSize: 11, fontWeight: 700 }}>GD</span>}
                   </div>
                   {/* Meta line reads "LEAGUE Prop SIDE line · time", so .ev-side
                       precedes .ev-line ("OVER 25.5"). The dot separator keeps

@@ -483,7 +483,7 @@ def _root_hex_tokens() -> dict[str, str]:
 # Shared by the per-family guard and the general one, so a site cannot be exempt
 # from one and caught by the other.
 #
-#   .cp-btn-save.is-dis : `background:#16a34a40;color:#86EFAC80` — --save at 25%
+#   .cp-btn-save.is-dis : `background:#15803d40;color:#86EFAC80` — --save at 25%
 #       alpha and --green-2 at 50%, as 8-digit hex. It cannot be tokenized:
 #       `var(--save)40` does not concatenate, because var() substitutes into the
 #       token stream and the trailing `40` becomes a separate component value, so
@@ -497,7 +497,9 @@ def _root_hex_tokens() -> dict[str, str]:
 #       bits first — so the equality would rest on a rounding behaviour instead of
 #       on a value. The rule in index.html carries the same note, plus the
 #       standing obligation that follows from it: if --save or --green-2 moves,
-#       these two move by hand.
+#       these two move by hand. --save HAS since moved (#16A34A -> #15803D, to get
+#       white off 3.30:1 and onto 5.02:1), and this entry's hex moved with it by
+#       hand, exactly as the obligation says. That is what the obligation is for.
 HEX_LITERAL_OK = {".cp-btn-save.is-dis"}
 
 
@@ -507,8 +509,10 @@ HEX_LITERAL_OK = {".cp-btn-save.is-dis"}
 # one of them here as `test_error_red_is_tokenized`. The other three members of
 # the same pattern were never created: a light TEXT colour on a tint of its base
 # was still a raw hex at 6 green (#86EFAC), 4 amber (#FDE68A) and 4 blue
-# (#93C5FD) sites, and #16A34A — the save/confirm button FILL, a third green that
-# is NOT --green — had no token at all.
+# (#93C5FD) sites, and the save/confirm button FILL — a third green that is NOT
+# --green — had no token at all. (That fill was #16A34A when the token landed and
+# is #15803D now: naming it is what made its failing white-label contrast a
+# one-line fix, and the fix was taken. The value below is the current one.)
 #
 # The tell that this was half-done rather than deliberate: all four already
 # existed in ios/CoreProp/Theme/Theme.swift, and three of that file's doc comments
@@ -534,7 +538,7 @@ FAMILY = {
     "--amber-2": ("#fde68a", 4, "push"),
     "--blue-2": ("#93c5fd", 4, "pending / DNP / UNDER"),
     "--red-2": ("#fca5a5", 16, "error / miss / negative"),
-    "--save": ("#16a34a", 5, "save / confirm button fill"),
+    "--save": ("#15803d", 5, "save / confirm button fill"),
 }
 
 
@@ -621,10 +625,17 @@ def test_label_family_token_is_actually_used(token):
 #     of it. Only the --*-hi/--*-lo tints are rgba() today and they are excluded
 #     from _root_hex_tokens by design; a base colour re-spelled as rgb() would
 #     pass here.
-#   * Inline styles in .jsx. `ev-page.jsx` still carries #16a34a/#22c55e in three
-#     style={} objects and components.jsx/landing.jsx carry #86EFAC/#FDE68A in
-#     their book-badge maps. Those are real duplicates of this palette, they are
-#     out of this test's file, and migrating them means rebuilding dist/.
+#   * Inline styles in .jsx. Those are real duplicates of this palette, they are
+#     out of this test's file, and migrating them means rebuilding dist/. The six
+#     this note used to list are done: `ev-page.jsx`'s three style={} objects now
+#     read var(--save)/var(--green), and the #86EFAC/#FDE68A rows of the
+#     book-badge maps in components.jsx and landing.jsx read
+#     var(--green-2)/var(--amber-2). What is left is one set, deliberately moved
+#     as a set rather than in thirds: --red-2 is still #FCA5A5 inline at five
+#     sites (ev-page.jsx's slip-EV, freshness and load-error spans;
+#     components.jsx's two form errors) plus the FD row of both book maps. Nothing
+#     here or in test_error_red_is_tokenized can see any of them — that guard
+#     reads index.html's <style> block only.
 
 def _literal_token_colours(css: str) -> tuple[list[str], int]:
     """`(violations, literals_inspected)` for one stylesheet.
@@ -671,16 +682,16 @@ def test_the_literal_hex_guard_can_actually_fail():
     resolve onto the token, and a near-miss has to be left alone.
     """
     real = _root_hex_tokens()
-    assert real.get("--save") == "#16a34a" and real.get("--card") == "#14141e", (
+    assert real.get("--save") == "#15803d" and real.get("--card") == "#14141e", (
         "this fixture is written against --save/--card; :root moved"
     )
     fixture = """
-      .fx-plain{background:#16A34A}
-      .fx-alpha{background:#16a34a40}
+      .fx-plain{background:#15803D}
+      .fx-alpha{background:#15803d40}
       .fx-short{color:#fff}
       .fx-nearmiss{background:#14141f}
       .fx-fallback{background:var(--card,#14141e)}
-      .cp-btn-save.is-dis{background:#16a34a40}
+      .cp-btn-save.is-dis{background:#15803d40}
     """
     violations, inspected = _literal_token_colours(fixture)
     assert inspected == 6, inspected
