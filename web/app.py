@@ -37,7 +37,7 @@ from fastapi import FastAPI, HTTPException, Depends, Request, Response, Query
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -106,6 +106,46 @@ async def _limit_request_body(request: Request, call_next):
         except ValueError:
             pass  # malformed header; let the framework reject it
     return await call_next(request)
+
+
+# HTTPS enforcement. cloudflared terminates TLS at the Cloudflare edge and
+# forwards to this origin over plain http on loopback, so uvicorn is started
+# WITHOUT --proxy-headers and request.url.scheme is ALWAYS "http" here. The
+# original scheme survives only in X-Forwarded-Proto.
+#
+# This matters well beyond tidiness: http://coreprop.me was serving the whole
+# app in cleartext with no redirect, and a service worker only registers in a
+# secure context — so any user who reached the site over http got a Home Screen
+# PWA whose push notifications could never work, with nothing visibly wrong.
+#
+# Deliberately keyed on the header being PRESENT and exactly "http". A missing
+# header means the request did not come through the tunnel (loopback health
+# checks, `python main.py` in development) and is left completely alone — that
+# is what makes an infinite redirect loop impossible: the only way to be
+# redirected is to have announced yourself as http.
+@app.middleware("http")
+async def _force_https(request: Request, call_next):
+    proto = (request.headers.get("x-forwarded-proto") or "").strip().lower()
+    if proto == "http":
+        host = request.headers.get("host") or ""
+        if host:
+            target = f"https://{host}{request.url.path}"
+            if request.url.query:
+                target += f"?{request.url.query}"
+            # 307 preserves method+body. A 301 would be cached by the browser
+            # forever, which is unrecoverable if this ever needs backing out.
+            return RedirectResponse(target, status_code=307)
+
+    response = await call_next(request)
+    # Only assert HSTS on requests that actually arrived over TLS. Sending it
+    # on a cleartext response is meaningless, and sending it on loopback would
+    # pin a developer's browser to https://localhost.
+    if proto == "https":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
 
 # Results checker / CLV singletons (stateless, run in background via service role)
 _results_checker  = ESPNResultsChecker()
@@ -1231,6 +1271,11 @@ def _run_pipeline_body():
                             float(b.get("true_prob") or 0.0) >= min_prob
                             and _cell_ok(b)
                             and _scoreable(b)
+                            # A leg the extension could not stage on the board
+                            # is out of the pool until its TTL lapses. Without
+                            # this the worker rebuilds a slip around the same
+                            # dead leg every cycle and it fails identically.
+                            and not is_leg_unavailable(b)
                         )
 
                     from engine.backtest import BacktestLogger
@@ -3134,6 +3179,10 @@ class PendingSlipRequest(BaseModel):
     legs: list[dict]   # [{player, league, prop, line, side}, ...]
     slip_type: str = "Power"
     n_legs: int = 6
+    # The backtest slip these legs came from. Needed so that when the extension
+    # reports a leg it could not stage, the server can dissolve THAT slip and
+    # return its surviving legs to the pool (see report_slip_status).
+    slip_id: Optional[str] = None
     # Auto-submit: the client REQUESTS unattended stake-entry + submit. Whether
     # it is honored is decided SERVER-SIDE below (armed live + consent + global
     # flag), never by the client alone — this is real money.
@@ -3217,6 +3266,7 @@ def set_pending_slip(req: PendingSlipRequest, user: dict = Depends(get_current_u
         "legs": req.legs,
         "auto_submit": auto_submit,
         "stake": stake,
+        "slip_id": req.slip_id,
     }
     with _pending_slips_lock:
         _evict_expired_pending(time.monotonic())
@@ -3314,6 +3364,48 @@ def report_slip_status(req: SlipStatusRequest, token: str = Query("", alias="cp_
                 for f in req.failures[:10]
             ) or "none reported",
         )
+
+        # A leg that could not be staged is DEAD, not merely noteworthy. Two
+        # things follow, and neither is logging:
+        #
+        #   1. Take it out of the candidate pool, so the auto-backtest worker
+        #      stops rebuilding slips around a line PrizePicks no longer offers.
+        #   2. Dissolve the slip it belonged to. Deleting the slip returns its
+        #      SURVIVING legs to the pool — they are no longer consumed by the
+        #      logger's per-user dedup set — so the next scrape regroups them
+        #      with whatever fresh candidates have appeared, using the ordinary
+        #      slip-building path rather than a second, divergent copy of it.
+        #
+        # Regrouping is deliberately NOT done inline here. The next cycle is at
+        # most one refresh interval away, it already applies the user's stake,
+        # leg-count, threshold and dedup rules, and rebuilding a slip in this
+        # unauthenticated token-scoped handler would duplicate all of that.
+        if req.failures:
+            marked = mark_legs_unavailable(req.failures)
+            slip_id = (payload or {}).get("slip_id")
+            uid = (payload or {}).get("user_id")
+            freed = 0
+            if slip_id and uid:
+                try:
+                    from engine.database import get_db
+                    sdb = get_db()
+                    if sdb:
+                        # Legs first, then the header: a header with no legs is
+                        # an invisible orphan on the Backtest tab, whereas legs
+                        # with no header are still reachable for cleanup.
+                        freed = len((sdb.table("legs").select("leg_num")
+                                     .eq("slip_id", slip_id).eq("user_id", uid)
+                                     .execute().data) or [])
+                        sdb.table("legs").delete().eq("slip_id", slip_id).eq("user_id", uid).execute()
+                        sdb.table("slips").delete().eq("id", slip_id).eq("user_id", uid).execute()
+                except Exception as exc:
+                    logger.warning("pending-slip: could not dissolve slip %s: %s", slip_id, exc)
+            logger.info(
+                "auto_place: %d leg(s) marked unavailable for %dmin; dissolved slip %s "
+                "(%d legs returned to the pool for the next scrape to regroup)",
+                marked, _UNAVAILABLE_TTL_SEC // 60, slip_id or "-",
+                max(0, freed - marked),
+            )
     else:
         logger.info(
             "PP slip staged in full: %d legs (ext v%s)", req.legs_total, req.version or "?"
@@ -3537,6 +3629,79 @@ def auto_place_queue(user: dict = Depends(get_current_user)):
 
     # One at a time. Never hand the bot a burst of wagers to fire.
     return {"slips": out[:1], "mode": s["mode"], "stake": s["stake"]}
+
+
+# ── Unavailable-leg pool ────────────────────────────────────────────────────
+# When the extension cannot find a leg on the PrizePicks board, that leg is not
+# merely a logging curiosity — it is a bet we must stop offering. The scraped
+# pp_lines snapshot is up to one refresh interval stale, and the extension's DOM
+# search is the ground truth: if it cannot stage the leg, the leg is gone (pulled,
+# or the line moved) no matter what our snapshot still says.
+#
+# Without this, the auto-backtest worker keeps re-picking the same dead leg on
+# every cycle, and every slip built around it fails to place the same way.
+#
+# In-memory with a TTL rather than a table: this is transient availability, not
+# a fact about the world. A restart re-learns it within one placement attempt,
+# and the TTL lets a line that comes BACK become eligible again on its own —
+# PrizePicks pulls and reinstates lines routinely around news.
+_UNAVAILABLE_TTL_SEC = 90 * 60
+_unavailable_legs: dict[str, float] = {}
+_unavailable_lock = threading.Lock()
+
+
+def _leg_key(player, prop, line, side) -> str:
+    """Normalised identity for a leg. Deliberately does NOT include game_start:
+    the same player/prop/line/side is the same bet regardless of how the two
+    sources happen to format the kickoff timestamp."""
+    try:
+        ln = f"{float(line):.2f}"
+    except (TypeError, ValueError):
+        ln = str(line or "").strip()
+    return "|".join([
+        str(player or "").strip().lower(),
+        str(prop or "").strip().lower(),
+        ln,
+        str(side or "").strip().lower(),
+    ])
+
+
+def _prune_unavailable(now: float) -> None:
+    """Caller must hold _unavailable_lock."""
+    for k in [k for k, exp in _unavailable_legs.items() if exp <= now]:
+        _unavailable_legs.pop(k, None)
+
+
+def mark_legs_unavailable(legs: list[dict]) -> int:
+    """Take legs out of the candidate pool for _UNAVAILABLE_TTL_SEC."""
+    now = time.monotonic()
+    n = 0
+    with _unavailable_lock:
+        _prune_unavailable(now)
+        for lg in legs or []:
+            key = _leg_key(lg.get("player"), lg.get("prop"), lg.get("line"), lg.get("side"))
+            if key.strip("|"):
+                _unavailable_legs[key] = now + _UNAVAILABLE_TTL_SEC
+                n += 1
+    return n
+
+
+def is_leg_unavailable(bet: dict) -> bool:
+    """True while this bet is known-unplaceable. Checked by the auto-backtest
+    worker's eligibility filter so dead legs never enter a new slip."""
+    key = _leg_key(bet.get("player") or bet.get("player_name"),
+                   bet.get("prop") or bet.get("prop_type"),
+                   bet.get("line") if bet.get("line") is not None else bet.get("pp_line"),
+                   bet.get("side"))
+    now = time.monotonic()
+    with _unavailable_lock:
+        exp = _unavailable_legs.get(key)
+        if exp is None:
+            return False
+        if exp <= now:
+            _unavailable_legs.pop(key, None)
+            return False
+        return True
 
 
 def _legs_availability(legs: list[dict]) -> list[bool]:

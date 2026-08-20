@@ -1090,6 +1090,27 @@ APP_SPACING_OPTICAL_OK = {
     # above it) — only the optical top offset is literal.
     ".cp-nav-c -> margin:2px calc(-1 * var(--s-4)) 0":
         "optical top nudge on the scrollable tab strip; its sides are derived",
+    # The auto-place arming UI arrived after this invariant existed, which is the
+    # first time the guard has met new code rather than legacy drift. 25 of its 28
+    # off-scale declarations were migrated onto the scale; these three are the
+    # residue, and all three are the same 2px optical nudge.
+    #
+    # The two `input` entries align a checkbox's box with the CAP HEIGHT of the
+    # first line of the consent label beside it — `align-items:flex-start` on the
+    # flex parent puts the two on a shared top edge, which reads a couple of pixels
+    # high because the label's line-height adds leading above its glyphs. --s-1
+    # (4px) would visibly drop the box below the text it belongs to. This is the
+    # same recipe and the same reason as `.pp-check`'s `margin-top:1px` on the
+    # marketing surface.
+    ".ap-bar-consent input -> margin-top:2px":
+        "checkbox optically seated against its consent label's first-line cap height",
+    ".ap-consent input -> margin-top:2px":
+        "checkbox optically seated against its consent label's first-line cap height",
+    # Half-leading between the arming bar's title and its sub-line inside one text
+    # block, on top of the sub-line's own 1.35 line-height — the same case as
+    # `.pp-b-d` and `.bt-slip-hd-l`.
+    ".ap-bar-s -> margin-top:2px":
+        "half-leading under the arming bar's title, inside one text block",
 }
 
 # ── Exemption group 2: constrained from outside the rhythm ────────────────────
@@ -1705,9 +1726,24 @@ def test_unelevated_card_surfaces_carry_no_shadow():
 def test_shadow_card_is_still_a_live_token():
     """Guards against the empty CARD_ELEVATION reading as "the token is dead".
 
-    It is not: `.cp-modal` and `.pp-card` use it. If those go too, `--shadow-card`
-    should be deleted from :root rather than left as a definition nothing reads —
-    and this test is where that gets noticed.
+    It is not: `.cp-modal`, `.ap-modal` and `.pp-card` use it. If those go too,
+    `--shadow-card` should be deleted from :root rather than left as a definition
+    nothing reads — and this test is where that gets noticed.
+
+    `.ap-modal` was added by the auto-place feature *after* the audit concluded
+    that no app surface should carry this token, and it is worth being explicit
+    that this is agreement rather than an exception being waved through. The audit's
+    finding was not "shadows are banned"; it was that `--shadow-card` measures
+    1.018:1 against `--bg` where the `--hair` border those surfaces already carry
+    measures 1.240:1, so on a full-bleed panel tiled against siblings the shadow
+    does nothing the border isn't already doing better. What the two existing
+    consumers have in common is the opposite shape: width-constrained, centred,
+    the only focal object on their surface, with ground visible on all four sides —
+    `.cp-modal` over a blurred scrim, `.pp-card` as the pricing hero.
+    `.ap-modal` is `width:min(420px,100%)` inside a `place-items:center` fixed
+    overlay over `rgba(0,0,0,.62)`, i.e. exactly `.cp-modal`'s shape. So the
+    prediction held: a new modal wanted the shadow, and the feature gave it one
+    without being told to.
     """
     css = style_block(INDEX)
     consumers = sorted(
@@ -1715,7 +1751,7 @@ def test_shadow_card_is_still_a_live_token():
         for selector, decls in rules(css)
         if selector.strip() != ":root" and "var(--shadow-card)" in squash(decls)
     )
-    assert consumers == [".cp-modal", ".pp-card"], (
+    assert consumers == [".ap-modal", ".cp-modal", ".pp-card"], (
         f"--shadow-card's consumers changed: {consumers}. Adding one to an app "
         "surface is an elevation decision — record it in CARD_ELEVATION. Removing "
         "both leaves a token nothing reads."

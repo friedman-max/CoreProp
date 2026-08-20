@@ -1089,6 +1089,104 @@ a{color:inherit;text-decoration:none}
 }
 .ev-pulse{color:var(--green);font-style:normal;font-weight:600}
 
+/* ───────── Auto-place bar ─────────
+ * Prominent, inline, top of the +EV tab and the Backtest page. Arms in two
+ * taps (consent, then mode) so it is usable one-handed on a phone — the whole
+ * reason it moved out of the avatar dropdown. */
+/* Flat tints, not gradients — tests/api_tests/test_css_guards.py bans accent
+ * gradients project-wide, and this bar is no exception. */
+.ap-bar{
+  background:rgba(30,111,176,.08);
+  border:1px solid rgba(30,111,176,.38);border-radius:var(--r-lg);
+  padding:var(--s-3) var(--s-4);margin:0 0 var(--s-4);
+}
+/* Armed is RED, not green: "on" means entries get submitted. */
+.ap-bar.is-armed{
+  background:rgba(239,68,68,.11);
+  border-color:rgba(239,68,68,.5);
+}
+.ap-bar-main{display:flex;align-items:center;gap:var(--s-3)}
+.ap-bar-dot{
+  width:9px;height:9px;border-radius:50%;flex-shrink:0;background:var(--primary);
+}
+.ap-bar.is-armed .ap-bar-dot{background:var(--red);box-shadow:0 0 0 4px rgba(239,68,68,.18)}
+.ap-bar-txt{flex:1 1 auto;min-width:0}
+.ap-bar-t{font-size:14px;font-weight:650;letter-spacing:-.01em;color:var(--text)}
+.ap-bar-s{font-size:12px;color:var(--text-2);margin-top:2px;line-height:1.35}
+.ap-bar-cfg{
+  flex-shrink:0;background:none;border:1px solid var(--hair);color:var(--text-2);
+  border-radius:var(--r-sm);width:34px;height:34px;font-size:14px;cursor:pointer;
+}
+.ap-bar-cfg:hover{border-color:var(--primary);color:var(--text)}
+.ap-bar-consent{
+  display:flex;gap:var(--s-2);align-items:flex-start;margin:var(--s-3) 0 0;
+  font-size:12.5px;line-height:1.4;color:var(--text-2);cursor:pointer;
+}
+.ap-bar-consent input{margin-top:2px;flex-shrink:0}
+.ap-bar-actions{display:flex;gap:var(--s-2);margin-top:var(--s-3)}
+.ap-bar-btn{
+  flex:1 1 0;min-height:40px;                 /* full-width touch targets */
+  border:1px solid var(--hair);background:rgba(255,255,255,.06);color:var(--text);
+  border-radius:var(--r-md);font-size:13.5px;font-weight:600;cursor:pointer;
+  transition:background .12s ease,border-color .12s ease;
+}
+.ap-bar-btn:hover:not(:disabled){background:rgba(255,255,255,.10);border-color:var(--primary)}
+.ap-bar-btn:disabled{opacity:.42;cursor:not-allowed}
+.ap-bar-live{border-color:rgba(239,68,68,.45);color:#FECACA}
+.ap-bar-live.is-confirm{background:var(--red);border-color:var(--red);color:#fff}
+.ap-bar-off{flex:0 0 auto;padding:0 var(--s-5)}
+.ap-bar-err{margin-top:var(--s-2);font-size:12.5px;color:var(--red-2)}
+
+/* ───────── Auto-place panel ─────────
+ * The arming UI for real-money auto-submission. Sized mobile-first: the whole
+ * point of this control is that it is reachable from the installed PWA, where
+ * the only other place it existed (the native iOS app) is not an option. */
+.ap-modal-back{
+  position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.62);
+  display:grid;place-items:center;padding:var(--s-4);
+}
+.ap-modal{
+  width:min(420px,100%);max-height:88vh;overflow-y:auto;
+  background:var(--card);border:1px solid var(--hair);border-radius:var(--r-xl);
+  padding:var(--s-5) var(--s-5) var(--s-4);box-shadow:var(--shadow-card);
+}
+.ap-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--s-3)}
+.ap-hd h3{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em}
+.ap-x{background:none;border:0;color:var(--text-3);font-size:16px;cursor:pointer;padding:var(--s-1) var(--s-2)}
+/* Armed state is red, not green: "on" here means money can leave. */
+.ap-state{
+  font-size:13.5px;font-weight:600;padding:var(--s-2) var(--s-3);border-radius:var(--r-md);
+  background:rgba(255,255,255,.04);border:1px solid var(--hair);color:var(--text-2);
+}
+.ap-state.is-on{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:#FECACA}
+.ap-sub{font-size:12px;color:var(--text-3);margin:var(--s-2) var(--s-1) 0}
+.ap-field{display:flex;align-items:center;justify-content:space-between;gap:var(--s-3);margin-top:var(--s-3)}
+.ap-field label{font-size:13px;color:var(--text-2)}
+.ap-field input{width:110px;text-align:right}
+.ap-consent{
+  display:flex;gap:var(--s-2);align-items:flex-start;margin:var(--s-4) 0 var(--s-1);
+  font-size:12.5px;line-height:1.45;color:var(--text-2);cursor:pointer;
+}
+.ap-consent input{margin-top:2px;flex-shrink:0}
+.ap-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s-2);margin-top:var(--s-4)}
+/* The three mode buttons inherit .cp-btn, which on this surface renders with
+ * no border or fill — they read as plain text rather than controls. Give them
+ * explicit chrome: these decide whether real money moves, so "looks tappable"
+ * is a safety property, not decoration. */
+.ap-actions .cp-btn{
+  border:1px solid var(--hair);background:rgba(255,255,255,.05);color:var(--text);
+  border-radius:var(--r-md);padding:var(--s-3) var(--s-1);font-size:13.5px;font-weight:600;
+  min-height:42px;               /* comfortable touch target on a phone */
+  cursor:pointer;transition:background .12s ease,border-color .12s ease;
+}
+.ap-actions .cp-btn:hover:not(:disabled){background:rgba(255,255,255,.09);border-color:var(--primary)}
+.ap-actions .cp-btn:disabled{opacity:.42;cursor:not-allowed}
+/* The confirm state for LIVE — deliberately alarming. */
+.ap-danger{background:var(--red)!important;border-color:var(--red)!important;color:#fff!important}
+.ap-note{font-size:11.5px;line-height:1.5;color:var(--text-3);margin:var(--s-3) 0 0}
+.ap-err{margin-top:var(--s-3);font-size:12.5px;color:var(--red-2)}
+.ap-ok{margin-top:var(--s-3);font-size:12.5px;color:var(--green-2)}
+
 /* Table */
 .ev-table{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);overflow:hidden}
 /* Airy row: one flex line with an identity/meta zone that grows and a fixed
@@ -2523,16 +2621,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=47ee4ef329"></script>
-<script src="/static/dist/tweaks-panel.js?v=47ee4ef329"></script>
-<script src="/static/dist/components.js?v=47ee4ef329"></script>
-<script src="/static/dist/landing.js?v=47ee4ef329"></script>
-<script src="/static/dist/ev-page.js?v=47ee4ef329"></script>
-<script src="/static/dist/page-boards.js?v=47ee4ef329"></script>
-<script src="/static/dist/page-backtest.js?v=47ee4ef329"></script>
-<script src="/static/dist/page-analytics.js?v=47ee4ef329"></script>
-<script src="/static/dist/pricing.js?v=47ee4ef329"></script>
-<script src="/static/dist/app-main.js?v=47ee4ef329"></script>
+<script src="/static/dist/api.js?v=52056c1e31"></script>
+<script src="/static/dist/tweaks-panel.js?v=52056c1e31"></script>
+<script src="/static/dist/components.js?v=52056c1e31"></script>
+<script src="/static/dist/landing.js?v=52056c1e31"></script>
+<script src="/static/dist/ev-page.js?v=52056c1e31"></script>
+<script src="/static/dist/page-boards.js?v=52056c1e31"></script>
+<script src="/static/dist/page-backtest.js?v=52056c1e31"></script>
+<script src="/static/dist/page-analytics.js?v=52056c1e31"></script>
+<script src="/static/dist/pricing.js?v=52056c1e31"></script>
+<script src="/static/dist/app-main.js?v=52056c1e31"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

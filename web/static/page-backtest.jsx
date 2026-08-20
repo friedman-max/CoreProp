@@ -360,6 +360,7 @@ function BacktestPage() {
        *   - ROI: positive ⇒ green, negative ⇒ red. Computed as
        *     (sum_payouts - n_resolved) / n_resolved using 1-unit stake per
        *     slip, matching the backend's pnl_timeline math. */}
+      <AutoPlaceBar />
       <div className="bt-summary">
         <StatCard loading={statsLoading} label="Slips (Done / Total)" sub="Recent 300" value={`${slipsDone} / ${slipsTotal}`} />
         <StatCard
@@ -586,6 +587,10 @@ function SlipCard({ slip, onDelete }) {
           legs,
           slip_type: slip.type || "Power",
           n_legs:    legs.length,
+          // Lets the server dissolve THIS slip if the extension reports a leg
+          // it could not stage, returning the survivors to the candidate pool
+          // for the next scrape to regroup.
+          slip_id:   slip.id,
           // Request unattended submission. The server HONORS this only for a
           // user who armed LIVE auto-place (with consent, within their daily
           // cap) and picks/clamps the stake itself — for everyone else it is

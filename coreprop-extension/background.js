@@ -10,11 +10,22 @@
  */
 
 // Every CoreProp backend the extension knows about. The site's "Place on
-// PrizePicks" button queues the slip on whichever the user has open —
-// localhost while developing, onrender in production — and the extension has
-// no way to know which, so it asks all of them.
+// PrizePicks" button queues the slip on whichever the user has open, and the
+// extension has no way to know which, so it asks all of them.
+//
+// ORDER MATTERS: this fan-out is sequential most-likely-first, so production
+// goes first and a developer pays the extra hop, not every real user.
+//
+// coreprop.onrender.com was REMOVED, not merely demoted: Render is suspended
+// and answers 503, so leaving it here bought a guaranteed failed request on
+// every single placement. Production is the self-hosted coreprop.me box.
+//
+// Both loopback ports are listed because they are different servers: 8000 is
+// `python main.py` (the dev entry point) and 8010 is what the launchd service
+// actually binds in production. Probing only 8000 silently misses the latter.
 const COREPROP_URLS = [
-  "https://coreprop.onrender.com",
+  "https://coreprop.me",
+  "http://127.0.0.1:8010",
   "http://localhost:8000",
   "http://127.0.0.1:8000",
 ];
