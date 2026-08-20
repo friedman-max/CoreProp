@@ -6,6 +6,23 @@
   let currentSession = null;
   const listeners = new Set();
 
+  // Resolves once getSession() has restored (or definitively failed to
+  // restore) the persisted session.
+  //
+  // getSession() is ASYNC — Supabase reads the persisted session a tick after
+  // load — so for a short window after page load `currentSession` is null even
+  // for a signed-in user. Any apiFetch in that window went out with NO
+  // Authorization header and came back 401/402, which is what made logging in
+  // look broken while a reload "fixed" it: the reload just re-raced and won.
+  //
+  // Never rejects, and is resolved from a .catch too: a hung auth restore must
+  // degrade to an unauthenticated request, not deadlock every fetch forever.
+  let resolveAuthReady;
+  const authReady = new Promise((res) => { resolveAuthReady = res; });
+  // Belt and braces: if the SDK never settles (offline at load, CDN blocked),
+  // release the gate anyway rather than hanging the whole app.
+  setTimeout(() => resolveAuthReady && resolveAuthReady(), 5000);
+
   function init() {
     if (sbClient) return sbClient;
     const cfg = window.__COREPROP_CONFIG;
@@ -16,8 +33,9 @@
     sbClient = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
     sbClient.auth.getSession().then(({ data: { session } }) => {
       currentSession = session;
+      resolveAuthReady();
       notify();
-    });
+    }).catch(() => resolveAuthReady());
     sbClient.auth.onAuthStateChange((_evt, session) => {
       const prevId = currentSession?.user?.id || null;
       const newId = session?.user?.id || null;
@@ -110,15 +128,51 @@
   }
 
   async function apiFetch(url, opts = {}) {
-    const headers = Object.assign({}, opts.headers || {});
-    if (currentSession?.access_token) {
-      headers["Authorization"] = `Bearer ${currentSession.access_token}`;
-    }
+    // Wait for the persisted session to be restored before reading the token.
+    // Without this, calls that fire in the first tick after load go out
+    // unauthenticated and 401/402 — the "logging in is broken, reloading fixes
+    // it" bug. Resolves immediately once settled, so this costs nothing after
+    // the first moment of page life.
+    await authReady;
+
+    // Serialise the body ONCE, outside the retry, so a retried request sends
+    // exactly the same bytes.
     if (opts.body && typeof opts.body !== "string" && !(opts.body instanceof FormData)) {
-      headers["Content-Type"] = headers["Content-Type"] || "application/json";
-      opts = Object.assign({}, opts, { body: JSON.stringify(opts.body) });
+      opts = Object.assign({}, opts, {
+        headers: Object.assign({ "Content-Type": "application/json" }, opts.headers || {}),
+        body: JSON.stringify(opts.body),
+      });
     }
-    const res = await fetch(url, Object.assign({}, opts, { headers }));
+
+    const send = () => {
+      const headers = Object.assign({}, opts.headers || {});
+      if (currentSession?.access_token) {
+        headers["Authorization"] = `Bearer ${currentSession.access_token}`;
+      }
+      return fetch(url, Object.assign({}, opts, { headers }));
+    };
+
+    let res = await send();
+
+    // A 401 on a request we believed was authenticated means the access token
+    // expired — which happens routinely when a phone or laptop suspends the
+    // tab for longer than the token's lifetime, so the SDK's refresh timer
+    // never fired. Refresh once and retry; that is precisely what the user was
+    // achieving by reloading, so do it for them.
+    //
+    // Guarded on having had a session: an unauthenticated caller getting a 401
+    // is the correct answer, not something to retry.
+    if (res.status === 401 && currentSession && sbClient) {
+      try {
+        const { data } = await sbClient.auth.refreshSession();
+        if (data && data.session) {
+          currentSession = data.session;
+          notify();
+          res = await send();          // one retry only — never a loop
+        }
+      } catch (e) { /* fall through to the original 401 */ }
+    }
+
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
       const err = new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
