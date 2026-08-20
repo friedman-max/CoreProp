@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.coreprop.watchdog</string>
+
+  <!-- Restarts the Cloudflare tunnel when it is stuck in a long reconnect
+       backoff. See tunnel-watchdog.sh for why this is needed. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <!-- Runs from Application Support, NOT the repo. macOS TCC refuses to let
+         a LaunchAgent execute anything under ~/Desktop ('Operation not
+         permitted'), and it fails silently every interval. Install with:
+           cp deploy/selfhost/tunnel-watchdog.sh ~/Library/Application\ Support/CoreProp/ -->
+    <string>/Users/seniortech/Library/Application Support/CoreProp/tunnel-watchdog.sh</string>
+  </array>
+
+  <!-- Every 30s. The script itself double-probes and enforces a cooldown, so
+       this interval controls detection latency, not restart frequency. -->
+  <key>StartInterval</key>
+  <integer>30</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/seniortech/Library/Logs/coreprop/watchdog.err.log</string>
+</dict>
+</plist>

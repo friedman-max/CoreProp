@@ -63,3 +63,43 @@ Production depends on a **personal laptop staying awake** — if it sleeps, the
 Cloudflare Tunnel drops and `coreprop.me` goes offline. Keep it awake
 (`caffeinate -dimsu`, or `sudo pmset -a sleep 0 && sudo pmset -a autorestart 1`),
 or move production to an always-on host (a paid Render instance, a small VPS).
+
+## Tunnel watchdog
+
+`cloudflared` retries a dropped edge connection with exponential backoff capped
+at ~64s. The laptop's WiFi drops briefly around **115 times a day**
+(`sendmsg: network is unreachable` in `~/Library/Logs/coreprop/tunnel.err.log`),
+and 90 of those escalated to the full cap — so a five-second blip becomes a
+**one-to-two minute outage for every user**. cloudflared is behaving correctly;
+that backoff is tuned for a server with a stable uplink, which a laptop is not.
+
+launchd's `KeepAlive` already restarts cloudflared if the process *dies*
+(measured: under a second). It does nothing when the process is alive but wedged
+in backoff — which is the failure that actually happens. The watchdog covers
+exactly that gap.
+
+```bash
+mkdir -p ~/Library/Application\ Support/CoreProp
+cp deploy/selfhost/tunnel-watchdog.sh ~/Library/Application\ Support/CoreProp/
+chmod +x ~/Library/Application\ Support/CoreProp/tunnel-watchdog.sh
+cp deploy/selfhost/com.coreprop.watchdog.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.coreprop.watchdog.plist
+```
+
+> **It must not run from the repo checkout.** This repo lives under `~/Desktop`,
+> and macOS TCC refuses to let a LaunchAgent execute anything there. It fails
+> with `Operation not permitted` **silently, every interval**, while `launchctl
+> list` cheerfully reports the job as loaded — so the watchdog looks installed
+> and does nothing. Run it from Application Support and re-copy after editing.
+
+It will not restart while the app itself is down (a different fault, and
+bouncing the tunnel would mask it), nor while the internet is unreachable
+(reconnecting is impossible), and it honours a 180s cooldown. Activity lands in
+`~/Library/Logs/coreprop/watchdog.log`.
+
+Verified by fault injection in both modes: `kill -9` (launchd recovers, <1s) and
+`kill -STOP` — process alive but not serving, the real one — recovered in 73s.
+
+**This does not replace external monitoring.** A watchdog on the host cannot
+report that the host is asleep, off, or offline. Point a free uptime service at
+`https://coreprop.me/health` for that.
