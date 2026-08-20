@@ -35,6 +35,15 @@ function AnalyticsPage() {
   const [data, setData] = useState(null);
   const [loadState, setLoadState] = useState("loading");
   const [errMsg, setErrMsg] = useState("");
+  // Point under the finger/cursor while the P&L chart is being scrubbed, or null
+  // when it isn't. It lives HERE rather than inside PnLChart because the
+  // header's big number tracks the drag (see headerNumber below). PnLChart keeps
+  // the smooth part of the gesture — the crosshair's x — local to itself and
+  // only calls onScrub when the active POINT changes, so this state (and the
+  // page re-render it causes) updates at most once per slip, not per frame.
+  const [scrub, setScrub] = useState(null);
+  // Stable identity so PnLChart's effect doesn't re-fire every render.
+  const onScrub = React.useCallback((p) => setScrub(p), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -278,16 +287,29 @@ function AnalyticsPage() {
     );
   }
 
-  // The header is static: it always shows the window's cumulative P&L total and
-  // the window's date range. It deliberately does NOT react to dragging the
-  // chart — no per-slip "…u this slip" popup, no "P&L at hover" title flip — so
-  // the label always reads "Cumulative P&L" and the number holds steady while a
-  // drag scrolls past it. The chart itself is a static, non-interactive display,
-  // matching the iOS Performance tab.
-  const headerNumber = totalPnL;
-  const headerLabel  = filtered.length
-    ? `${filtered[0].date.toLocaleDateString(undefined,{month:"short",day:"numeric"})} → ${filtered[filtered.length-1].date.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}`
-    : "";
+  // The header's big number TRACKS the chart drag, Robinhood-style: while a
+  // scrub is active it reads the cumulative P&L as of the scrubbed point (and
+  // the date of the slip in effect there); on release it snaps back to the
+  // window total and the window's date range. The label stays "Cumulative P&L"
+  // in both states — the number's meaning never changes, only the instant it's
+  // read at — and the +/- tone flips with the scrubbed sign.
+  //
+  // This REVERSES an earlier decision that the header must not react to
+  // dragging. That decision was correct for what the chart was then: a static
+  // display whose drag gesture belonged to the PAGE (touch-action:pan-y), so a
+  // reacting header would have twitched at a reader who was only trying to
+  // scroll. The chart now claims the gesture itself (.pnl-chart.is-scrub sets
+  // touch-action:none), so a drag over it is always a deliberate read, and
+  // following it is the entire point of the interaction. Note this is now the
+  // one place the web chart intentionally does MORE than the iOS Performance
+  // tab, whose Swift Charts view has no scrub — the old comment's "matching
+  // iOS" claim no longer holds and shouldn't be restored.
+  const headerNumber = scrub ? scrub.pnl : totalPnL;
+  const headerLabel  = scrub
+    ? scrub.date.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})
+    : (filtered.length
+        ? `${filtered[0].date.toLocaleDateString(undefined,{month:"short",day:"numeric"})} → ${filtered[filtered.length-1].date.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}`
+        : "");
 
   // By this point the loading/error/empty states have already returned early
   // above, so stat cards only render with real data — but keep an explicit
@@ -309,7 +331,7 @@ function AnalyticsPage() {
           </div>
         </div>
 
-        <PnLChart series={filtered} />
+        <PnLChart series={filtered} onScrub={onScrub} />
 
         <div className="pnl-range">
           {RANGES.map(r => (
@@ -361,9 +383,36 @@ function AnalyticsPage() {
   );
 }
 
-function PnLChart({ series }) {
+// Draggable ("scrubbable") equity curve, Robinhood-style: drag on touch, hover on
+// desktop, and the header's number follows (see AnalyticsPage's headerNumber).
+//
+// The three interaction properties that took care to get right:
+//
+//   * The drag never scrolls the page and never selects anything. Both are CSS,
+//     not JS: `.pnl-chart.is-scrub { touch-action: none }` makes this element
+//     claim the gesture outright, and the shared `.pnl-chart` already carries
+//     user-select/-webkit-touch-callout:none. Doing it in CSS beats
+//     preventDefault() on touchmove, which modern browsers treat as passive on
+//     these listeners and would ignore.
+//   * One code path for mouse, touch and pen: POINTER events, plus
+//     setPointerCapture so a fast drag that leaves the chart box keeps tracking
+//     instead of silently stopping. Mouse additionally scrubs on plain hover
+//     (there is no "press" to wait for on a desktop chart); touch and pen only
+//     while down, and lifting ends the read because a finger has no hover state.
+//   * It stays smooth. The crosshair's x is LOCAL state so a frame-rate gesture
+//     re-renders only this SVG, the geometry is memoized so pointermove doesn't
+//     rebuild the path string, and the parent is notified only when the active
+//     POINT changes (at most once per slip).
+function PnLChart({ series, onScrub }) {
   const ref = useRef(null);
+  const svgRef = useRef(null);
   const [size, setSize] = useState({ w: 800, h: 320 });
+  // Active point index, and the crosshair x in SVG user units. Both null = idle.
+  const [scrubIdx, setScrubIdx] = useState(null);
+  const [cursorX, setCursorX] = useState(null);
+  const draggingRef = useRef(false);
+  const lastIdxRef = useRef(null);
+
   useEffect(() => {
     if (!ref.current) return;
     const ro = new ResizeObserver(es => {
@@ -374,60 +423,172 @@ function PnLChart({ series }) {
     return () => ro.disconnect();
   }, []);
 
-  if (!series.length) return <div ref={ref} className="pnl-chart" />;
+  // Geometry. Memoized because every pointermove re-renders this component and
+  // rebuilding the step path + tick arrays per frame is wasted work. Runs before
+  // the empty-series early return below, so it must tolerate an empty series
+  // (hooks cannot run conditionally).
+  const geo = useMemo(() => {
+    if (!series.length) return null;
+    const { l: padL, r: padR, t: padT, b: padB } = AN_CHART_PAD;
+    const W = size.w, H = size.h;
+    // X is positioned by real timestamp, not by index, so gaps between slips
+    // map to real time on the x-axis.
+    const tMin = series[0].date.getTime();
+    const tMax = series[series.length - 1].date.getTime();
+    const tSpan = Math.max(1, tMax - tMin);
+    const plotW = W - padL - padR;
+    // Precomputed rather than a function of i: the hit-test walks this array on
+    // every pointermove.
+    const xsArr = series.map(p => padL + ((p.date.getTime() - tMin) / tSpan) * plotW);
+    const min = Math.min(...series.map(p => p.pnl), 0);
+    const max = Math.max(...series.map(p => p.pnl), 0);
+    const yRange = max - min || 1;
+    const ys = (v) => padT + (1 - (v - min) / yRange) * (H - padT - padB);
+    const zeroY = ys(0);
 
-  const { l: padL, r: padR, t: padT, b: padB } = AN_CHART_PAD;
-  const W = size.w, H = size.h;
-  // X is positioned by real timestamp, not by index, so gaps between slips
-  // map to real time on the x-axis.
-  const tMin = series[0].date.getTime();
-  const tMax = series[series.length - 1].date.getTime();
-  const tSpan = Math.max(1, tMax - tMin);
-  const xs = (i) => padL + ((series[i].date.getTime() - tMin) / tSpan) * (W - padL - padR);
-  const min = Math.min(...series.map(p => p.pnl), 0);
-  const max = Math.max(...series.map(p => p.pnl), 0);
-  const yRange = max - min || 1;
-  const ys = (v) => padT + (1 - (v - min) / yRange) * (H - padT - padB);
-  const zeroY = ys(0);
+    // STEP-AFTER path: bankroll stays constant between resolved slips, then
+    // jumps when the next one settles. Each segment = one slip's contribution.
+    //   start: (x0, ys(0))
+    //   for each point: horizontal hold to that x, then vertical jump to ys(pnl)
+    let pathD = `M${xsArr[0].toFixed(1)},${ys(0).toFixed(1)} `;
+    let prevY = ys(0);
+    for (let i = 0; i < series.length; i++) {
+      const xi = xsArr[i];
+      const yi = ys(series[i].pnl);
+      pathD += `L${xi.toFixed(1)},${prevY.toFixed(1)} L${xi.toFixed(1)},${yi.toFixed(1)} `;
+      prevY = yi;
+    }
+    const lastX = xsArr[series.length - 1];
+    const fillD = `${pathD} L${lastX.toFixed(1)},${zeroY} L${xsArr[0].toFixed(1)},${zeroY} Z`;
 
-  // STEP-AFTER path: bankroll stays constant between resolved slips, then
-  // jumps when the next one settles. Each segment = one slip's contribution.
-  //   start: (x0, ys(0))
-  //   for each point: horizontal hold to that x, then vertical jump to ys(pnl)
-  let pathD = `M${xs(0).toFixed(1)},${ys(0).toFixed(1)} `;
-  let prevY = ys(0);
-  for (let i = 0; i < series.length; i++) {
-    const xi = xs(i);
-    const yi = ys(series[i].pnl);
-    pathD += `L${xi.toFixed(1)},${prevY.toFixed(1)} L${xi.toFixed(1)},${yi.toFixed(1)} `;
-    prevY = yi;
-  }
-  const lastX = xs(series.length - 1);
-  const fillD = `${pathD} L${lastX.toFixed(1)},${zeroY} L${xs(0).toFixed(1)},${zeroY} Z`;
+    // Y-axis ticks
+    const yTicks = [];
+    const step = niceStep(yRange / 4);
+    for (let v = Math.ceil(min / step) * step; v <= max; v += step) yTicks.push(v);
+
+    // X-axis: 4-5 evenly-spaced date labels by time, not index. The count-1
+    // divisor is guarded: a single-point series would otherwise emit NaN into
+    // an x attribute and drop the label.
+    const xTickCount = Math.min(5, series.length);
+    const xTicks = [];
+    for (let i = 0; i < xTickCount; i++) {
+      const f = xTickCount === 1 ? 0 : i / (xTickCount - 1);
+      xTicks.push({
+        x: padL + f * plotW,
+        label: new Date(tMin + f * tSpan).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      });
+    }
+    return { padL, padR, padT, padB, W, H, xsArr, ys, zeroY, pathD, fillD, yTicks, xTicks };
+  }, [series, size.w, size.h]);
+
+  // Drop any in-flight scrub when the window changes under us (range button,
+  // custom dates, a reload): the old index pointed into a series that no longer
+  // exists, and the crosshair would sit at a stale x.
+  useEffect(() => {
+    draggingRef.current = false;
+    lastIdxRef.current = null;
+    setScrubIdx(null);
+    setCursorX(null);
+    if (onScrub) onScrub(null);
+  }, [series, onScrub]);
+
+  // clientX -> SVG user units. The <svg> is width:100% over a fixed viewBox and
+  // W has a 600 floor, so on any narrow viewport the on-screen box and the
+  // user-space box differ by a scale factor — converting is not optional.
+  const toUserX = (clientX) => {
+    const el = svgRef.current;
+    if (!el || !geo) return null;
+    const r = el.getBoundingClientRect();
+    if (!r.width) return null;
+    return (clientX - r.left) * (geo.W / r.width);
+  };
+
+  // The value in effect at x on a step-after curve is the LAST point at or
+  // before x — deliberately not the nearest point, because between two slips the
+  // curve genuinely holds the earlier total, and "nearest" would report a total
+  // that hadn't happened yet when the cursor is just left of a jump.
+  const indexAtUserX = (ux) => {
+    const xs = geo.xsArr;
+    let found = 0;
+    for (let i = 0; i < xs.length; i++) {
+      if (xs[i] <= ux) found = i;
+      else break;
+    }
+    return found;
+  };
+
+  const applyScrub = (clientX) => {
+    if (!geo) return;
+    const ux = toUserX(clientX);
+    if (ux == null) return;
+    // Clamp into the plot area so the crosshair can't wander over the axis
+    // gutters while the pointer is captured outside the chart.
+    const x = Math.max(geo.padL, Math.min(geo.W - geo.padR, ux));
+    const i = indexAtUserX(x);
+    setCursorX(x);
+    setScrubIdx(i);
+    if (i !== lastIdxRef.current) {
+      lastIdxRef.current = i;
+      if (onScrub) onScrub(series[i]);
+    }
+  };
+
+  const endScrub = () => {
+    draggingRef.current = false;
+    lastIdxRef.current = null;
+    setScrubIdx(null);
+    setCursorX(null);
+    if (onScrub) onScrub(null);
+  };
+
+  const onPointerDown = (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;   // right/middle click
+    draggingRef.current = true;
+    // Keep receiving moves after the pointer leaves the chart box; without this a
+    // fast drag off the top or side edge stops updating mid-gesture.
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* not fatal */ }
+    applyScrub(e.clientX);
+  };
+  const onPointerMove = (e) => {
+    if (e.pointerType === "mouse" || draggingRef.current) applyScrub(e.clientX);
+  };
+  const onPointerUp = (e) => {
+    draggingRef.current = false;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
+    // A finger has no hover state, so lifting ends the read. A mouse keeps
+    // scrubbing — the cursor is still over the chart — and pointerleave ends it.
+    if (e.pointerType !== "mouse") endScrub();
+  };
+  const onPointerLeave = () => { if (!draggingRef.current) endScrub(); };
+
+  // Keyboard parity with the pointer read, so the values aren't hover-only.
+  const onKeyDown = (e) => {
+    if (!geo) return;
+    const n = series.length;
+    let i = scrubIdx == null ? n - 1 : scrubIdx;
+    if (e.key === "ArrowLeft") i = Math.max(0, i - 1);
+    else if (e.key === "ArrowRight") i = Math.min(n - 1, i + 1);
+    else if (e.key === "Home") i = 0;
+    else if (e.key === "End") i = n - 1;
+    else if (e.key === "Escape") { endScrub(); return; }
+    else return;
+    e.preventDefault();   // arrows would otherwise scroll the page
+    setScrubIdx(i);
+    setCursorX(geo.xsArr[i]);
+    if (i !== lastIdxRef.current) {
+      lastIdxRef.current = i;
+      if (onScrub) onScrub(series[i]);
+    }
+  };
+
+  if (!series.length || !geo) return <div ref={ref} className="pnl-chart" />;
+
+  const { padL, padR, padT, padB, W, H, ys, zeroY, pathD, fillD, yTicks, xTicks } = geo;
+  // Keeps the JSX below reading as it did when x was computed from the index.
+  const xs = (i) => geo.xsArr[i];
 
   const isUp = series[series.length - 1].pnl >= 0;
   const lineColor = isUp ? "#22C55E" : "#EF4444";
-
-  // Y-axis ticks
-  const yTicks = [];
-  const step = niceStep(yRange / 4);
-  for (let v = Math.ceil(min / step) * step; v <= max; v += step) yTicks.push(v);
-
-  // X-axis: 4-5 evenly-spaced date labels by time, not index.
-  const xTickCount = Math.min(5, series.length);
-  const xTicks = [];
-  for (let i = 0; i < xTickCount; i++) {
-    const t = tMin + (i / (xTickCount - 1)) * tSpan;
-    const x = padL + (i / (xTickCount - 1)) * (W - padL - padR);
-    xTicks.push({ x, label: new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) });
-  }
-
-  // This chart is a static, non-interactive display: no hover/scrub, no
-  // crosshair, no touch handlers. Dragging over it scrolls the page like any
-  // other content (`.pnl-chart { touch-action: pan-y }`), which is what keeps a
-  // horizontal drag from "slipping" into an accidental page scroll, stops the
-  // SVG from being selected/highlighted on a touch-drag, and keeps the header
-  // reading a steady "Cumulative P&L". Matches the iOS Performance chart.
 
   // Per-slip dot color: green if this slip won, red if it lost, yellow if push.
   // Endpoint markers (window start / "now") are neutral so they read as axis
@@ -439,8 +600,21 @@ function PnLChart({ series }) {
   };
 
   return (
-    <div ref={ref} className="pnl-chart">
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}>
+    <div
+      ref={ref}
+      className="pnl-chart is-scrub"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={endScrub}
+      onPointerLeave={onPointerLeave}
+      onKeyDown={onKeyDown}
+      onBlur={endScrub}
+      tabIndex={0}
+      role="img"
+      aria-label={`Cumulative profit and loss, ${series.length} points. Drag across the chart, or use the left and right arrow keys, to read the total at any date.`}
+    >
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H}>
         <defs>
           <linearGradient id="pnl-fill" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor={lineColor} stopOpacity="0.24" />
@@ -481,6 +655,23 @@ function PnLChart({ series }) {
             />
           )
         ))}
+
+        {/* Scrub layer: crosshair + the marker riding the curve. Drawn last of
+            the data marks so the marker is never hidden behind a per-slip dot.
+            pointerEvents="none" keeps it out of hit-testing — it must never
+            become the event target mid-drag. (Scoped to this <g>: the same
+            property on .pnl-chart would be inherited by ReliabilityChart's
+            <circle> marks and kill their native <title> tooltips.)
+            cy is ys(active pnl), which for a step-after curve IS the curve's y at
+            the cursor, so the marker sits exactly on the line at every x. */}
+        {cursorX != null && scrubIdx != null && (
+          <g pointerEvents="none">
+            <line x1={cursorX} x2={cursorX} y1={padT} y2={H - padB}
+                  stroke="rgba(255,255,255,.45)" strokeWidth="1" />
+            <circle cx={cursorX} cy={ys(series[scrubIdx].pnl)} r="5.5"
+                    fill={lineColor} stroke="#0a0a0d" strokeWidth="2" />
+          </g>
+        )}
 
         {/* X tick labels */}
         {xTicks.map((t, i) => (

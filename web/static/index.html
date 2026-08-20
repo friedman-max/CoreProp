@@ -1917,15 +1917,30 @@ a{color:inherit;text-decoration:none}
 .pnl-total{font-size:34px;font-weight:800;letter-spacing:-.02em;font-family:"JetBrains Mono",monospace;line-height:1.1;margin-top:var(--s-1)}
 .pnl-hover{color:var(--text-3);font-size:13px;font-family:"JetBrains Mono",monospace}
 
-/* The P&L and reliability charts are static displays. touch-action:pan-y lets a
-   vertical drag scroll the page normally while a horizontal drag does nothing
-   (so it can't "slip" into an accidental scroll); user-select:none stops the SVG
-   from being selected/highlighted when you drag a finger across it on mobile.
+/* Both charts share .pnl-chart and differ in exactly one way that matters here:
+   the P&L chart is draggable (scrubbable) and the reliability chart is not.
+
+   Shared: user-select:none (+ -webkit-) and -webkit-touch-callout:none stop the
+   SVG from being highlighted, and stop iOS raising the text/image callout, when
+   a finger drags across it. That is what satisfies "can't be selected by
+   dragging over it" — for both charts, and without any JS.
    NB: do NOT add pointer-events:none here — it is inherited by the child
    <circle> marks and would kill the ReliabilityChart's native <title> hover
-   tooltips (both charts share the .pnl-chart class). user-select handles the
-   selection concern on its own; pointer-events is unnecessary. */
+   tooltips. (The P&L crosshair sets it on its own <g> instead.)
+
+   .is-scrub (the P&L chart only) swaps pan-y for touch-action:none, and that one
+   declaration is what makes a drag a SCRUB instead of a page scroll: the element
+   claims the gesture outright, so a drag can't slip into scrolling the page
+   mid-read, and iOS won't double-tap-zoom or rubber-band it either. Doing it in
+   CSS beats preventDefault() on touchmove, which browsers treat as passive on
+   these listeners and ignore. It is scoped to .is-scrub deliberately — on the
+   shared class it would also trap the page scroll over the reliability chart,
+   which has nothing to scrub and would just feel broken.
+   The reliability chart keeps pan-y: vertical drags scroll the page as normal. */
 .pnl-chart{margin:0 calc(-1 * var(--s-1));touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.pnl-chart.is-scrub{touch-action:none;cursor:crosshair}
+/* Focusable for keyboard scrubbing; keep the ring on the container, not the SVG. */
+.pnl-chart.is-scrub:focus-visible{outline:2px solid var(--primary-2);outline-offset:2px}
 .pnl-chart svg{display:block;width:100%;-webkit-user-select:none;user-select:none}
 
 /* #0a0a12 and #1f1f2e below stay LITERAL: no :root token matches either value,
@@ -2621,16 +2636,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=52056c1e31"></script>
-<script src="/static/dist/tweaks-panel.js?v=52056c1e31"></script>
-<script src="/static/dist/components.js?v=52056c1e31"></script>
-<script src="/static/dist/landing.js?v=52056c1e31"></script>
-<script src="/static/dist/ev-page.js?v=52056c1e31"></script>
-<script src="/static/dist/page-boards.js?v=52056c1e31"></script>
-<script src="/static/dist/page-backtest.js?v=52056c1e31"></script>
-<script src="/static/dist/page-analytics.js?v=52056c1e31"></script>
-<script src="/static/dist/pricing.js?v=52056c1e31"></script>
-<script src="/static/dist/app-main.js?v=52056c1e31"></script>
+<script src="/static/dist/api.js?v=ee120b4fd4"></script>
+<script src="/static/dist/tweaks-panel.js?v=ee120b4fd4"></script>
+<script src="/static/dist/components.js?v=ee120b4fd4"></script>
+<script src="/static/dist/landing.js?v=ee120b4fd4"></script>
+<script src="/static/dist/ev-page.js?v=ee120b4fd4"></script>
+<script src="/static/dist/page-boards.js?v=ee120b4fd4"></script>
+<script src="/static/dist/page-backtest.js?v=ee120b4fd4"></script>
+<script src="/static/dist/page-analytics.js?v=ee120b4fd4"></script>
+<script src="/static/dist/pricing.js?v=ee120b4fd4"></script>
+<script src="/static/dist/app-main.js?v=ee120b4fd4"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same
