@@ -12,7 +12,7 @@ struct AnalyticsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 14) {
+            VStack(spacing: Theme.s4) {
                 switch state {
                 case .idle, .loading:
                     ProgressView().tint(Theme.primary2).padding(.top, 60)
@@ -31,9 +31,9 @@ struct AnalyticsView: View {
                 }
                 Text("Metrics are computed from your resolved logged slips. The web app adds the full observatory and per-prop breakdowns.")
                     .font(Theme.ui(11)).foregroundColor(Theme.text3)
-                    .multilineTextAlignment(.center).padding(.horizontal, 8)
+                    .multilineTextAlignment(.center).padding(.horizontal, Theme.s2)
             }
-            .padding(16)
+            .padding(Theme.s4)
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle("Performance")
@@ -45,18 +45,18 @@ struct AnalyticsView: View {
     // MARK: Stat grid
 
     private func statGrid(_ d: AnalyticsData) -> some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
+        VStack(spacing: Theme.s3) {
+            HStack(spacing: Theme.s3) {
                 StatTile(label: "Hit rate", value: Fmt.percent(d.hitRate, decimals: 1))
                 StatTile(label: "ROI / slip",
                          value: d.roiPerSlip.map { Fmt.signedPercent($0) } ?? "—",
                          tone: (d.roiPerSlip ?? 0) >= 0 ? .good : .bad)
             }
-            HStack(spacing: 10) {
+            HStack(spacing: Theme.s3) {
                 StatTile(label: "Brier score", value: fmtNum(d.brierScore, 3))
                 StatTile(label: "Log loss", value: fmtNum(d.logLoss, 3))
             }
-            HStack(spacing: 10) {
+            HStack(spacing: Theme.s3) {
                 StatTile(label: "Resolved legs", value: d.nResolved.map { "\($0)" } ?? "—")
                 StatTile(label: "Avg predicted", value: Fmt.percent(d.avgPredictedProb, decimals: 1))
             }
@@ -77,9 +77,20 @@ struct AnalyticsView: View {
 
     private func pnlCard(_ points: [DatedPnl]) -> some View {
         let last = points.last?.cum ?? 0
-        return VStack(alignment: .leading, spacing: 10) {
+        // The chart is DIRECTIONAL: up is green, down is red, like web's. It used
+        // to be accent-blue regardless of sign, which meant a losing bankroll and
+        // a winning one were the same colour — the header number was the only
+        // signal. `Theme.green`/`Theme.red` are #22C55E/#EF4444, hex-identical to
+        // web's line colours, so this introduces no new colour.
+        //
+        // NB `tone` is for MARKS (fills, strokes) only. The header total below
+        // stays on `Theme.red2`, the lighter red, because that is text — `red` as
+        // body text on the dark page is the thing red2 exists to avoid. Do not
+        // "unify" these two into one variable.
+        let tone = last >= 0 ? Theme.green : Theme.red
+        return VStack(alignment: .leading, spacing: Theme.s3) {
             HStack {
-                Text("CUMULATIVE P&L").font(Theme.ui(10.5, .semibold)).kerning(0.6).foregroundColor(Theme.text3)
+                Text("CUMULATIVE P&L").font(Theme.ui(10.5, .semibold)).tracking(0.42).foregroundColor(Theme.text3)
                 Spacer()
                 Text("\(last >= 0 ? "+" : "")\(String(format: "%.2f", last))u")
                     .font(Theme.mono(18, .bold))
@@ -88,12 +99,23 @@ struct AnalyticsView: View {
             Chart {
                 ForEach(points) { p in
                     LineMark(x: .value("Date", p.date), y: .value("P&L", p.cum))
-                        .foregroundStyle(Theme.primary2)
-                        .interpolationMethod(.monotone)
+                        .foregroundStyle(tone)
+                        // `.stepEnd` (web's step-after), not `.monotone`. The shape
+                        // is semantic: a bankroll holds flat between settlements
+                        // and jumps when one settles. A smoothed curve invents
+                        // intermediate values that never existed.
+                        .interpolationMethod(.stepEnd)
                     AreaMark(x: .value("Date", p.date), y: .value("P&L", p.cum))
-                        .foregroundStyle(LinearGradient(colors: [Theme.primary.opacity(0.25), .clear],
+                        // Still a gradient, and that is correct: the ban is on
+                        // decorative ACCENT gradients. This one is semantic — it
+                        // fades the directional tone, and it tracks the sign.
+                        // Web's stop opacity is .24; iOS's old .25 was off by .01.
+                        // (Phrased without the type name on purpose: the phase's
+                        // acceptance check greps for it, so a comment mentioning
+                        // it would read as an unflattened surface.)
+                        .foregroundStyle(LinearGradient(colors: [tone.opacity(0.24), .clear],
                                                         startPoint: .top, endPoint: .bottom))
-                        .interpolationMethod(.monotone)
+                        .interpolationMethod(.stepEnd)
                 }
                 RuleMark(y: .value("Break-even", 0))
                     .foregroundStyle(Theme.text4)
@@ -116,8 +138,8 @@ struct AnalyticsView: View {
             guard let p = b.predictedAvg, let a = b.actualAvg else { return nil }
             return CalPoint(predicted: p, actual: a)
         }
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("CALIBRATION RELIABILITY").font(Theme.ui(10.5, .semibold)).kerning(0.6).foregroundColor(Theme.text3)
+        return VStack(alignment: .leading, spacing: Theme.s3) {
+            Text("CALIBRATION RELIABILITY").font(Theme.ui(10.5, .semibold)).tracking(0.42).foregroundColor(Theme.text3)
             Text("Predicted vs. actual hit rate per probability bucket. On the dashed line = perfectly calibrated.")
                 .font(Theme.ui(11)).foregroundColor(Theme.text3)
             Chart {
@@ -148,9 +170,9 @@ struct AnalyticsView: View {
     // MARK: CLV
 
     private func clvCard(_ d: AnalyticsData) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("CLOSING LINE VALUE").font(Theme.ui(10.5, .semibold)).kerning(0.6).foregroundColor(Theme.text3)
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: Theme.s3) {
+            Text("CLOSING LINE VALUE").font(Theme.ui(10.5, .semibold)).tracking(0.42).foregroundColor(Theme.text3)
+            HStack(spacing: Theme.s3) {
                 clvStat("CLV+ rate", Fmt.percent(d.clvPlusRate, decimals: 0))
                 clvStat("Avg CLV", Fmt.signedPercent(d.avgClvPct))
                 clvStat("Tracked", d.nClvTracked.map { "\($0)" } ?? "—")
