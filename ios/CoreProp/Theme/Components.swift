@@ -114,7 +114,9 @@ struct LeaguePill: View {
         let color = Theme.leagueColor(league)
         Text(league.uppercased())
             .font(Theme.ui(11, .semibold))
-            .kerning(0.4)
+            // `.tracking()`, not `.kerning()`: tracking is letter-spacing,
+            // kerning adjusts specific glyph pairs. .04em at 11pt is 0.44.
+            .tracking(0.44)
             .foregroundColor(color)
             .padding(.vertical, 3)
             .padding(.horizontal, 8)

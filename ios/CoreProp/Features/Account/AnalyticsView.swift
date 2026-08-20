@@ -188,7 +188,8 @@ struct AnalyticsView: View {
 
     private func clvStat(_ label: String, _ value: String) -> some View {
         VStack(spacing: 4) {
-            Text(label).font(Theme.ui(9, .semibold)).kerning(0.4).foregroundColor(Theme.text3)
+            // .04em at 9pt is 0.36; `.tracking()` for the same reason as above.
+            Text(label).font(Theme.ui(9, .semibold)).tracking(0.36).foregroundColor(Theme.text3)
             Text(value).font(Theme.mono(16, .bold)).foregroundColor(Theme.text)
         }
         .frame(maxWidth: .infinity)
