@@ -487,13 +487,20 @@ def test_backtest_pending_is_blue_on_every_surface():
 #                      card clears the fold at 1280x800 (see the note above
 #                      .lp-hero in index.html). Its values are the result of that
 #                      measurement, not drift.
-#   lp-vig-svg / lp-books-bar : SVG and animation geometry, not layout spacing.
+#
+# The plan for this phase also listed `lp-vig-svg` and `lp-books-bar` here, for
+# "SVG and animation geometry, not layout spacing". Both were dropped after
+# checking what they actually reach: this invariant only inspects padding /
+# margin / gap, so a height, a border-radius or a transform is already outside
+# it — `.lp-vig-svg` declares only `display`, and `.lp-books-bartrack` /
+# `-barfill` / `-barlbl` / `-barpct` declare no spacing at all. The one thing the
+# `lp-books-bar` prefix did reach was `.lp-books-bars`' gap/margin and
+# `.lp-books-barrow`'s gap, which are ordinary layout spacing on the scale — the
+# opposite of what the exemption said it was for.
 MARKETING_SPACING_EXEMPT = (
     "lp-game",          # covers `.lp-game` and every `.lp-game-*`
     "lp-sk",
     "lp-hero",
-    "lp-vig-svg",
-    "lp-books-bar",
 )
 
 # Rules whose spacing is deliberately literal because the 4px scale cannot
