@@ -929,7 +929,7 @@ a{color:inherit;text-decoration:none}
  * tile. Both read --s-4 so they cannot drift; changing one alone reopens a gap
  * (or an overlap) between the tile and the drawer. */
 .ev-filters{display:flex;align-items:flex-end;gap:var(--s-5);flex-wrap:wrap;padding:var(--s-5);background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);margin-bottom:var(--s-4)}
-.ev-filter{display:flex;flex-direction:column;gap:7px;min-width:0}
+.ev-filter{display:flex;flex-direction:column;gap:var(--s-2);min-width:0}
 .ev-filter-grow{flex:1;min-width:200px}
 .ev-filter label{font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--text-3)}
 .ev-chips{display:flex;gap:var(--s-1);flex-wrap:wrap}
@@ -945,13 +945,13 @@ a{color:inherit;text-decoration:none}
  * 375px — less consistent than the 8/10/8/8 it replaced. Matching .ev-stepper
  * keeps the bar one family. Pilling the other three instead would drag
  * .cp-input-sm's shape across the whole app. */
-.ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);height:34px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-sm);font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
+.ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);height:34px;padding:0 var(--s-3);display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-sm);font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
 .ev-chip:hover{border-color:var(--hair-2);color:var(--text)}
 .ev-chip.is-on{background:var(--primary);border-color:var(--primary);color:white}
 .ev-stepper{display:flex;align-items:center;background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-sm);overflow:hidden}
 .ev-stepper button{background:transparent;border:0;color:var(--text-2);width:30px;height:32px;cursor:default;font-size:14px;font-weight:600}
 .ev-stepper button:hover{background:rgba(255,255,255,.05);color:white}
-.ev-stepper span{padding:0 12px;font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text)}
+.ev-stepper span{padding:0 var(--s-3);font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text)}
 /* The one 9px vertical padding on this page that does NOT go to --s-3. This
  * button sits in an `align-items:flex-end` filter row whose other controls
  * (.ev-chip, .cp-input-sm, .ev-stepper) are all exactly 34px, and the height
@@ -966,7 +966,7 @@ a{color:inherit;text-decoration:none}
 /* Slip Builder toggle — desktop hides it (the sidebar aside is always visible
  * there). On mobile (block at the end of the sheet) it becomes a full-width
  * grey bar at the bottom of the config tile. */
-.ev-slip-toggle{display:none;justify-content:center;align-items:center;gap:8px;background:#1b1b26;border:1px solid var(--hair-2);color:var(--text);font-size:13px;font-weight:600;cursor:pointer}
+.ev-slip-toggle{display:none;justify-content:center;align-items:center;gap:var(--s-2);background:#1b1b26;border:1px solid var(--hair-2);color:var(--text);font-size:13px;font-weight:600;cursor:pointer}
 .ev-slip-toggle:hover{background:#20202c}
 .ev-slip-toggle.is-on{background:#20202c;color:var(--primary-2)}
 .ev-slip-toggle-caret{font-size:10px;transition:transform .15s ease}
@@ -979,7 +979,7 @@ a{color:inherit;text-decoration:none}
 
 /* flex-wrap so the added legend can drop to its own line on a phone instead of
  * squeezing the freshness text; row-gap keeps the two lines from touching. */
-.ev-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;row-gap:6px;padding:0 6px 14px;color:var(--text-3);font-size:13px}
+.ev-meta{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-2);row-gap:var(--s-2);padding:0 var(--s-2) var(--s-4);color:var(--text-3);font-size:13px}
 .ev-meta b{color:var(--text)}
 .ev-meta-dot{color:var(--text-4)}
 .ev-meta-pag{margin-left:auto;font-family:"JetBrains Mono",monospace;color:var(--text-3)}
@@ -989,7 +989,7 @@ a{color:inherit;text-decoration:none}
  * ever changes again, this changes with it or the key stops matching the thing
  * it explains. border-radius:3px is intentional and exempt from the radius
  * scale (see RADIUS_EXEMPT) — a 12px-tall chip on --r-sm reads as a pill. */
-.ev-legend{display:inline-flex;align-items:center;gap:7px;color:var(--red-2);cursor:help}
+.ev-legend{display:inline-flex;align-items:center;gap:var(--s-2);color:var(--red-2);cursor:help}
 .ev-legend-swatch{
   width:24px;height:12px;border-radius:3px;flex-shrink:0;
   border-left:3px solid var(--red);
@@ -1016,15 +1016,15 @@ a{color:inherit;text-decoration:none}
   cursor:default;
   transition:background .12s ease;
 }
-.ev-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.ev-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--s-2)}
 .ev-row-side{display:flex;align-items:center;gap:var(--s-3);flex-shrink:0}
-.ev-row-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12.5px;color:var(--text-3)}
+.ev-row-meta{display:flex;align-items:center;flex-wrap:wrap;gap:var(--s-2);font-size:12.5px;color:var(--text-3)}
 /* Wrap units inside the meta line. Each keeps a pair that reads as one thing
  * from being split across a wrap: the bet itself (SIDE + line) and the game
  * time with its leading separator. Without these, 375px split UNDER from 1.5 in
  * every row measured and orphaned the separator in two thirds of them. */
-.ev-bet{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.ev-when{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.ev-bet{display:inline-flex;align-items:center;gap:var(--s-2);white-space:nowrap}
+.ev-when{display:inline-flex;align-items:center;gap:var(--s-2);white-space:nowrap}
 /* Each line inside the identity zone must be allowed to shrink below its own
  * content width, or a long value (e.g. a full player name, or the
  * "Hits+Runs+RBIs" prop) pushes .ev-row-main wider than the row and squeezes the
@@ -1109,7 +1109,7 @@ a{color:inherit;text-decoration:none}
  * ("Alexander-Arnold") inside the line — wrapping alone only breaks at spaces,
  * and this rule also sets overflow:visible. title={b.player} stays in the JSX
  * regardless; it is harmless and still useful to screen readers. */
-.ev-player{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.ev-player{display:flex;align-items:flex-start;gap:var(--s-2);min-width:0}
 .ev-player-n{font-weight:600;letter-spacing:-.005em;line-height:1.3;overflow-wrap:anywhere}
 /* There is deliberately no per-row LOGGED badge. It lived inside .ev-player as a
  * flex-shrink:0 chip, and back when the row was a 9-track grid with a 620px
@@ -1125,7 +1125,7 @@ a{color:inherit;text-decoration:none}
  * match the `.10em` spelling, so this and .bt-slip-compact .bt-slip-badge were
  * the two sites it missed. Leaving a dead rule on the pre-pass value is how the
  * next person rediscovers the same too-narrow grep. */
-.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.04em;background:rgba(96,165,250,.14);color:var(--blue-2);padding:2px 6px;border-radius:var(--r-sm);margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
+.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.04em;background:rgba(96,165,250,.14);color:var(--blue-2);padding:var(--s-1) var(--s-2);border-radius:var(--r-sm);margin-left:var(--s-2);border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
 
 /* Logged-bet row: bet is already in this user's backtest, so it will not
  * be selected for future auto-built slips. Painted red end-to-end so the
@@ -1199,7 +1199,7 @@ a{color:inherit;text-decoration:none}
  * existed only to align the odds numbers down a stacked column, and in a
  * wrapping row it pads every short price out to 44px and gaps the chips
  * raggedly. Do not restore it. */
-.ev-books{display:flex;flex-direction:row;flex-wrap:wrap;gap:6px;align-items:center}
+.ev-books{display:flex;flex-direction:row;flex-wrap:wrap;gap:var(--s-2);align-items:center}
 .ev-books .cp-odd{margin-right:0}
 /* 11px mono, scoped: .cp-book's 9.5px base is shared with the slip builder. */
 .ev-row .cp-book{font-size:11px;font-family:"JetBrains Mono",ui-monospace,monospace}
@@ -1232,7 +1232,7 @@ a{color:inherit;text-decoration:none}
 .ev-slip{position:sticky;top:var(--nav-h);height:calc(100vh - var(--nav-h));background:var(--bg-2);border-left:1px solid var(--hair);padding:var(--s-5);display:flex;flex-direction:column;gap:var(--s-4);overflow-y:auto}
 .ev-slip-hd{display:flex;justify-content:space-between;align-items:center}
 .ev-slip-hd h3{margin:0;font-size:15px;font-weight:700}
-.ev-auto{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3);cursor:pointer;user-select:none}
+.ev-auto{display:flex;align-items:center;gap:var(--s-2);font-size:11.5px;color:var(--text-3);cursor:pointer;user-select:none}
 /* Custom themed checkbox: hide the native box, drive a styled .ev-check off its
  * :checked state. Matches the accent (--primary) with a drawn checkmark; the
  * green-devils variant (.ev-auto-gd) is the same two-token shape in green —
@@ -1260,19 +1260,19 @@ a{color:inherit;text-decoration:none}
  * 4px blue one reads as a rendering bug, and the width was never the semantic
  * part. Changing --ring's width means changing this literal by hand. */
 .ev-auto-gd input:focus-visible ~ .ev-check{box-shadow:0 0 0 4px rgba(34,197,94,.25)}
-.ev-slip-row{display:grid;grid-template-columns:1fr .6fr;gap:8px}
-.ev-slip-field{display:flex;flex-direction:column;gap:5px}
+.ev-slip-row{display:grid;grid-template-columns:1fr .6fr;gap:var(--s-2)}
+.ev-slip-field{display:flex;flex-direction:column;gap:var(--s-1)}
 .ev-slip-field label{font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--text-3)}
-.ev-slip-field select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 5l3 3 3-3' stroke='%237a7a8b' stroke-width='1.5' fill='none'/></svg>");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px}
+.ev-slip-field select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 5l3 3 3-3' stroke='%237a7a8b' stroke-width='1.5' fill='none'/></svg>");background-repeat:no-repeat;background-position:right 10px center;padding-right:var(--s-8)}
 
-.ev-slip-be{display:flex;flex-direction:column;gap:5px}
+.ev-slip-be{display:flex;flex-direction:column;gap:var(--s-1)}
 .ev-slip-be>div:first-child{display:flex;justify-content:space-between;align-items:baseline}
 .ev-slip-be label{font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--text-3)}
 .ev-be-lbl{font-size:11px;color:var(--primary-2);font-family:"JetBrains Mono",monospace}
-.ev-slip-be-row{display:flex;gap:6px}
+.ev-slip-be-row{display:flex;gap:var(--s-2)}
 
-.ev-slip-legs{flex:1;min-height:140px;display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid var(--hair)}
-.ev-slip-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-3);font-size:12.5px;gap:14px;padding:30px 0}
+.ev-slip-legs{flex:1;min-height:140px;display:flex;flex-direction:column;gap:var(--s-2);padding-top:var(--s-2);border-top:1px solid var(--hair)}
+.ev-slip-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-3);font-size:12.5px;gap:var(--s-4);padding:var(--s-8) 0}
 .ev-empty-stack{position:relative;width:80px;height:60px}
 .ev-empty-slip{position:absolute;width:60px;height:36px;background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-sm)}
 .ev-empty-slip:nth-child(1){top:0;left:0;transform:rotate(-6deg)}
@@ -1305,7 +1305,7 @@ a{color:inherit;text-decoration:none}
 .ev-leg-x{background:transparent;border:0;color:var(--text-3);width:22px;height:22px;border-radius:var(--r-sm);cursor:default;font-size:11px}
 .ev-leg-x:hover{background:rgba(239,68,68,.15);color:var(--red-2)}
 
-.ev-slip-summary{padding-top:8px;border-top:1px solid var(--hair);display:flex;flex-direction:column;gap:6px}
+.ev-slip-summary{padding-top:var(--s-2);border-top:1px solid var(--hair);display:flex;flex-direction:column;gap:var(--s-2)}
 .ev-sum-row{display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-2)}
 .ev-sum-row b{font-family:"JetBrains Mono",monospace}
 .ev-edge{color:var(--green)!important}
@@ -1841,13 +1841,13 @@ a{color:inherit;text-decoration:none}
 
 /* +EV: Save-preferences button below Min Leg % */
 .ev-prefs-save{
-  margin-top:8px;width:100%;
+  margin-top:var(--s-2);width:100%;
   background:var(--primary);
   /* --r-md to match .cp-btn-save, the other full-width primary CTA in this
    * sidebar. The two stack directly adjacent, so 8px against 12px read as a
    * mistake once the glows that used to distract from it were removed. */
   color:white;border:0;border-radius:var(--r-md);
-  padding:10px;font-size:13px;font-weight:700;letter-spacing:.02em;
+  padding:var(--s-3);font-size:13px;font-weight:700;letter-spacing:.02em;
   cursor:pointer;white-space:nowrap;
   transition:transform .08s ease, background .2s ease;
 }
@@ -2261,16 +2261,19 @@ a{color:inherit;text-decoration:none}
    * reads as part of the tile. Squared bottom corners when open so the panel
    * below looks continuous. */
   /* Fixed --s-4 (16px) side padding so the toggle's negative margin below can
-   * span exactly to the tile edges. .ev-slip-toggle's `-16px` / `100% + 32px`
-   * are that same 16px doubled — keep them in step by hand. */
+   * span exactly to the tile edges. The toggle's negative margin now READS
+   * --s-4 (`calc(-1 * var(--s-4))`) so that half can no longer drift; its
+   * `100% + 32px` basis is still that same 16px doubled by hand, because `flex`
+   * and `width` are outside the spacing invariant and this pass did not touch
+   * them. If --s-4 ever moves, the 32px moves with it. */
   .ev-filters{padding:var(--s-4) var(--s-4) 0}
   .ev-slip-toggle{
     display:flex;order:1;box-sizing:border-box;
     /* basis = full content width + the tile's 16px padding on each side, so
      * the negative margins bleed it flush to the tile edges (own row). */
     flex:0 0 calc(100% + 32px);width:calc(100% + 32px);
-    margin:var(--s-1) -16px 0;
-    padding:13px 16px;border-radius:0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+    margin:var(--s-1) calc(-1 * var(--s-4)) 0;
+    padding:var(--s-3) var(--s-4);border-radius:0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
     border-left:0;border-right:0;border-bottom:0;
     border-top:1px solid var(--hair);
   }
