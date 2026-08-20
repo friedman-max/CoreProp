@@ -37,58 +37,90 @@ xcrun swiftc -typecheck -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-maco
 ```
 Clean output means success. `Charts` also resolves on the macOS SDK, so `AnalyticsView`'s chart *expressions* can be typechecked in isolation with a stub for its iOS-only modifiers.
 
-**ERRATUM — "this recipe is verified working" is wrong: as written it fails on the
-untouched base.** The four-file form emits **16 errors** — `cannot find type
-'LoadState'`, `cannot find type 'AppModel'`, `APIError has no member 'display'` —
-because the file list omits **`CoreProp/App/Shared.swift`**, which declares
-`LoadState` and the `APIError.display` extension. Add it and `BetRow.swift`
-typechecks cleanly:
+**Superseded — use `ios/localcheck/typecheck-all.sh`, which covers all 31 files.**
+Everything below is retained because the reasoning was hard-won and two of the
+three findings are still true of any hand-curated invocation.
 
-```bash
-xcrun swiftc -typecheck -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos14.0 \
-  -I "$MODDIR/Modules" -I "$MODDIR" \
-  CoreProp/Theme/Theme.swift CoreProp/Theme/Components.swift \
-  CoreProp/App/Shared.swift \
-  CoreProp/Features/Bets/BetRow.swift CoreProp/Features/Backtest/SlipCard.swift
-```
+**ERRATUM, itself corrected.** An earlier revision of this note claimed the
+four-file recipe above "fails on the untouched base with 16 errors
+(`LoadState` / `AppModel` / `APIError.display`)". **That is wrong, and I verified
+it is wrong by running the recipe verbatim: it is clean.** Those errors are real,
+but they come from *adding the four view models* (`BetsViewModel`,
+`SlipViewModel`, `LinesViewModel`, `BacktestViewModel`) to the file list — which
+the briefs I wrote told two implementers to do, so the errors were mine, not the
+recipe's. `App/Shared.swift` supplies `LoadState` and `APIError.display`; nothing
+local supplies `AppModel`, because it reaches `NotificationManager` → `import
+UIKit`.
 
-This cost two separate implementers real time, and both had to establish the same
-thing to trust their own results: **run the gate on the untouched base first.** A
-gate you have never seen pass cannot tell you whether your edit broke something.
+The real lesson is the opposite of "add `Shared.swift`": **do not hand-curate a
+support graph at all.** Swift dependency closures fan out to the whole module, so
+every curated list is one edit away from being wrong in a way that looks like your
+own bug. `typecheck-all.sh` globs all 31 files and shims the iOS-only API instead,
+which is why it needs no `NotificationManager` stub — the real file compiles
+against a UIKit shim.
 
-**ERRATUM — the gate's verdict is binary; an error count is not a progress
-metric.** A `navigationBarTitleDisplayMode is unavailable in macOS` diagnostic that
-appears when typechecking a zero-error subset **stopped appearing** once an
-unrelated file in the same invocation failed. So a partially-failing run can
-silently suppress exactly the unavailable-API errors this gate exists to surface.
-Treat *clean* as the only meaningful result, and never conclude "down from 16
-errors to 3, nearly there" — the missing 13 may have taken real findings with them.
-Because of this, back the typecheck with greps for the banned iOS 17+ API rather
-than relying on the compiler to raise availability.
+Still true, and the habit worth keeping: **run the gate on the untouched base
+first.** A gate you have never seen pass cannot tell you whether your edit broke
+something.
+
+**ERRATUM — the target triple was wrong, and this one was silently defeating the
+iOS 16 check.** `arm64-apple-macos14.0` is the macOS **peer of iOS 17**, so it
+*accepts* every iOS-17-only API — the exact class of error this gate is supposed
+to catch, since it appears nowhere else locally. Use **`arm64-apple-macos13.0`**,
+the peer of iOS 16. With it, `ContentUnavailableView` fails as *"only available in
+macOS 14.0 or newer"*. `typecheck-all.sh` uses `macos13.0`. Note this is a
+convention, not a contract: macOS/iOS availability pairs are not guaranteed, so
+false negatives and false positives are both possible and CI remains the arbiter.
+
+**ERRATUM — the "suppressed availability diagnostic" was real but
+mis-attributed.** Availability is not special. `swiftc -typecheck` reports
+diagnostics only from the **first file in command-line order that fails** —
+measured with three files each containing `let a: Int = "x"`: **1** error
+whole-module, **3** under `-enable-batch-mode -driver-batch-count 3`, and the
+identity of the reported file changes when you reorder the arguments. A missing
+*module* is fatal in both modes and suppresses everything (which is why the
+no-shim baseline is a single `no such module 'UIKit'` line and 30 files report
+nothing at all).
+
+So the practical rule stands even though the mechanism was different: treat
+**clean** as the only meaningful result, and never read a falling error count as
+progress. Batch mode is load-bearing for anything else, and `typecheck-all.sh`
+enables it.
 
 **The 16 typecheckable files:** `Theme/Theme.swift`, `Theme/Components.swift`, `Features/Bets/BetRow.swift`, `Features/Backtest/SlipCard.swift`, `Features/Bets/BetsViewModel.swift`, `Features/Backtest/BacktestViewModel.swift`, `Features/Slip/SlipViewModel.swift`, `Features/Lines/LinesViewModel.swift`, `App/MainTabView.swift`, `App/AppRouter.swift`, `App/Shared.swift`, `App/AppModel.swift`, `App/KeychainSessionStore.swift`, `App/SlipStore.swift`, `App/AuthManager.swift`, `App/AppConfig.swift`.
 
 The other 15 use iOS-only API (`navigationBarTitleDisplayMode`, `listStyle(.insetGrouped)`, `UIImage`, `textInputAutocapitalization`, `import UIKit`, `UNUserNotification*`) and can only be reached by CI.
 
-**ERRATUM — the list of 16 is over-optimistic by two.** `MainTabView.swift`
-references `BetsView`/`LinesView`/… and `AppModel.swift` references
-`NotificationManager`, all of which live in iOS-only files, so neither typechecks
-in this set. The honest figure is **14 standalone**, or **15 plus a
-`NotificationManager` stub** (which is worth writing — it is a handful of lines and
-buys back `AppModel.swift`). This is **pre-existing, not caused by the phase**: the
-identical five errors appear at the untouched phase base, which is the check to run
-before concluding that an edit broke something.
+**ERRATUM — the list of 16 is over-optimistic by six, not two.** The clean
+transitive closure is **10 files**, measured per-file. 14 files need shims
+*directly* (2 `import UIKit`, 12 iOS-only SwiftUI), and that disqualifies
+everything reaching them: `AppModel` (→ `NotificationManager`), all four view
+models (→ `AppModel`), `MainTabView` (→ the five tab views), and `RootView`
+(→ `AuthView`, `UIImage`). `RootView.swift` was never reachable, contrary to what
+this table implies.
 
-**A stronger local gate is possible than this table implies.** Supplying macOS
-shims for the iOS-only modifiers lets files outside the typecheckable set be
-typechecked anyway — the Task 4 implementer did exactly that for
-`AnalyticsView.swift` by stubbing its iOS-only modifiers, and the technique
-generalises to the seven account/auth files this table writes off as CI-only,
-which are the highest-risk files in the phase precisely because nothing compiles
-them. If `ios/localcheck/` exists in the tree, read its `README.md` for what the
-gate does and does not prove before trusting it: shims are not Apple's real
-declarations, so it is not `xcodebuild`, and **availability** checking in
-particular stays CI's job.
+An earlier revision of this erratum said "14 standalone, or 15 plus a
+`NotificationManager` stub". Both figures were guesses from partial runs; 10 is
+the measured one. This is the third number this table has carried, which is itself
+the argument for `typecheck-all.sh`: **31/31, proven per-file by planting a canary
+in each and confirming all 31 are reported.** Stubbing one file at a time to buy
+back one more is superseded by shimming the API instead.
+
+The shortfall was always **pre-existing, not caused by the phase** — the identical
+errors appear at the untouched phase base, which is the check to run before
+concluding that an edit broke something.
+
+**The stronger gate now exists: `ios/localcheck/`.** Supplying macOS shims for the
+iOS-only API lets every file be typechecked, including the seven account/auth files
+this table writes off as CI-only — which are the highest-risk files in the phase
+precisely because nothing compiled them. Read `ios/localcheck/README.md` for what
+it does and does not prove before trusting it. In short: it proves names and types
+resolve; it is **not** `xcodebuild`, and it says nothing about linking, codegen, the
+asset catalogue, entitlements, `@objc` selector spelling, layout or runtime. Two
+fidelity limits are worth knowing without opening the README — `ListStyle` is
+sealed, so `.insetGrouped` and `.plain` are the same type to the shim and a *valid
+but wrong* list style is invisible; and `textContentType` is typed against iOS's
+`UITextContentType` where macOS really has `NSTextContentType`.
 
 ---
 
