@@ -89,17 +89,27 @@ enum Theme {
     /// which is the semantic positive/outcome colour. Web spelled this as a raw
     /// literal at seven sites until the token landed.
     ///
-    /// **Do not put a white label on this.** White on #16A34A measures **3.30:1**
-    /// — over WCAG's 3:1 floor for non-text, under the 4.5:1 body-text minimum,
-    /// so a button label on it fails AA. That is the whole reason `primary`
-    /// (#1E6FB0, 5.31:1) is the colour every white-labelled control in this app
-    /// uses; see the note at `primary`. Web's `.cp-btn-save` does carry a white
-    /// 15px/700 label on it and is the live instance of that problem.
+    /// **This value is #15803D, and the reason is contrast.** It was #16A34A,
+    /// where white measures **3.30:1** — over WCAG's 3:1 floor for non-text,
+    /// under the 4.5:1 body-text minimum, so every white label on it failed AA.
+    /// On #15803D white is **5.02:1**, and the hue barely moves (142.4° vs
+    /// 142.1°, the same ramp `green` and `green-2` sit on). It is the same
+    /// reasoning that picked `primary` (#1E6FB0, 5.31:1) as the colour every
+    /// white-labelled control uses; see the note there.
     ///
-    /// Currently unreferenced on iOS — kept because it mirrors a real web token,
-    /// which is the same reason web keeps `--amber` with zero consumers. If a
-    /// save CTA ever needs it, resolve the contrast above first.
-    static let saveGreen = Color(hex: 0x16A34A)
+    /// Tokenizing it first is what made that a one-line fix: the 3.30:1 label
+    /// turned out to be **five** controls on web, not one — the save CTA, the
+    /// saved-preferences state, the queued place-slip state, and the Green Devils
+    /// chip and badge — plus a white checkmark glyph. All moved together.
+    ///
+    /// Unreferenced on iOS, and kept anyway because it mirrors a real web token —
+    /// the same reason web keeps `--amber` with zero consumers (web's warning
+    /// surface lives in the standalone `extension.html`, not the app shell). If a
+    /// save CTA ever needs it, it is ready; do not "restore" the brighter green.
+    ///
+    /// Nothing pins this mirror, so it can drift silently. Web's `:root` carries
+    /// the matching note.
+    static let saveGreen = Color(hex: 0x15803D)
 
     // Bet side.
     static let sideOver  = green
