@@ -520,11 +520,35 @@ MARKETING_SPACING_EXEMPT = (
 #                           pad is tokenized.
 #   .lp-why-steps div span: `margin-top:3px` aligns the step description's cap
 #                           height with the digit in its circle beside it.
+#
+# Phase 3 (pricing) added four more, on the same 1-3px reasoning:
+#
+#   .pp-check             : `margin-top:1px` optically seats the 22px check circle
+#                           against the cap height of the 14.5px benefit title
+#                           beside it. Alignment, not spacing.
+#   .pp-price-row         : `gap:2px` separates the three parts of one number
+#                           ("$", "50", "/mo") on a shared baseline, so it is
+#                           kerning between glyph runs. --s-1 doubles it and opens
+#                           a visible hole after the currency symbol.
+#   .pp-b-d               : `margin-top:2px` is a half-leading correction between
+#                           a benefit's title and its description inside one text
+#                           block, on top of the description's own line-height.
+#                           --s-1 would read as two unrelated lines.
+#   .pp-save              : `padding:2px var(--s-2)` — an 11px micro-badge inside
+#                           the billing-toggle button; 4px of vertical pad fattens
+#                           the pill against a 13.5px label. Only the vertical
+#                           component is literal; the horizontal one is on the
+#                           scale, and the exemption exists only because this test
+#                           judges a declaration as a whole.
 MARKETING_SPACING_LITERAL_OK = {
     ".lp-sr-only",
     ".lp-cov-grid",
     ".lp-bk-head",
     ".lp-why-steps div span",
+    ".pp-check",
+    ".pp-price-row",
+    ".pp-b-d",
+    ".pp-save",
 }
 
 # Lengths that are legal without a token: zero, auto-centring, and the two
