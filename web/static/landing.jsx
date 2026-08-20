@@ -962,10 +962,14 @@ function LineChallenge({ daily, cov, onStart, onReveal, onRefresh }) {
 // arithmetic is percent formatting and the implied-probability total, which for
 // a two-sided devig is 100 plus the vig by construction (the backend computes
 // vig_pct from exactly the books array shown).
+// `fg` goes straight into a React inline style, so a var() works here — see the
+// matching note on BookBadge's map in components.jsx, which these rows must stay
+// verbatim identical to. Only the two rows whose colour owns a token are
+// tokenized; FD's --red-2 belongs to a larger inline set that moves in one piece.
 const LP_BOOK_STYLE = {
   FanDuel:    { ab: "FD",  bg: "rgba(239,68,68,.16)",  fg: "#FCA5A5" },
-  DraftKings: { ab: "DK",  bg: "rgba(34,197,94,.16)",  fg: "#86EFAC" },
-  Pinnacle:   { ab: "PIN", bg: "rgba(250,204,21,.18)", fg: "#FDE68A" },
+  DraftKings: { ab: "DK",  bg: "rgba(34,197,94,.16)",  fg: "var(--green-2)" },
+  Pinnacle:   { ab: "PIN", bg: "rgba(250,204,21,.18)", fg: "var(--amber-2)" },
   Novig:      { ab: "NV",  bg: "rgba(45,212,191,.18)", fg: "#5EEAD4" },
 };
 // A book we have no colour for still renders, in neutral. Silently dropping a
