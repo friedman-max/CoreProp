@@ -64,14 +64,21 @@ _DENSITY_OPTION = "compact"
 _CLASS = re.compile(r"\.(-?[A-Za-z_][\w-]*)")
 
 
-def injected_selector_classes(path=APP_MAIN_JSX) -> set[str]:
+def injected_selector_classes(path=None) -> set[str]:
     """Every class name the injected sheet's selectors match on.
 
     Reads the selectors rather than the whole text, so a class name that only
     appears inside a declaration value (a `content:".ev-row"`, say) is not counted
     as a coupling. `:not(.tint-on)` contributes `tint-on`, which is correct — the
     rule depends on that name existing exactly as much as a positive match would.
+
+    `path=None` rather than `path=APP_MAIN_JSX`: a default argument is bound once,
+    at def time, so the constant becomes unreachable from outside and the function
+    cannot be pointed at a fixture. A can-it-fail proof for this module ran green
+    against an unmodified file because of it — the mutation was there and the
+    function never saw it. Resolve the default at call time.
     """
+    path = path or APP_MAIN_JSX
     out: set[str] = set()
     for selector, _decls in rules(injected_style_block(path)):
         out.update(_CLASS.findall(selector))

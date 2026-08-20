@@ -1053,6 +1053,19 @@ def _decls_for(selector: str) -> list[tuple[str, str]]:
     return out
 
 
+def _last(selector: str, prop: str) -> str | None:
+    """The declaration that actually renders: LAST wins at equal specificity.
+
+    `[0]` was wrong here and a can-it-fail proof caught it — adding a second
+    `border:2px` to `.ev-filters` further down the rule left the first `1px`
+    declaration in place, so a first-match check passed while the rendered border
+    was 2px and the `calc(var(--r-lg) - 1px)` derived from it was off by a pixel.
+    Every "is this value still X" assertion below reads the last one.
+    """
+    values = [v for p, v in _decls_for(selector) if p == prop]
+    return values[-1] if values else None
+
+
 def test_filter_bar_controls_with_an_explicit_height_are_all_34px():
     problems = []
     for selector, role in FILTER_BAR_EXPLICIT_34.items():
@@ -1081,8 +1094,8 @@ def test_the_ev_stepper_derives_to_34px():
         ".ev-stepper must NOT declare a height — its 34px comes from its child "
         "plus its own border, and a literal here would let the two disagree"
     )
-    border = [v for p, v in wrapper if p == "border"]
-    assert border and border[0].startswith("1px"), (
+    border = _last(".ev-stepper", "border")
+    assert border and border.startswith("1px"), (
         f".ev-stepper's border must be 1px (it is 2 of the 34px): {border}"
     )
     heights = [v for p, v in button if p == "height"]
@@ -1111,9 +1124,9 @@ def test_the_padding_derived_filter_inputs_share_one_recipe():
         # 1px comes from .cp-input. Asserted on the source of the border rather
         # than on the modifier, or this would fail for the wrong reason.
         for selector in (".cp-input", b):
-            borders = [v for p, v in _decls_for(selector) if p == "border"]
-            if not (borders and borders[0].startswith("1px")):
-                problems.append(f"{selector}'s border must be 1px: {borders}")
+            border = _last(selector, "border")
+            if not (border and border.startswith("1px")):
+                problems.append(f"{selector}'s border must be 1px: {border}")
     assert not problems, (
         "the two padding-derived filter inputs left their measured recipe:\n  "
         + "\n  ".join(problems)
@@ -1233,9 +1246,12 @@ def test_the_radius_offsets_still_have_the_containers_they_derive_from():
             f"{owner} must stay {token} — the derived radii above are computed "
             f"against it, got {radii}"
         )
-    # And .ev-filters' border must still be the 1px the `- 1px` subtracts.
-    border = [v for p, v in _decls_for(".ev-filters") if p == "border"]
-    assert border and border[0].startswith("1px"), (
+    # And .ev-filters' border must still be the 1px the `- 1px` subtracts. Read as
+    # the LAST border declaration: .ev-filters is re-opened three times further
+    # down the sheet, so a 2px override there would render while a first-match
+    # check still saw the original 1px. (A proof run caught exactly that.)
+    border = _last(".ev-filters", "border")
+    assert border and border.startswith("1px"), (
         f".ev-filters' border is what `calc(var(--r-lg) - 1px)` subtracts: {border}"
     )
 
