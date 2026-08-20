@@ -22,9 +22,10 @@ struct AuthView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 22) {
-                Spacer(minLength: 40)
-                VStack(spacing: 10) {
+            // 22 and 10 were both ties (s5/s6 and s2/s3); ties round up.
+            VStack(spacing: Theme.s6) {
+                Spacer(minLength: Theme.s10)
+                VStack(spacing: Theme.s3) {
                     BrandWordmark(height: 38)
                     Text(CorePropConstants.tagline)
                         .font(Theme.ui(15))
@@ -36,17 +37,18 @@ struct AuthView: View {
                         .font(Theme.ui(13))
                         .foregroundColor(Theme.text3)
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 28)
+                        .padding(.horizontal, Theme.s8)
                 }
 
                 card
-                Spacer(minLength: 24)
+                Spacer(minLength: Theme.s6)
                 Text("Responsible gaming: this is an analytics tool, not betting advice. 21+. If gambling stops being fun, call 1-800-GAMBLER.")
                     .font(Theme.ui(11))
                     .foregroundColor(Theme.text3)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 28)
-                    .padding(.bottom, 20)
+                    // 28 was a tie between s6 (24) and s8 (32); ties round up.
+                    .padding(.horizontal, Theme.s8)
+                    .padding(.bottom, Theme.s5)
             }
             .frame(maxWidth: .infinity)
         }
@@ -54,7 +56,7 @@ struct AuthView: View {
     }
 
     private var card: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: Theme.s4) {
             Picker("", selection: $mode) {
                 Text("Log in").tag(Mode.signIn)
                 Text("Create account").tag(Mode.signUp)
@@ -65,7 +67,7 @@ struct AuthView: View {
                 confirmationNotice
             }
 
-            VStack(spacing: 10) {
+            VStack(spacing: Theme.s3) {
                 if mode == .signUp {
                     field(title: "Username (optional)", text: $username,
                           placeholder: "sharpbettor", field: .username,
@@ -98,18 +100,20 @@ struct AuthView: View {
             .font(Theme.ui(13, .semibold))
             .foregroundColor(Theme.primary2)
         }
-        .cpCard(radius: 18, padding: 20)
-        .padding(.horizontal, 20)
+        // 18 was off the radius scale entirely (between --r-lg 16 and --r-xl
+        // 20); the card is the app's default card, so it takes rLg like the rest.
+        .cpCard(radius: Theme.rLg, padding: Theme.s5)
+        .padding(.horizontal, Theme.s5)
     }
 
     private var confirmationNotice: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Theme.s2) {
             Image(systemName: "envelope.badge").foregroundColor(Theme.primary2)
             Text("Check your email to confirm your account, then log in.")
                 .font(Theme.ui(13)).foregroundColor(Theme.text2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
+        .padding(Theme.s3)
         .background(Theme.primaryHi)
         .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSm, style: .continuous))
     }
@@ -121,7 +125,7 @@ struct AuthView: View {
     @ViewBuilder
     private func field(title: String, text: Binding<String>, placeholder: String,
                        field: Field, keyboard: UIKeyboardType, content: UITextContentType?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Theme.s2) {
             Text(title).font(Theme.ui(12, .semibold)).foregroundColor(Theme.text3)
             TextField(placeholder, text: text)
                 .textInputAutocapitalization(.never)
@@ -129,28 +133,44 @@ struct AuthView: View {
                 .keyboardType(keyboard)
                 .textContentType(content)
                 .focused($focus, equals: field)
-                .padding(12)
+                .padding(Theme.s3)
                 .background(Theme.inputBg)
                 .foregroundColor(Theme.text)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSm, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radiusSm, style: .continuous)
                     .stroke(focus == field ? Theme.primary : Theme.hair, lineWidth: 1))
+                .overlay(focusRing(active: focus == field))
         }
+    }
+
+    /// Web's `.cp-input:focus` adds `--ring` (`0 0 0 4px var(--primary-hi)`) on
+    /// top of the border-colour change; iOS had only the border change. CSS's
+    /// spread grows *outward* from the box, so this draws the band entirely
+    /// outside the field's bounds: a negative pad expands the shape by
+    /// `ringWidth`, `strokeBorder` keeps the stroke inside that expanded frame,
+    /// and the outer corner radius is `radiusSm + ringWidth` so the ring stays
+    /// concentric with the 1px border it sits around. Not clipped by anything —
+    /// the 4pt band lands inside the card's `s5` padding.
+    private func focusRing(active: Bool) -> some View {
+        RoundedRectangle(cornerRadius: Theme.radiusSm + Theme.ringWidth, style: .continuous)
+            .strokeBorder(active ? Theme.primaryHi : Color.clear, lineWidth: Theme.ringWidth)
+            .padding(-Theme.ringWidth)
     }
 
     @ViewBuilder
     private func secureField(title: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Theme.s2) {
             Text(title).font(Theme.ui(12, .semibold)).foregroundColor(Theme.text3)
             SecureField("••••••••", text: text)
                 .textContentType(mode == .signUp ? .newPassword : .password)
                 .focused($focus, equals: .password)
-                .padding(12)
+                .padding(Theme.s3)
                 .background(Theme.inputBg)
                 .foregroundColor(Theme.text)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSm, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radiusSm, style: .continuous)
                     .stroke(focus == .password ? Theme.primary : Theme.hair, lineWidth: 1))
+                .overlay(focusRing(active: focus == .password))
         }
     }
 

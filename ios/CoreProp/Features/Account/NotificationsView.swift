@@ -8,8 +8,9 @@ struct NotificationsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 10) {
+            VStack(spacing: Theme.s4) {
+                // 10 was a tie between s2 (8) and s3 (12); ties round up.
+                VStack(alignment: .leading, spacing: Theme.s3) {
                     Label("Slip alerts", systemImage: "bell.badge")
                         .font(Theme.ui(16, .bold)).foregroundColor(Theme.text)
                     Text("Get notified when CoreProp logs a slip for you (Auto-Backtest). Grant permission below.")
@@ -20,15 +21,18 @@ struct NotificationsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cpCard()
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("HOW IT WORKS").font(Theme.ui(10.5, .semibold)).kerning(0.6).foregroundColor(Theme.text3)
+                VStack(alignment: .leading, spacing: Theme.s2) {
+                    // tracking, not kerning: tracking is the letter-spacing
+                    // analogue, kerning adjusts glyph pairs. Web's micro-label
+                    // tracking is .04em, which at 10.5pt is 0.42pt.
+                    Text("HOW IT WORKS").font(Theme.ui(10.5, .semibold)).tracking(0.42).foregroundColor(Theme.text3)
                     Text("When you enable alerts, this device registers with Apple Push and the server sends a notification each time it auto-logs +EV slips for you. Tapping an alert opens your Backtest. (Delivery requires the server's APNs keys to be configured.)")
                         .font(Theme.ui(13)).foregroundColor(Theme.text3)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cpCard()
             }
-            .padding(16)
+            .padding(Theme.s4)
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle("Slip alerts")

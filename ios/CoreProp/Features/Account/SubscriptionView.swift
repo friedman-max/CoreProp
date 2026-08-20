@@ -16,7 +16,7 @@ struct SubscriptionView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: Theme.s4) {
                 statusCard
                 if let b = billing, b.isUnlocked, !b.isComped {
                     manageButton
@@ -25,7 +25,7 @@ struct SubscriptionView: View {
                 }
                 disclaimer
             }
-            .padding(16)
+            .padding(Theme.s4)
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle("Subscription")
@@ -34,9 +34,12 @@ struct SubscriptionView: View {
     }
 
     private var statusCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Theme.s3) {
             HStack {
-                Text("STATUS").font(Theme.ui(10.5, .semibold)).kerning(0.6).foregroundColor(Theme.text3)
+                // tracking, not kerning: tracking is the letter-spacing
+                // analogue, kerning adjusts glyph pairs. Web's micro-label
+                // tracking is .04em, which at 10.5pt is 0.42pt.
+                Text("STATUS").font(Theme.ui(10.5, .semibold)).tracking(0.42).foregroundColor(Theme.text3)
                 Spacer()
                 statusPill
             }
@@ -61,12 +64,16 @@ struct SubscriptionView: View {
         let unlocked = billing?.isUnlocked ?? true
         return Text(unlocked ? "Active" : "Inactive")
             .font(Theme.ui(11, .bold)).foregroundColor(unlocked ? Theme.green2 : Theme.red2)
+            // Deliberately off the spacing scale: 9/4 is badge geometry, not
+            // layout rhythm, and it matches the pills in Components.swift
+            // (LeaguePill 3/8, DataAgePill 4/9). Snapping it to s2/s1 would make
+            // this pill the only one in the app that doesn't match its siblings.
             .padding(.horizontal, 9).padding(.vertical, 4)
             .background(unlocked ? Theme.greenHi : Theme.redHi).clipShape(Capsule())
     }
 
     private var manageButton: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Theme.s2) {
             Button {
                 Task { await openPortal() }
             } label: {
@@ -84,7 +91,7 @@ struct SubscriptionView: View {
     }
 
     private var lockedNotice: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Theme.s2) {
             Image(systemName: "lock").font(.system(size: 26)).foregroundColor(Theme.amber)
             Text("Your subscription is inactive.")
                 .font(Theme.ui(15, .semibold)).foregroundColor(Theme.text)
