@@ -909,3 +909,185 @@ def test_the_spacing_parser_sees_what_it_claims_to_see():
         "split_lengths stopped respecting parens; every calc() in the sheet would "
         "now be reported as several off-scale literals"
     )
+
+
+# ── The 34px filter-bar contract ──────────────────────────────────────────────
+# Both filter bars are `align-items:flex-end` flex rows, so a control that is not
+# exactly 34px tall does not merely look wrong — it drags its own 10.5px column
+# LABEL out of line with its neighbours' labels. index.html records three shipped
+# bugs of exactly that shape, in four separate comments:
+#
+#   * 3px  — `.ev-chip` computed to 31px from padding, pulling "LEAGUE"/"SIDE" 3px
+#            below "PROP TYPE"/"MIN TRUE %" (comment above .ev-chip).
+#   * 2px  — a native `<select>` computes 2px taller than an `<input>` at the same
+#            font-size/padding because its intrinsic box reserves room for the OS
+#            glyph, so "LEAGUE" sat 2px high (comment above .bd-f select).
+#   * 9.5px— `align-self:center` measured the cluster against a two-row `.bd-f`
+#            column and floated Clear/badge/pager 9.5px above the controls
+#            (comment above .bd-clear).
+#
+# Plus the note above `.cp-btn-sm` recording that the filter-bar buttons are
+# deliberately OFF the 34/39/46px button height scale to hold this row, and the
+# note above `.ev-clear` recording that it was given an explicit `height` rather
+# than padding because --s-3 top/bottom measured 42px. This is the most-repeated
+# regression in the file's history and the heights were plain literals with no
+# assertion anywhere.
+#
+# Membership was verified against the markup, not taken from the CSS: `.ev-filters`
+# in ev-page.jsx contains `.ev-chip`, `.cp-input.cp-input-sm`, `.ev-stepper` and
+# `.ev-clear`; `FiltersBar` in page-boards.jsx contains `.bd-f` (label + input or
+# select), `.bd-clear`, `.bd-badge` and `.bd-pag`. Two findings from doing that:
+#   * `.bd-chip` / `.bd-chips` are DEAD CSS — no JSX renders them — so they are
+#     not part of this contract despite living beside `.bd-clear` in the sheet.
+#   * `.ev-slip-toggle` IS a child of `.ev-filters`, mobile only, and is
+#     deliberately not 34px: it is a full-width bar spanning the tile
+#     (`padding:13px 16px`), pinned by the radius test below instead.
+#
+# THE CONTROLS REACH 34px BY DIFFERENT MEANS, and this test asserts each by its
+# own mechanism rather than pretending they are uniform. See the three groups.
+
+# Group 1: an explicit `height:34px`. `*{box-sizing:border-box}` is set globally,
+# so this is the whole box including the 1px border — nothing else needs checking.
+FILTER_BAR_EXPLICIT_34 = {
+    ".ev-chip": "+EV bar: League / Side / Green Devils / Sort toggles",
+    ".ev-clear": "+EV bar: Clear (explicit height by measurement, see its comment)",
+    ".bd-f select": "Boards bar: League and Book pickers, appearance:none",
+    ".bd-clear": "Boards bar: Clear",
+    ".bd-badge": "Boards bar: the '# lines' count pill",
+    ".bd-pag": "Boards bar: the pager's 34px outer box",
+}
+
+# Group 2: derived, and computable from the stylesheet alone.
+#   .ev-stepper declares NO height. Its box is its tallest child (a 32px button)
+#   plus its own 1px border top and bottom = 34px. Both halves are asserted, and
+#   so is the absence of a `height` on the wrapper — adding one there would make
+#   the two mechanisms fight silently.
+
+# Group 3: derived from PADDING + FONT-SIZE + LINE-HEIGHT, and therefore NOT
+# computable here — the content height depends on Inter's metrics at 13px, which
+# is a font-rasteriser question, not a CSS one. `.cp-input-sm` and `.bd-f input`
+# are the two, and they are UNGUARDED on the 34px outcome. What IS assertable is
+# the recipe that was measured to produce it, and the fact that the two must agree
+# with each other: they sit in different bars beside controls pinned to 34px, so if
+# one drifts, that bar's labels go out of line. So this test pins
+# `padding:8px 10px` + `font-size:13px` + a 1px border on both, and a change to any
+# of those fails here and asks for a re-measure in a browser rather than silently
+# shipping a 2px offset. Nothing in this suite renders anything, so 34px itself
+# cannot be verified for these two by any test in the repo.
+FILTER_BAR_PADDING_DERIVED = {
+    ".cp-input-sm": ".bd-f input",
+}
+_INPUT_RECIPE = {"padding": "8px 10px", "font-size": "13px"}
+
+
+def _decls_for(selector: str) -> list[tuple[str, str]]:
+    """Every `(prop, value)` declared for a selector, across all rules and all
+    comma groups, in source order. Multiple rules matter: `.bd-f select` gets its
+    border from `.bd-f input,.bd-f select` and its height from its own rule, and
+    `.cp-input-sm` gets everything but padding/font-size from `.cp-input`."""
+    out = []
+    for sel, decls in rules(style_block(INDEX)):
+        if selector not in [" ".join(p.split()) for p in sel.split(",")]:
+            continue
+        for decl in declarations(decls):
+            prop, _, value = decl.partition(":")
+            out.append((prop.strip().lower(), " ".join(value.split())))
+    return out
+
+
+def test_filter_bar_controls_with_an_explicit_height_are_all_34px():
+    problems = []
+    for selector, role in FILTER_BAR_EXPLICIT_34.items():
+        heights = [v for p, v in _decls_for(selector) if p == "height"]
+        if not heights:
+            problems.append(f"{selector} ({role}) declares no height at all")
+        # EVERY copy, not just the first: a later @media or density-override rule
+        # wins on source order, and this row's alignment is viewport-independent.
+        for h in heights:
+            if h != "34px":
+                problems.append(f"{selector} ({role}) -> height:{h}, must be 34px")
+    assert not problems, (
+        "the filter-bar 34px contract is broken:\n  " + "\n  ".join(problems)
+        + "\n\nBoth bars are align-items:flex-end, so an off-height control also "
+          "drags its own column label out of line with its neighbours'. See the "
+          "comments above .ev-chip, .bd-f select, .bd-clear and .cp-btn-sm for the "
+          "three offsets (3px / 2px / 9.5px) this has already shipped."
+    )
+
+
+def test_the_ev_stepper_derives_to_34px():
+    """32px button + the wrapper's 1px border top and bottom."""
+    wrapper = _decls_for(".ev-stepper")
+    button = _decls_for(".ev-stepper button")
+    assert not [v for p, v in wrapper if p == "height"], (
+        ".ev-stepper must NOT declare a height — its 34px comes from its child "
+        "plus its own border, and a literal here would let the two disagree"
+    )
+    border = [v for p, v in wrapper if p == "border"]
+    assert border and border[0].startswith("1px"), (
+        f".ev-stepper's border must be 1px (it is 2 of the 34px): {border}"
+    )
+    heights = [v for p, v in button if p == "height"]
+    assert heights == ["32px"], (
+        f".ev-stepper button must be 32px so the bordered wrapper is 34px: {heights}"
+    )
+
+
+def test_the_padding_derived_filter_inputs_share_one_recipe():
+    """`.cp-input-sm` and `.bd-f input` reach 34px through font metrics this suite
+    cannot compute (see Group 3 above). Their inputs are pinned instead, and they
+    are pinned to be IDENTICAL, because each sits beside controls held at an
+    explicit 34px in a different filter bar."""
+    problems = []
+    for a, b in FILTER_BAR_PADDING_DERIVED.items():
+        for selector in (a, b):
+            got = dict(_decls_for(selector))
+            for prop, want in _INPUT_RECIPE.items():
+                if got.get(prop) != want:
+                    problems.append(
+                        f"{selector} -> {prop}:{got.get(prop)}, measured recipe is "
+                        f"{prop}:{want}"
+                    )
+        # .cp-input-sm carries no border of its own; it is always rendered as
+        # `class="cp-input cp-input-sm"` (all four sites in ev-page.jsx), so the
+        # 1px comes from .cp-input. Asserted on the source of the border rather
+        # than on the modifier, or this would fail for the wrong reason.
+        for selector in (".cp-input", b):
+            borders = [v for p, v in _decls_for(selector) if p == "border"]
+            if not (borders and borders[0].startswith("1px")):
+                problems.append(f"{selector}'s border must be 1px: {borders}")
+    assert not problems, (
+        "the two padding-derived filter inputs left their measured recipe:\n  "
+        + "\n  ".join(problems)
+        + "\n\nThese two are the ONLY filter-bar controls whose 34px this suite "
+          "cannot verify — the content height is Inter's line box at 13px. If you "
+          "change any of these values, measure the rendered height in a browser "
+          "against .ev-chip / .bd-f select before committing."
+    )
+
+
+def test_the_boards_pager_button_stays_inside_the_34px_row():
+    """`.bd-pag-btn` is 28px INSIDE the 34px `.bd-pag`, which its comment calls
+    out by name. A pager button grown to 34px+ would set the row height itself and
+    the pinned `.bd-pag` above would become decorative."""
+    heights = [v for p, v in _decls_for(".bd-pag-btn") if p == "height"]
+    assert heights == ["28px"], f".bd-pag-btn must be 28px inside .bd-pag: {heights}"
+
+
+def test_every_filter_bar_selector_still_exists():
+    """Stale-key guard. A renamed control makes `_decls_for` return nothing, and
+    the height loop above would then have no height to disagree with — the
+    zero-denominator failure. This turns that into a named error."""
+    css = style_block(INDEX)
+    declared = {" ".join(p.split()) for sel, _ in rules(css) for p in sel.split(",")}
+    expected = (
+        set(FILTER_BAR_EXPLICIT_34)
+        | set(FILTER_BAR_PADDING_DERIVED)
+        | set(FILTER_BAR_PADDING_DERIVED.values())
+        | {".ev-stepper", ".ev-stepper button", ".bd-pag-btn", ".cp-input"}
+    )
+    missing = sorted(expected - declared)
+    assert not missing, (
+        "filter-bar selectors named by the 34px contract no longer exist — "
+        f"renamed? {missing}"
+    )
