@@ -16,9 +16,10 @@ import CorePropKit
 ///   surfaces, no blurred orbs, no gradient-clipped text.
 /// * **Card surfaces are flat.** The narrower "no gradients on *accent*
 ///   surfaces" reading once licensed a two-stop grey gradient on every card;
-///   it no longer does. The only gradient left in the app is the P&L chart's
-///   area fill, which is legitimate because it is *semantic* (it encodes
-///   up/down) rather than decorative accent.
+///   it no longer does. The one permitted gradient in the app is the P&L
+///   chart's area fill, which is legitimate because it is *semantic* (it
+///   encodes up/down and changes colour with the sign) rather than decorative
+///   accent.
 enum Theme {
     // Backgrounds & surfaces (elevation ladder).
     static let bg     = Color(hex: 0x0A0A0D)

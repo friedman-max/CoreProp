@@ -114,8 +114,8 @@ struct LeaguePill: View {
         let color = Theme.leagueColor(league)
         Text(league.uppercased())
             .font(Theme.ui(11, .semibold))
-            // `.tracking()`, not `.kerning()`: tracking is letter-spacing,
-            // kerning adjusts specific glyph pairs. .04em at 11pt is 0.44.
+            // tracking, not kerning: tracking is letter-spacing, kerning adjusts
+            // specific glyph pairs. .04em at 11pt is 0.44.
             .tracking(0.44)
             .foregroundColor(color)
             .padding(.vertical, 3)
@@ -176,10 +176,10 @@ struct StatTile: View {
         VStack(alignment: .leading, spacing: 6) {
             // Not `.uppercased()`: web's .bt-card-label was de-capsed in the
             // typography pass, because an all-caps tile label competes with the
-            // 22pt number it is labelling. And `.tracking()`, not `.kerning()` —
-            // tracking is the true letter-spacing analogue (kerning adjusts
-            // pairs). Web's micro-label tracking is .04em, which at 10.5pt is
-            // 0.42pt, not the 0.6 that was here.
+            // 22pt number it is labelling. And tracking, not kerning — tracking
+            // is the true letter-spacing analogue (kerning adjusts pairs). Web's
+            // micro-label tracking is .04em, which at 10.5pt is 0.42pt, not the
+            // 0.6 that was here.
             Text(label)
                 .font(Theme.ui(10.5, .semibold))
                 .tracking(0.42)
