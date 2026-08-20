@@ -54,6 +54,40 @@ There are no gradients on accent surfaces, no blurred decorative orbs, and no
 gradient-clipped text anywhere by deliberate choice — those were removed, and
 re-adding one is a visual regression, not a flourish.
 
+`:root` also carries four **scales**, and values in this stylesheet are expected
+to resolve through them rather than being typed: radii `--r-xl/lg/md/sm/pill`
+(with `--radius` / `--radius-sm` as aliases), spacing `--s-1` … `--s-12` (4px
+steps — note there is deliberately **no `--s-7`, `--s-9` or `--s-11`**, so don't
+"complete" the sequence), elevation (`--shadow-card`, `--shadow-pop`, `--ring`),
+and two derived layout vars (`--row-px` for app row gutters, `--lp-px` for the
+marketing gutters). `--primary-lo` (.10) is the row-level accent tint and
+`--primary-hi` (.22) is for rings and badges: `.22` behind a whole row is
+*inherited* by muted text, which then measures 4.45:1 and fails AA, so those two
+are not interchangeable.
+
+Three invariant tests own this contract, and they are worklist generators as much
+as guards — run one, get every off-scale site, fix, re-run:
+`tests/api_tests/test_css_tokens.py` (the scales, flat surfaces, the `--text-4`
+allowlist), `test_css_guards.py` (no accent gradient / orb / gradient-text, and
+the three-copy accent above), `test_build_stamp.py` (the `?v=` cache-bust
+digest). Their exemption sets name **whole selectors, never prefixes**, and each
+entry carries a written reason — an exemption justified by a property the test
+does not inspect is not an exemption, it is a hole (that mistake shipped once).
+
+Two CSS facts that have caused silent no-ops here, both worth checking *before*
+you conclude an edit didn't work:
+
+- **Most rules are declared twice.** There is a base rule and an unconditional
+  copy in the later "density overrides" block, and **the later copy wins** by
+  source order. Editing only the base ships nothing. `grep -n` for every copy of
+  a selector before changing it.
+- **`:hover:not(:disabled)` is (0,3,0)**, because the `:disabled` inside `:not()`
+  counts. Doubling a class only reaches (0,2,0) and loses — a state rule that
+  must beat a hover needs its own `:hover:not(:disabled)`. Relatedly, a
+  declaration **on** an element always beats an inherited value regardless of
+  ancestor specificity, so a colour "fix" applied to a parent is a no-op if the
+  child sets its own `color`.
+
 ## Architecture
 
 Single-process FastAPI app. One APScheduler `BackgroundScheduler` runs a scrape

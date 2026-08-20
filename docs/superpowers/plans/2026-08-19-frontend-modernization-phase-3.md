@@ -126,6 +126,30 @@ def test_marketing_spacing_goes_through_the_scale():
 Run: `python -m pytest tests/api_tests/test_css_tokens.py::test_marketing_spacing_goes_through_the_scale -q 2>&1 | tee /tmp/mkt-spacing.txt`
 Expected: **FAIL** with roughly 70-85 declarations. Keep the file — it is the checklist for Tasks 2-4.
 
+**ERRATUM — the real count was 98** (51 `.lp-*`, 47 `.pp-*`), not 70-85. The excess
+is all drift of the same kind rather than a parser artefact, so the estimate was
+simply low. Worth knowing before you conclude your parser is over-matching.
+
+**ERRATUM — two defects in the code block above, both since fixed.**
+
+*1. The `lp-books-bar` exemption did the opposite of what its comment claimed.*
+Its stated reason is "SVG and animation geometry, not layout spacing" — but this
+invariant only inspects `padding`/`margin`/`gap`, so `.lp-books-bartrack`'s
+`height`, `.lp-books-barfill`'s `transform` and `.lp-vig-svg`'s `display` were
+never in its way. The only declarations the prefix actually excused were
+`.lp-books-bars`' `gap:9px` + `margin:18px` and `.lp-books-barrow`'s `gap:10px` —
+three plain layout values that **Task 3's own worklist names**. Both entries were
+dropped and the three values migrated; the animation and every PrizePicks hex are
+untouched. The general lesson: an exemption justified by a property the test does
+not inspect is not an exemption, it is a hole.
+
+*2. `_SPACING_OK`'s `clamp\([^)]*\)` would have rejected Task 4's own prescribed
+fix.* `clamp(var(--s-6),4vw,var(--s-8))` contains inner `)` characters, so
+`.pp-card`'s fluid padding would have failed the very test that demanded it. The
+pattern is now `clamp\(.*\)`; `.*` is safe here because values in this stylesheet
+carry no spaces, so it cannot span two lengths of a shorthand. The reasoning is
+written inline at the constant.
+
 **Do not commit yet** — the test must go green in the same commit as the migration, or the suite is red between commits.
 
 ---
@@ -395,3 +419,13 @@ Expect only the four files in the File Structure table plus `dist/` and `sw.js`.
 - **`#0a0a12` / `#1f1f2e` / `#0c0c14` / `#0e0e16`** — a four-hex "sunken surface" family with 14+ sites across six screens. A token is coherent only as one cross-screen commit; two-of-fourteen would be worse than today. Needs its own pass.
 - **`.pp-card-glow`** — `.pp-card{overflow:hidden}` clips its outer pixel, so it renders as a second inner hairline, not the outer ring it appears to be. Possibly redundant; deciding is a visual call and removing it is a JSX change.
 - **`analytics-preview.html`** — an unreferenced harness holding a stale verbatim copy of `.pnl-*` CSS and the palette. No test covers it. Delete or update in a dedicated change.
+
+- **`.lp-books`'s `@media (max-width:1023px)` override is now a no-op** and is a
+  clean deletion candidate. Its narrow value was `15px 16px` against a base of
+  `16px 17px`; both round to `var(--s-4)`, so the override became value-identical
+  to the rule it overrides. Task 3 said to migrate both copies, so both were
+  migrated and the redundancy was commented rather than silently resolved —
+  deleting a rule is a different decision from tokenizing one, and mixing the two
+  inside a spacing pass hides it. The 1-2px it used to buy back at narrow widths
+  was below the scale's resolution, which is the actual argument for deleting it
+  rather than reaching for a smaller token.

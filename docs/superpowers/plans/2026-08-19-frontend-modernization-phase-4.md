@@ -37,9 +37,58 @@ xcrun swiftc -typecheck -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-maco
 ```
 Clean output means success. `Charts` also resolves on the macOS SDK, so `AnalyticsView`'s chart *expressions* can be typechecked in isolation with a stub for its iOS-only modifiers.
 
+**ERRATUM — "this recipe is verified working" is wrong: as written it fails on the
+untouched base.** The four-file form emits **16 errors** — `cannot find type
+'LoadState'`, `cannot find type 'AppModel'`, `APIError has no member 'display'` —
+because the file list omits **`CoreProp/App/Shared.swift`**, which declares
+`LoadState` and the `APIError.display` extension. Add it and `BetRow.swift`
+typechecks cleanly:
+
+```bash
+xcrun swiftc -typecheck -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macos14.0 \
+  -I "$MODDIR/Modules" -I "$MODDIR" \
+  CoreProp/Theme/Theme.swift CoreProp/Theme/Components.swift \
+  CoreProp/App/Shared.swift \
+  CoreProp/Features/Bets/BetRow.swift CoreProp/Features/Backtest/SlipCard.swift
+```
+
+This cost two separate implementers real time, and both had to establish the same
+thing to trust their own results: **run the gate on the untouched base first.** A
+gate you have never seen pass cannot tell you whether your edit broke something.
+
+**ERRATUM — the gate's verdict is binary; an error count is not a progress
+metric.** A `navigationBarTitleDisplayMode is unavailable in macOS` diagnostic that
+appears when typechecking a zero-error subset **stopped appearing** once an
+unrelated file in the same invocation failed. So a partially-failing run can
+silently suppress exactly the unavailable-API errors this gate exists to surface.
+Treat *clean* as the only meaningful result, and never conclude "down from 16
+errors to 3, nearly there" — the missing 13 may have taken real findings with them.
+Because of this, back the typecheck with greps for the banned iOS 17+ API rather
+than relying on the compiler to raise availability.
+
 **The 16 typecheckable files:** `Theme/Theme.swift`, `Theme/Components.swift`, `Features/Bets/BetRow.swift`, `Features/Backtest/SlipCard.swift`, `Features/Bets/BetsViewModel.swift`, `Features/Backtest/BacktestViewModel.swift`, `Features/Slip/SlipViewModel.swift`, `Features/Lines/LinesViewModel.swift`, `App/MainTabView.swift`, `App/AppRouter.swift`, `App/Shared.swift`, `App/AppModel.swift`, `App/KeychainSessionStore.swift`, `App/SlipStore.swift`, `App/AuthManager.swift`, `App/AppConfig.swift`.
 
 The other 15 use iOS-only API (`navigationBarTitleDisplayMode`, `listStyle(.insetGrouped)`, `UIImage`, `textInputAutocapitalization`, `import UIKit`, `UNUserNotification*`) and can only be reached by CI.
+
+**ERRATUM — the list of 16 is over-optimistic by two.** `MainTabView.swift`
+references `BetsView`/`LinesView`/… and `AppModel.swift` references
+`NotificationManager`, all of which live in iOS-only files, so neither typechecks
+in this set. The honest figure is **14 standalone**, or **15 plus a
+`NotificationManager` stub** (which is worth writing — it is a handful of lines and
+buys back `AppModel.swift`). This is **pre-existing, not caused by the phase**: the
+identical five errors appear at the untouched phase base, which is the check to run
+before concluding that an edit broke something.
+
+**A stronger local gate is possible than this table implies.** Supplying macOS
+shims for the iOS-only modifiers lets files outside the typecheckable set be
+typechecked anyway — the Task 4 implementer did exactly that for
+`AnalyticsView.swift` by stubbing its iOS-only modifiers, and the technique
+generalises to the seven account/auth files this table writes off as CI-only,
+which are the highest-risk files in the phase precisely because nothing compiles
+them. If `ios/localcheck/` exists in the tree, read its `README.md` for what the
+gate does and does not prove before trusting it: shims are not Apple's real
+declarations, so it is not `xcodebuild`, and **availability** checking in
+particular stays CI's job.
 
 ---
 
@@ -220,6 +269,13 @@ grep -rn "Color(hex: 0x" ios/CoreProp/ | grep -v "Theme.swift"
 ```
 Paste the full list. Counted against the tree: **22 sites** — `0xFCA5A5` ×17, `0x86EFAC` ×2, `0xFDE68A` ×2, `0x93C5FD` ×2. (The recon said 21 for `0xFCA5A5`; the real count is 17. If yours differs from 22, say so before migrating.)
 
+**ERRATUM — 22 is the number of grep *lines*, not the number of occurrences.**
+There are **23** occurrences: `SubscriptionView.swift:63` carries two on one line, and
+`grep -rn` collapses them. The four per-hex counts above are correct, which is why
+the discrepancy is invisible until you total them. Verify with
+`grep -ro "Color(hex: 0x[0-9A-Fa-f]*" ios/CoreProp/ | grep -v Theme.swift | wc -l`,
+not with `grep -c`.
+
 - [ ] **Step 2: Migrate**
 
 `0xFCA5A5` → `Theme.red2`, `0x86EFAC` → `Theme.green2`, `0xFDE68A` → `Theme.amber2`, `0x93C5FD` → `Theme.blue2`.
@@ -255,6 +311,26 @@ git commit -m "refactor(ios): tokenize the 22 inline colour literals"
 
 Replace the `LinearGradient(colors: [Theme.cardGradTop, Theme.cardGradBot], …)` background with flat `Theme.card`, change the stroke from `Theme.hair2` to `Theme.hair` (every web card uses `--hair` at .06; iOS used .10), and move the shadow onto the new elevation tokens. The default `radius` follows the `Theme.radius` alias and so is already 16 after Task 1 — **the signature needs no edit**, but be aware this changes all 14 call sites at once.
 
+**ERRATUM — the call-site count is 16, of which 13 take the default.** Three pass
+an explicit `radius:`, so 13 (not 14) move with the alias. `Theme.swift`'s own
+comment says 13 and is the one to trust.
+
+**ERRATUM — "the signature needs no edit" is true of `radius` and false of
+`padding`.** `cpCard(radius:padding:)`'s **`padding: CGFloat = 14` default is off
+the spacing scale** and no task in this plan covers it, so it survives the phase.
+Leaving it is defensible — changing it moves the interior padding of all 16 cards
+at once, which is a bigger visual move than the radius change and wants a rendered
+check. But it must be a *recorded* decision, not an oversight: the same is true of
+several other literals in this file that no step enumerates (`PrimaryButtonStyle`
+/`GhostButtonStyle` 12/18, `FilterChip` horizontal 13, `StatTile` `spacing: 6`,
+`EmptyStateView` 10/44/24, `ErrorStateView` 40/24, `SkeletonRow` 10/10,
+`DataAgePill` 5/4/9, `LeaguePill` 3/8, `BookBadgeView` 2/6, `SectionHeader`
+`spacing: 2`). This plan enumerated its `Components.swift` work component by
+component rather than deriving it from an invariant, which is exactly how a
+per-file worklist goes stale — the web phases used a failing test as the worklist
+for this reason. `tests/api_tests/test_ios_tokens.py` now supplies that invariant
+for iOS; work its output, not this list.
+
 - [ ] **Step 2: `StatTile`**
 
 Three changes: drop `.uppercased()` on the label (web's `.bt-card-label` is not uppercase — it was de-capsed in Phase 1's typography pass), change `.kerning(0.6)` to `.tracking(0.42)` (`.04em` at 10.5pt), and put the wrapper's explicit `radius: 12` on `Theme.rMd`. The tone-bad colour is already `Theme.red2` after Task 2. The 22pt value size already matches web.
@@ -270,6 +346,13 @@ Give it an explicit `.frame(height: 34)` so it matches the 34×34 filter-menu bu
 - [ ] **Step 5: `ErrorStateView` and `SkeletonRow`**
 
 `ErrorStateView`'s message colour is `Theme.amber`; web's error state is `--red-2`. Move the *icon* to `Theme.amber` (a warning glyph is legitimately amber) and the *message* to `Theme.text2`, with the retry button unchanged — or state a different choice with a reason.
+
+**ERRATUM — the premise is wrong; there was nothing to change.** The message was
+*already* `Theme.text2` and the icon *already* `Theme.amber`, i.e. exactly the
+target state. The recon that produced this step misread the component. No edit was
+made; a comment was added at the two sites recording why they are correct, so the
+next reader does not "fix" them back. A step whose premise fails should be reported
+and skipped, not satisfied by making a change for its own sake.
 
 `SkeletonRow`'s bars use `cornerRadius: 4`, which is off-scale. Web's `.cp-skel` is `--r-sm`. Use `Theme.rSm`.
 
@@ -313,6 +396,12 @@ It keeps `Theme.primary2` and `.monotone`. It is a different chart with a differ
 
 The three `.cpCard()` panels use `VStack(spacing: 14).padding(16)`. Move to `Theme.s4`/`Theme.s5` per the scale. Also move the `"CUMULATIVE P&L"` / `"CALIBRATION RELIABILITY"` / `"CLOSING LINE VALUE"` labels from `.kerning(0.6)` to `.tracking(0.42)`, keeping them uppercase — these are true section headers, which web's rule preserves.
 
+**ERRATUM — the spacing description is wrong.** The three panels use
+`VStack(spacing: 10)`; the `spacing: 14` / `padding(16)` pair belongs to the
+**outer page container**, not the panels. Migrate each literal onto the scale it
+actually sits on, which means reading the file rather than following the sentence
+above.
+
 Note the header total is `Theme.mono(18, .bold)` where web's `.pnl-total` is 34px — the largest type-scale gap in the app. Raising it is a judgement call; if you do, say so and check it does not crowd the 180pt chart.
 
 - [ ] **Step 5: Verify the acceptance criterion**
@@ -322,9 +411,41 @@ grep -rn "LinearGradient" ios/CoreProp/
 ```
 Expected: **exactly one hit** — this file's directional P&L fill. The `cpCard` and `SlipCard` gradients are gone by now (Tasks 3 and 5).
 
+**ERRATUM — two corrections to this step.**
+
+*First, the task numbering:* `SlipCard`'s gradient is removed by **Task 6**, not
+Task 5. So immediately after Task 4 this grep correctly reads **2**, and only
+reaches 1 once Task 6 lands. Reading 2 here is not a failure.
+
+*Second, and easier to lose an hour to:* **the grep counts code comments.** A doc
+comment that mentions `LinearGradient` — for instance one explaining *why* a
+surface is now flat — inflates the count and reads as an unflattened surface. The
+Task 1–4 implementer had to reword its own comments to avoid the literal strings
+`LinearGradient` and `.kerning(` for exactly this reason, which is a bad trade:
+the comment should say the clearer thing and the *check* should be comment-aware.
+`tests/api_tests/test_ios_tokens.py` strips comments before matching and is the
+gate to trust; this grep is a convenience, not the contract.
+
 - [ ] **Step 6: Typecheck the chart expressions**
 
 This file is not in the typecheckable 16 (it uses `navigationBarTitleDisplayMode`). Typecheck the chart in isolation: copy the `Chart { … }` body into a scratch file under `/tmp` with a minimal wrapper, and run Gate 3's recipe against it (`Charts` resolves on the macOS SDK). **`.stepEnd` is the item most likely to be wrong** — confirm it exists as an `InterpolationMethod` case before relying on CI to tell you.
+
+**ERRATUM — `.stepEnd` is real but it is not a case.** `InterpolationMethod` is a
+**`struct`**, and `stepEnd` is a `static var` on it; the full member set is
+`linear, cardinal, catmullRom, monotone, stepStart, stepCenter, stepEnd`.
+`InterpolationMethod` carries `intro_iOS = 16.0` and `stepEnd` declares no
+narrower availability, so it is **safe for the iOS 16 target**. This was settled
+three ways rather than by trusting CI: a `swift-api-digester` dump of the `Charts`
+module, a positive typecheck probe, and — the part that makes the other two mean
+anything — a **negative control**, `.stepEndX`, which fails with *"type
+'InterpolationMethod' has no member 'stepEndX'"*. A probe with no negative control
+proves only that the compiler ran. Semantically `.stepEnd` is d3's
+`curveStepAfter`, i.e. web's step-after, which is the correct direction for a
+bankroll: it holds flat and jumps *at* settlement.
+
+`.tracking()` was pinned the same way, since a `.kerning()` → `.tracking()` swap
+would otherwise fail only in CI: both resolve at every macOS target the SDK
+accepts, so both predate iOS 16.
 
 - [ ] **Step 7: Commit**
 
