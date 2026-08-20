@@ -2,7 +2,15 @@ name: tests
 
 on:
   push:
-    branches: [main]
+    # `feat/**` as well as main. The `bundles` job below is the ONLY check that
+    # catches a .jsx edited without ./build.sh being re-run, and on a
+    # main-and-PRs-only trigger it first fires when the PR opens — after however
+    # many feature-branch pushes have already been reviewed against a stale
+    # bundle. dist/ is committed and served directly (Render's build env is
+    # pip-only), so that is the most dangerous silent failure in this repo.
+    # Scoped to feat/** rather than '**' deliberately: throwaway and rebase
+    # branches should not each burn a runner.
+    branches: [main, 'feat/**']
   pull_request:
     branches: [main]
   workflow_dispatch:
