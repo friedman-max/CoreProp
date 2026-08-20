@@ -794,27 +794,53 @@ a{color:inherit;text-decoration:none}
 }
 .ev-pulse{color:var(--green);font-style:normal;font-weight:600}
 
-/* Backtest page auto-place strip — the discoverable entry point. Red when
- * armed, matching the panel: "on" means real money can leave. */
-.bt-ap-strip{
-  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-  padding:9px 12px;margin:0 0 12px;border-radius:var(--r-md,10px);
-  background:rgba(255,255,255,.03);border:1px solid var(--hair);
-  font-size:12.5px;color:var(--text-2);
+/* ───────── Auto-place bar ─────────
+ * Prominent, inline, top of the +EV tab and the Backtest page. Arms in two
+ * taps (consent, then mode) so it is usable one-handed on a phone — the whole
+ * reason it moved out of the avatar dropdown. */
+/* Flat tints, not gradients — tests/api_tests/test_css_guards.py bans accent
+ * gradients project-wide, and this bar is no exception. */
+.ap-bar{
+  background:rgba(30,111,176,.08);
+  border:1px solid rgba(30,111,176,.38);border-radius:var(--r-lg,14px);
+  padding:13px 14px;margin:0 0 14px;
 }
-.bt-ap-strip.is-armed{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.45);color:#FECACA}
-/* --text-3, not --text-4: the 2.3:1 token is guarded to decorative glyphs
- * only (tests/api_tests/test_css_tokens.py), and while this dot is
- * aria-hidden it still signals armed state, so it should be legible. */
-.bt-ap-dot{width:8px;height:8px;border-radius:50%;background:var(--text-3);flex-shrink:0}
-.bt-ap-strip.is-armed .bt-ap-dot{background:var(--red)}
-.bt-ap-txt{flex:1 1 auto;min-width:0}
-.bt-ap-btn{
-  flex-shrink:0;border:1px solid var(--hair);background:rgba(255,255,255,.06);
-  color:var(--text);border-radius:var(--r-sm,8px);padding:6px 12px;
-  font-size:12.5px;font-weight:600;cursor:pointer;min-height:32px;
+/* Armed is RED, not green: "on" means entries get submitted. */
+.ap-bar.is-armed{
+  background:rgba(239,68,68,.11);
+  border-color:rgba(239,68,68,.5);
 }
-.bt-ap-btn:hover{border-color:var(--primary)}
+.ap-bar-main{display:flex;align-items:center;gap:11px}
+.ap-bar-dot{
+  width:9px;height:9px;border-radius:50%;flex-shrink:0;background:var(--primary);
+}
+.ap-bar.is-armed .ap-bar-dot{background:var(--red);box-shadow:0 0 0 4px rgba(239,68,68,.18)}
+.ap-bar-txt{flex:1 1 auto;min-width:0}
+.ap-bar-t{font-size:14px;font-weight:650;letter-spacing:-.01em;color:var(--text)}
+.ap-bar-s{font-size:12px;color:var(--text-2);margin-top:2px;line-height:1.35}
+.ap-bar-cfg{
+  flex-shrink:0;background:none;border:1px solid var(--hair);color:var(--text-2);
+  border-radius:var(--r-sm,8px);width:34px;height:34px;font-size:14px;cursor:pointer;
+}
+.ap-bar-cfg:hover{border-color:var(--primary);color:var(--text)}
+.ap-bar-consent{
+  display:flex;gap:9px;align-items:flex-start;margin:11px 0 0;
+  font-size:12.5px;line-height:1.4;color:var(--text-2);cursor:pointer;
+}
+.ap-bar-consent input{margin-top:2px;flex-shrink:0}
+.ap-bar-actions{display:flex;gap:8px;margin-top:11px}
+.ap-bar-btn{
+  flex:1 1 0;min-height:40px;                 /* full-width touch targets */
+  border:1px solid var(--hair);background:rgba(255,255,255,.06);color:var(--text);
+  border-radius:var(--r-md,10px);font-size:13.5px;font-weight:600;cursor:pointer;
+  transition:background .12s ease,border-color .12s ease;
+}
+.ap-bar-btn:hover:not(:disabled){background:rgba(255,255,255,.10);border-color:var(--primary)}
+.ap-bar-btn:disabled{opacity:.42;cursor:not-allowed}
+.ap-bar-live{border-color:rgba(239,68,68,.45);color:#FECACA}
+.ap-bar-live.is-confirm{background:var(--red);border-color:var(--red);color:#fff}
+.ap-bar-off{flex:0 0 auto;padding:0 18px}
+.ap-bar-err{margin-top:9px;font-size:12.5px;color:#FCA5A5}
 
 /* ───────── Auto-place panel ─────────
  * The arming UI for real-money auto-submission. Sized mobile-first: the whole
@@ -1851,16 +1877,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=e6e5dd2bda"></script>
-<script src="/static/dist/tweaks-panel.js?v=e6e5dd2bda"></script>
-<script src="/static/dist/components.js?v=e6e5dd2bda"></script>
-<script src="/static/dist/landing.js?v=e6e5dd2bda"></script>
-<script src="/static/dist/ev-page.js?v=e6e5dd2bda"></script>
-<script src="/static/dist/page-boards.js?v=e6e5dd2bda"></script>
-<script src="/static/dist/page-backtest.js?v=e6e5dd2bda"></script>
-<script src="/static/dist/page-analytics.js?v=e6e5dd2bda"></script>
-<script src="/static/dist/pricing.js?v=e6e5dd2bda"></script>
-<script src="/static/dist/app-main.js?v=e6e5dd2bda"></script>
+<script src="/static/dist/api.js?v=36a0fe4fd8"></script>
+<script src="/static/dist/tweaks-panel.js?v=36a0fe4fd8"></script>
+<script src="/static/dist/components.js?v=36a0fe4fd8"></script>
+<script src="/static/dist/landing.js?v=36a0fe4fd8"></script>
+<script src="/static/dist/ev-page.js?v=36a0fe4fd8"></script>
+<script src="/static/dist/page-boards.js?v=36a0fe4fd8"></script>
+<script src="/static/dist/page-backtest.js?v=36a0fe4fd8"></script>
+<script src="/static/dist/page-analytics.js?v=36a0fe4fd8"></script>
+<script src="/static/dist/pricing.js?v=36a0fe4fd8"></script>
+<script src="/static/dist/app-main.js?v=36a0fe4fd8"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same

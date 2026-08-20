@@ -544,6 +544,9 @@ function EVPage() {
   return (
     <main className="ev">
       <div className="ev-main">
+        {/* Auto-place: first thing on the tab. It acts on the slips this page
+            produces, so burying it in an avatar dropdown made it unfindable. */}
+        <AutoPlaceBar />
         {/* Filter bar */}
         <div className="ev-filters">
           <div className="ev-filter">

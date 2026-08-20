@@ -181,41 +181,6 @@ function btMapSlip(s) {
   };
 }
 
-// Page-level auto-place status. Lives here, not only in the avatar menu:
-// this is the page where placement actually happens, and a control buried in a
-// small dropdown on a phone is a control nobody finds. Fetched once per page
-// rather than per slip card — there can be dozens of cards.
-function AutoPlaceStrip() {
-  const [st, setSt] = useState(null);
-  const load = React.useCallback(() => {
-    if (!window.cpApi || !window.cpApi.isLoggedIn()) return;
-    window.cpApi.apiFetch("/api/auto-place/status").then(setSt).catch(() => setSt(null));
-  }, []);
-  useEffect(() => {
-    load();
-    // Re-read whenever the panel saves, so this strip never contradicts it.
-    window.addEventListener("cp:auto-place-changed", load);
-    return () => window.removeEventListener("cp:auto-place-changed", load);
-  }, [load]);
-
-  if (!st) return null;
-  const open = () => window.dispatchEvent(new CustomEvent("cp:open-auto-place"));
-  return (
-    <div className={"bt-ap-strip " + (st.armed ? "is-armed" : "")}>
-      <span className="bt-ap-dot" aria-hidden="true" />
-      <span className="bt-ap-txt">
-        {st.armed
-          ? <>Auto-place <b>armed</b> · {st.mode} · ${st.stake}/slip
-              {st.spent_today != null && <> · ${Number(st.spent_today).toFixed(2)} of ${Number(st.daily_cap).toFixed(2)} today</>}</>
-          : <>Auto-place is <b>off</b>{st.blocked_reason && st.mode !== "off" ? ` — ${st.blocked_reason}` : ""}</>}
-      </span>
-      <button type="button" className="bt-ap-btn" onClick={open}>
-        {st.armed ? "Change" : "Set up"}
-      </button>
-    </div>
-  );
-}
-
 function BacktestPage() {
   const [resultFilter, setResultFilter] = useState("");
   const [leagueFilter, setLeagueFilter] = useState("");
@@ -395,7 +360,7 @@ function BacktestPage() {
        *   - ROI: positive ⇒ green, negative ⇒ red. Computed as
        *     (sum_payouts - n_resolved) / n_resolved using 1-unit stake per
        *     slip, matching the backend's pnl_timeline math. */}
-      <AutoPlaceStrip />
+      <AutoPlaceBar />
       <div className="bt-summary">
         <StatCard loading={statsLoading} label="Slips (Done / Total)" sub="Recent 300" value={`${slipsDone} / ${slipsTotal}`} />
         <StatCard

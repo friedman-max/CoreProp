@@ -224,6 +224,102 @@ function AutoPlacePanel({ onClose }) {
   );
 }
 
+// Prominent inline auto-place control. Shared so the +EV tab and the Backtest
+// page show the same state — two copies drifting apart on a real-money switch
+// is exactly the bug you do not want.
+//
+// Arms INLINE rather than opening the modal: consent + mode in one place, so
+// turning it on is a couple of taps on a phone instead of a hunt through a
+// dropdown. The modal (AutoPlacePanel) remains for stake/cap editing.
+function AutoPlaceBar() {
+  const api = window.cpApi;
+  const [st, setSt] = useState(null);
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [confirmLive, setConfirmLive] = useState(false);
+
+  const load = React.useCallback(() => {
+    if (!api || !api.isLoggedIn()) return;
+    api.apiFetch("/api/auto-place/status")
+      .then(r => { setSt(r); if (r.mode && r.mode !== "off") setConsent(true); })
+      .catch(() => {});
+  }, [api]);
+
+  useEffect(() => {
+    load();
+    window.addEventListener("cp:auto-place-changed", load);
+    return () => window.removeEventListener("cp:auto-place-changed", load);
+  }, [load]);
+
+  if (!st) return null;
+
+  const arm = async (mode) => {
+    if (busy) return;
+    if (mode === "live" && !confirmLive) { setConfirmLive(true); return; }
+    setBusy(true); setErr("");
+    try {
+      await api.apiFetch("/api/user/auto-place-prefs", {
+        method: "POST",
+        body: { mode, consent: mode === "off" ? undefined : true },
+      });
+      setConfirmLive(false);
+      window.dispatchEvent(new CustomEvent("cp:auto-place-changed"));
+      load();
+    } catch (e) {
+      setErr((e.message || "Couldn't change auto-place.").replace(/^HTTP \d+:\s*/, ""));
+    } finally { setBusy(false); }
+  };
+
+  const armed = st.armed;
+  return (
+    <div className={"ap-bar " + (armed ? "is-armed" : "")}>
+      <div className="ap-bar-main">
+        <span className="ap-bar-dot" aria-hidden="true" />
+        <div className="ap-bar-txt">
+          <div className="ap-bar-t">
+            Auto-place {armed ? <b>{st.mode === "live" ? "LIVE" : "paper"}</b> : <b>off</b>}
+          </div>
+          <div className="ap-bar-s">
+            {armed
+              ? <>${st.stake}/slip{st.spent_today != null && <> · ${Number(st.spent_today).toFixed(2)} of ${Number(st.daily_cap).toFixed(2)} today</>}</>
+              : "Places your auto-backtested slips on PrizePicks for you."}
+          </div>
+        </div>
+        <button className="ap-bar-cfg" onClick={() => window.dispatchEvent(new CustomEvent("cp:open-auto-place"))}
+                title="Stake, daily cap and full status">⚙</button>
+      </div>
+
+      {!armed && (
+        <label className="ap-bar-consent">
+          <input type="checkbox" checked={consent}
+                 onChange={e => { setConsent(e.target.checked); setConfirmLive(false); }} />
+          <span>Let CoreProp submit entries for me, up to ${st.daily_cap}/day at ${st.stake} a slip.</span>
+        </label>
+      )}
+
+      <div className="ap-bar-actions">
+        {armed ? (
+          <button className="ap-bar-btn ap-bar-off" disabled={busy} onClick={() => arm("off")}>
+            Turn off
+          </button>
+        ) : (
+          <>
+            <button className="ap-bar-btn" disabled={busy || !consent} onClick={() => arm("paper")}>
+              Paper
+            </button>
+            <button className={"ap-bar-btn ap-bar-live " + (confirmLive ? "is-confirm" : "")}
+                    disabled={busy || !consent} onClick={() => arm("live")}>
+              {confirmLive ? "Tap again — real money" : "Go live"}
+            </button>
+          </>
+        )}
+      </div>
+      {err && <div className="ap-bar-err">{err}</div>}
+    </div>
+  );
+}
+
 function TopNav({ active, onTab, onLogin, loggedIn, onLogout, variant = "app", locked = false }) {
   // Signed-out visitors on the landing page get no app tabs. All six used to
   // render for everyone: they look like navigation, but every click just
