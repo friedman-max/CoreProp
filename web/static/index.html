@@ -1029,7 +1029,13 @@ a{color:inherit;text-decoration:none}
  * a live constraint — but the conclusion still holds on its own terms: the red
  * row treatment below is the status, .ev-legend in the meta row is what tells
  * the user red = logged, and a badge would only repeat both. */
-.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.10em;background:rgba(96,165,250,.14);color:#93C5FD;padding:2px 6px;border-radius:var(--r-sm);margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
+/* Dead CSS — no .jsx references .ev-sharp. Kept rather than deleted (deleting it
+ * is a separate call), but its tracking is migrated with the live ones: the
+ * typography pass drove off `grep -n "letter-spacing:\.1em"`, which does not
+ * match the `.10em` spelling, so this and .bt-slip-compact .bt-slip-badge were
+ * the two sites it missed. Leaving a dead rule on the pre-pass value is how the
+ * next person rediscovers the same too-narrow grep. */
+.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.04em;background:rgba(96,165,250,.14);color:#93C5FD;padding:2px 6px;border-radius:var(--r-sm);margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
 
 /* Logged-bet row: bet is already in this user's backtest, so it will not
  * be selected for future auto-built slips. Painted red end-to-end so the
@@ -1505,6 +1511,12 @@ a{color:inherit;text-decoration:none}
 .bt-slip-hd-l{display:flex;flex-direction:column;gap:2px}
 .bt-slip-type{font-size:12.5px;font-weight:700}
 .bt-slip-ts{font-size:11px;color:var(--text-3);font-family:"JetBrains Mono",monospace}
+/* font-size, padding and letter-spacing here are all overridden by
+ * `.bt-slip-compact .bt-slip-badge` further down, and that copy is the one every
+ * rendered badge gets (page-backtest.jsx only ever emits the badge inside a
+ * compact card). Editing the tracking HERE ships a no-op — the .10em that copy
+ * carried is exactly how the typography pass came to miss it. The colour rules
+ * below are single-class and do render. */
 .bt-slip-badge{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:var(--r-sm)}
 .bt-slip-badge.is-win{background:rgba(34,197,94,.14);color:#86EFAC}
 .bt-slip-badge.is-loss{background:rgba(239,68,68,.14);color:var(--red-2)}
@@ -1926,7 +1938,16 @@ a{color:inherit;text-decoration:none}
 .bt-slip-compact .bt-slip-hd-r{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .bt-slip-compact .bt-slip-type{font-size:14px;font-weight:800;letter-spacing:.02em;color:var(--text)}
 .bt-slip-compact .bt-slip-ts{font-size:12px;color:var(--text-3)}
-.bt-slip-compact .bt-slip-badge{font-size:10.5px;padding:var(--s-1) 10px;letter-spacing:.10em;font-weight:800}
+/* THIS is the copy that renders. page-backtest.jsx emits the WIN/LOSS/PUSH/
+ * PENDING badge in exactly one place, inside `<article class="bt-slip
+ * bt-slip-compact …">`, so every badge in the app matches this (0,2,0) rule and
+ * the base .bt-slip-badge's own letter-spacing is unreachable — the base rule's
+ * `.08em` is dead for tracking and is left only so a badge rendered outside a
+ * compact card would still get something sane. It said `.10em`, which is why the
+ * typography pass missed it: that pass grepped `letter-spacing:\.1em` and this
+ * file spells the value `.10em`. So the one dated-caps micro-label the pass
+ * existed to fix was the one it did not reach. --s-1 is the vertical pad. */
+.bt-slip-compact .bt-slip-badge{font-size:10.5px;padding:var(--s-1) 10px;letter-spacing:.04em;font-weight:800}
 
 /* Slip-level +EV % badge */
 .bt-slip-ev{
