@@ -2,7 +2,18 @@ name: ios
 
 on:
   push:
-    branches: [main]
+    # `feat/**` as well as main. This job is the only real compile gate for the
+    # SwiftUI app target — the dev box has no Xcode and no iOS SDK, so the local
+    # `swift run CorePropKitVerify` type-checks CorePropKit against the macOS SDK
+    # and never touches the 15 files under ios/CoreProp/Features. An
+    # iOS-17-only API or an availability error there first appeared on someone
+    # else's push to main.
+    #
+    # Scoped twice over, because this one runs on macos-15 and those runner
+    # minutes are billed at a multiple of ubuntu's: `feat/**` rather than '**',
+    # and the existing `paths` filter still applies, so a branch that touches no
+    # Swift never starts it.
+    branches: [main, 'feat/**']
     paths: ["ios/**", ".github/workflows/ios.yml"]
   pull_request:
     branches: [main]
