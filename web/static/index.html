@@ -699,7 +699,13 @@ a{color:inherit;text-decoration:none}
 .lp-game-evchip{position:absolute;padding:4px 11px;border-radius:999px;background:#0A2A12;border:1px solid rgba(110,255,0,.4);color:#6EFF00;font-weight:800;font-size:13px;letter-spacing:.04em;white-space:nowrap}
 .lp-game-wash{position:absolute;inset:0;background:rgba(255,74,74,.5);border-radius:22px}
 .lp-game-stamp{position:absolute;left:50%;top:50%;line-height:0}
-.lp-game-err{margin:12px 0 0;font-size:12.5px;color:#FCA5A5;text-align:center}
+/* The one `lp-game-*` rule on the site palette rather than the PrizePicks clone
+ * palette, and so the one deliberate exception to "do not touch the minigame".
+ * #FCA5A5 is CoreProp's error red (--red-2); PP's loss red is #FF4A4A and stays
+ * literal everywhere it appears. This element is also the only part of the game
+ * that renders *outside* the PP card — it is the role="alert" status line beneath
+ * it. Value-identical swap. */
+.lp-game-err{margin:12px 0 0;font-size:12.5px;color:var(--red-2);text-align:center}
 /* THE next action, on the card. Ben on v1: "the next pick button has to be
  * easier to reach or easier to see, it should be largely shown maybe even on
  * the player 'card' itself". So: full card width, 54px tall, filled --primary
@@ -1236,6 +1242,14 @@ a{color:inherit;text-decoration:none}
 .pp-cta:hover{background:#195F97}
 .pp-cta:disabled{opacity:.65;cursor:not-allowed}
 .pp-cta-sub{text-align:center;font-size:12.5px;color:var(--text-3);margin:var(--s-3) 0 var(--s-6)}
+/* The checkout error, as a modifier rather than an inline colour in pricing.jsx.
+ * Deliberately NOT .cp-state-err: that block also sets padding and a font-size,
+ * which would change this line's geometry. Colour only, so the error reads as the
+ * same line it replaces. */
+.pp-cta-sub.is-err{color:var(--red-2)}
+/* The "Manage subscription" button's 4px offset, previously a style={{marginTop:4}}
+ * in pricing.jsx — the last inline spacing on either marketing page. */
+.pp-portal-btn{margin-top:var(--s-1)}
 
 .pp-benefits{list-style:none;padding:0;margin:0 0 var(--s-6);display:flex;flex-direction:column;gap:var(--s-4);border-top:1px solid var(--hair);padding-top:var(--s-5)}
 .pp-benefit{display:flex;gap:var(--s-3);align-items:flex-start}
@@ -2095,16 +2109,16 @@ a{color:inherit;text-decoration:none}
      render and blanks the page). sw.js's cache name is stamped with the same
      id so activate() purges prior builds. See build.sh + app-main.jsx
      ErrorBoundary. -->
-<script src="/static/dist/api.js?v=1a5956e50e"></script>
-<script src="/static/dist/tweaks-panel.js?v=1a5956e50e"></script>
-<script src="/static/dist/components.js?v=1a5956e50e"></script>
-<script src="/static/dist/landing.js?v=1a5956e50e"></script>
-<script src="/static/dist/ev-page.js?v=1a5956e50e"></script>
-<script src="/static/dist/page-boards.js?v=1a5956e50e"></script>
-<script src="/static/dist/page-backtest.js?v=1a5956e50e"></script>
-<script src="/static/dist/page-analytics.js?v=1a5956e50e"></script>
-<script src="/static/dist/pricing.js?v=1a5956e50e"></script>
-<script src="/static/dist/app-main.js?v=1a5956e50e"></script>
+<script src="/static/dist/api.js?v=d76e8e67f2"></script>
+<script src="/static/dist/tweaks-panel.js?v=d76e8e67f2"></script>
+<script src="/static/dist/components.js?v=d76e8e67f2"></script>
+<script src="/static/dist/landing.js?v=d76e8e67f2"></script>
+<script src="/static/dist/ev-page.js?v=d76e8e67f2"></script>
+<script src="/static/dist/page-boards.js?v=d76e8e67f2"></script>
+<script src="/static/dist/page-backtest.js?v=d76e8e67f2"></script>
+<script src="/static/dist/page-analytics.js?v=d76e8e67f2"></script>
+<script src="/static/dist/pricing.js?v=d76e8e67f2"></script>
+<script src="/static/dist/app-main.js?v=d76e8e67f2"></script>
 
 <!-- App bootstrap now lives in web/static/app-main.jsx (compiled to
      dist/app-main.js above). Kept out of this file so it goes through the same
