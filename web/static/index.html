@@ -1606,6 +1606,16 @@ a{color:inherit;text-decoration:none}
 .pnl-chart{margin:0 -4px;touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .pnl-chart svg{display:block;width:100%;-webkit-user-select:none;user-select:none}
 
+/* #0a0a12 and #1f1f2e below stay LITERAL: no :root token matches either value,
+ * and neither is a one-screen cleanup. #0a0a12 is the recessed-well fill with 14
+ * declarations across six screens, and it is only one member of a four-hex
+ * "sunken surface" family — #0a0a12, #0c0c14 (.cp-seg, .pp-toggle), #0e0e16
+ * (.cp-input), and historically #13131c — so naming one token means deciding
+ * whether those are three mistakes or three deliberate depths. That is a design
+ * call, not tokenization, and doing two of fourteen sites leaves the same colour
+ * spelled two ways, which is worse than today. #1f1f2e is the active-segment
+ * fill, shared with .pp-tg-btn.is-on on the pricing page; same argument at
+ * smaller scale. Both need their own cross-screen pass. */
 .pnl-range{display:inline-flex;gap:2px;background:#0a0a12;border:1px solid var(--hair);padding:3px;border-radius:var(--r-sm);margin-top:8px}
 .pnl-range-btn{background:transparent;border:0;color:var(--text-3);padding:6px 12px;border-radius:var(--r-sm);font-weight:600;font-size:11.5px;cursor:default;letter-spacing:.04em;font-family:"JetBrains Mono",monospace}
 .pnl-range-btn:hover{color:var(--text)}
@@ -1621,7 +1631,15 @@ a{color:inherit;text-decoration:none}
 .pnl-custom{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;background:#0a0a12;border:1px solid var(--hair);padding:6px 8px;border-radius:var(--r-md)}
 .pnl-custom-field{display:inline-flex;align-items:center;gap:8px}
 .pnl-custom-field>span{font-size:10.5px;font-weight:700;letter-spacing:.04em;color:var(--text-3);font-family:"JetBrains Mono",ui-monospace,monospace}
-.pnl-custom-input{background:#14141e;border:1px solid var(--hair-2);color:var(--text);border-radius:var(--r-sm);padding:7px 10px;font-size:12.5px;font-family:"JetBrains Mono",ui-monospace,monospace;outline:none;color-scheme:dark;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease}
+/* var(--card), not the literal it used to be. Value-identical, so this renders
+ * no differently today — which is exactly the problem it fixes. It was the ONLY
+ * place in the stylesheet that spelled --card's hex outside :root, so a palette
+ * change would have moved every other card and panel and silently left this one
+ * date input behind, with nothing to grep for. Unlike the two literals above,
+ * this value HAD an exact token all along; it was skipped, not deferred. (The
+ * hex is deliberately not repeated here — a bare copy of a token's value in a
+ * comment is the next thing someone pastes into a rule.) */
+.pnl-custom-input{background:var(--card);border:1px solid var(--hair-2);color:var(--text);border-radius:var(--r-sm);padding:7px 10px;font-size:12.5px;font-family:"JetBrains Mono",ui-monospace,monospace;outline:none;color-scheme:dark;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease}
 .pnl-custom-input:hover{border-color:var(--primary-2)}
 .pnl-custom-input:focus{border-color:var(--primary);box-shadow:var(--ring)}
 .pnl-custom-arrow{color:var(--text-4);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
