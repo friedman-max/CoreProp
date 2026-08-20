@@ -1180,3 +1180,143 @@ def test_the_radius_offsets_still_have_the_containers_they_derive_from():
     assert border and border[0].startswith("1px"), (
         f".ev-filters' border is what `calc(var(--r-lg) - 1px)` subtracts: {border}"
     )
+
+
+# ── Elevation on the flattened surfaces ───────────────────────────────────────
+# The spec asked for `--shadow-card` as the replacement lift for the gradient the
+# flattening removed. It landed on ZERO new surfaces: the token's only two
+# consumers are `.cp-modal` and `.pp-card`, both of which had it before.
+#
+# "None, and here is why" is a legitimate answer, so this test does not assert a
+# direction — it asserts that a DECISION EXISTS for every flattened surface, and
+# then enforces whichever way each one went. Every key of FLATTENED_SURFACES must
+# appear in exactly one of the two dicts below, so a newly-flattened surface cannot
+# be added without someone choosing. That cross-check is the whole mechanism; the
+# dicts are the record.
+#
+# Read CARD_ELEVATION being empty as the deliberate current answer, not as a test
+# that does nothing: the twelve surfaces below are classified and enforced, and the
+# `--shadow-card` token itself is asserted alive with real consumers, so the
+# denominators are 12 and 2 rather than 0.
+#
+# If the elevation pass concludes that some app surfaces DO take the shadow, move
+# their keys from CARD_NO_ELEVATION to CARD_ELEVATION with the reason. This test
+# fails until that move happens, on purpose — the failure IS the "an elevation
+# decision was made about this surface" record.
+CARD_ELEVATION: dict[str, str] = {
+    # Empty. `.pp-card` is not here even though it carries the token, because it
+    # is not one of the flattened surfaces' elevation decisions — it is the pricing
+    # hero, on the marketing surface, and it kept a shadow it always had. Adding it
+    # would make the partition assertion below meaningless (the set must be a
+    # subset of FLATTENED_SURFACES for the cross-check to mean anything).
+}
+
+CARD_NO_ELEVATION: dict[str, str] = {
+    # The two recessed wells. A drop shadow implies the surface sits ABOVE its
+    # container; both of these sit below theirs, so a shadow would fight the
+    # geometry rather than restore the lost lift.
+    ".ev-slip": "a sidebar rail sunk beside .ev-table (--bg-2), not a raised card",
+    ".cal-curves": "a chart well sunk inside .an-panel (--bg), not a raised card",
+    # Full-bleed panels that span the page gutter. Their separation is the page
+    # gutter plus a hairline; a shadow on something whose edges reach the viewport
+    # has nothing to cast onto.
+    ".ev-filters": "full-width config tile; separated by gutter + --hair",
+    ".ev-table": "full-width list surface; separated by gutter + --hair",
+    ".bd-filters": "full-width filter tile; separated by gutter + --hair",
+    ".bd-tbl-wrap": "full-width board panel; separated by gutter + --hair",
+    ".an-panel": "full-width analytics panel; separated by gutter + --hair",
+    # The sticky table header. It must be indistinguishable from .bd-tbl-wrap or it
+    # bands as you scroll (see FLATTENED_SURFACES' note), so its elevation is not
+    # its own decision — it is whatever .bd-tbl-wrap's is.
+    ".bd-tbl thead th": "must match .bd-tbl-wrap exactly or the header bands",
+    # Cards in a grid. These are the surfaces the spec's replacement lift was
+    # actually about, and they are the ones an elevation pass would most plausibly
+    # change. Recorded as "no" because that is what ships today, NOT because the
+    # question is settled.
+    ".bt-card": "summary tile in .bt-summary — no shadow today, pending the pass",
+    ".bt-slip": "slip card in .bt-slips-grid — no shadow today, pending the pass",
+    # Marketing. Listed because FLATTENED_SURFACES lists them, and the partition
+    # has to be total.
+    ".pp-card": "carries --shadow-card already, and predates the flattening",
+    ".pp-faq details": "an accordion row in a stack; a shadow per row would stripe",
+}
+
+
+def _box_shadows(selector: str) -> list[str]:
+    return [v for p, v in _decls_for(selector) if p == "box-shadow"]
+
+
+def test_every_flattened_surface_has_an_elevation_decision():
+    """The cross-check. FLATTENED_SURFACES is the list of surfaces whose gradient
+    lift was removed; each one owes an answer about what replaced it."""
+    classified = set(CARD_ELEVATION) | set(CARD_NO_ELEVATION)
+    undecided = sorted(set(FLATTENED_SURFACES) - classified)
+    invented = sorted(classified - set(FLATTENED_SURFACES))
+    overlap = sorted(set(CARD_ELEVATION) & set(CARD_NO_ELEVATION))
+    assert not undecided, (
+        "these surfaces were flattened but have no elevation decision recorded. "
+        "The gradient that gave them depth is gone; say whether --shadow-card "
+        "replaces it and why, in CARD_ELEVATION or CARD_NO_ELEVATION:\n  "
+        + "\n  ".join(undecided)
+    )
+    assert not invented, (
+        "these keys are not flattened surfaces, so classifying them says nothing "
+        f"about the flattening: {invented}"
+    )
+    assert not overlap, f"a surface cannot be in both dicts: {overlap}"
+
+
+def test_elevated_card_surfaces_carry_shadow_card():
+    """Whatever is in CARD_ELEVATION must actually have the token — not a
+    hand-rolled shadow, and not --shadow-pop (which is the popover/modal depth)."""
+    problems = []
+    for selector, why in CARD_ELEVATION.items():
+        shadows = _box_shadows(selector)
+        if not shadows:
+            problems.append(f"{selector} has no box-shadow but is elevated: {why}")
+        elif not any("var(--shadow-card)" in squash(s) for s in shadows):
+            problems.append(f"{selector} -> box-shadow:{shadows} should be var(--shadow-card)")
+    assert not problems, "\n  ".join(problems)
+
+
+def test_unelevated_card_surfaces_carry_no_shadow():
+    """The other half of the pin. Without this, "no shadows on app surfaces" is a
+    claim nothing holds — someone adds `box-shadow:var(--shadow-card)` to `.bt-card`
+    and every test in this file still passes.
+
+    Scoped to `box-shadow` on the surface rule itself. `--ring` focus shadows live
+    on `:focus`/`:focus-visible` selectors, which are different selectors and are
+    not matched by `_decls_for`.
+    """
+    problems = []
+    for selector, why in CARD_NO_ELEVATION.items():
+        if selector == ".pp-card":
+            continue          # explicitly a shadow-carrying exception, see its reason
+        for s in _box_shadows(selector):
+            problems.append(f"{selector} -> box-shadow:{s}\n      recorded as: {why}")
+    assert not problems, (
+        "these surfaces are recorded as unelevated but now carry a shadow. If that "
+        "is the intended elevation decision, move the key to CARD_ELEVATION with "
+        "its reason — do not leave the record disagreeing with the sheet:\n  "
+        + "\n  ".join(problems)
+    )
+
+
+def test_shadow_card_is_still_a_live_token():
+    """Guards against the empty CARD_ELEVATION reading as "the token is dead".
+
+    It is not: `.cp-modal` and `.pp-card` use it. If those go too, `--shadow-card`
+    should be deleted from :root rather than left as a definition nothing reads —
+    and this test is where that gets noticed.
+    """
+    css = style_block(INDEX)
+    consumers = sorted(
+        selector.strip()
+        for selector, decls in rules(css)
+        if selector.strip() != ":root" and "var(--shadow-card)" in squash(decls)
+    )
+    assert consumers == [".cp-modal", ".pp-card"], (
+        f"--shadow-card's consumers changed: {consumers}. Adding one to an app "
+        "surface is an elevation decision — record it in CARD_ELEVATION. Removing "
+        "both leaves a token nothing reads."
+    )
