@@ -287,23 +287,27 @@ a{color:inherit;text-decoration:none}
 .cp-btn-primary:hover{background:#195F97}
 .cp-btn-ghost{background:transparent;border-color:var(--hair-2);color:var(--text)}
 .cp-btn-ghost:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.18)}
-/* One height scale, now 34 / 43 / 52px for sm / base / lg — measured in Chromium
- * at 1440 with Inter loaded, on the real sheet.
+/* One height scale, now 34 / 43 / 53px for sm / base / lg — measured in Chromium
+ * at 1440 with Inter loaded, against this sheet.
  *
- * It USED to be 34 / 39 / 46, off a vertical padding of --s-2 / 10px / 13px, and
- * the note here said 10 and 13 were literal because "no step expresses" them.
- * That was true and it is exactly the drift the spacing scale exists to remove: a
- * three-rung ladder standing on one token and two hand-typed numbers. The rungs
- * are now one step apart on the scale — --s-2 / --s-3 / --s-4 — and the heights
- * fall out of that.
+ * It USED to be 34 / 39 / 47 (this note said 46), off a vertical padding of
+ * --s-2 / 10px / 13px, and it said 10 and 13 were literal because "no step
+ * expresses" them. That was true, and it is exactly the drift the spacing scale
+ * exists to remove: a three-rung ladder standing on one token and two hand-typed
+ * numbers. The rungs are one step apart on the scale now — --s-2 / --s-3 / --s-4
+ * — and the heights fall out of that.
  *
  * The lg rung is the one place plain nearest-step rounding was NOT applied. 13px
- * rounds to --s-3 (12px), which would have measured 44px against base's 43px and
- * collapsed the top two rungs into each other; the ladder's job is to be legibly
- * three sizes, so lg takes the step ABOVE. Same override the .bt-summary gap
- * takes, for the same kind of reason: the relationship the value encodes outranks
- * the arithmetic. Cost: base grows 4px and lg grows 5px. .cp-btn-save is NOT a
- * rung on this ladder (one-off full-width CTA) and does take nearest-step.
+ * rounds to --s-3 (12px), which measures 45px against base's 43px and collapses
+ * the top two rungs into each other; the ladder's job is to read as three sizes,
+ * so lg takes the step ABOVE. Same kind of override the .bt-summary gap takes:
+ * the relationship the value encodes outranks the arithmetic. Cost: base grows
+ * 4px, lg grows 6px.
+ *
+ * .cp-btn-save is NOT a rung here (one-off full-width CTA) and does take
+ * nearest-step, 13px -> --s-3. It lands on 43px, which is exactly .cp-input's
+ * height — those two are the full-width controls that stack in the slip sidebar,
+ * and they used to be 45 against 43.
  *
  * sm stays 34px, which is also the height of .cp-input-sm, so the one place a
  * .cp-btn-sm sits beside an input (the slip builder's Min Leg % "Reset") still
