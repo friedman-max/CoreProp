@@ -468,3 +468,92 @@ def test_backtest_pending_is_blue_on_every_surface():
             violations.append(f"{s} names no pending blue: {body}")
     assert seen == targets, f"pending rules not found: {sorted(targets - seen)}"
     assert not violations, "\n  ".join(violations)
+
+
+# Marketing-surface spacing. Every padding/margin/gap length on a .lp-* or .pp-*
+# rule must resolve through the spacing scale, so the signed-out pages share one
+# rhythm with the app instead of ~80 hand-typed values.
+#
+# Exempt, by selector substring:
+#   lp-game- / lp-sk : the hero minigame is a deliberate PrizePicks-board clone,
+#                      exempt from the whole modernization — colours AND geometry.
+#                      `.lp-sk*` is the minigame's skeleton and is measured
+#                      against the loaded card to make the swap cost 0px of
+#                      layout shift, so its values are load-bearing too. Note
+#                      `.lp-game` itself has no trailing hyphen and so is not
+#                      matched by the usual "lp-game-" check — it is listed
+#                      explicitly.
+#   lp-hero          : the hero's vertical budget is measured so the minigame
+#                      card clears the fold at 1280x800 (see the note above
+#                      .lp-hero in index.html). Its values are the result of that
+#                      measurement, not drift.
+#   lp-vig-svg / lp-books-bar : SVG and animation geometry, not layout spacing.
+MARKETING_SPACING_EXEMPT = (
+    "lp-game",          # covers `.lp-game` and every `.lp-game-*`
+    "lp-sk",
+    "lp-hero",
+    "lp-vig-svg",
+    "lp-books-bar",
+)
+
+# Rules whose spacing is deliberately literal because the 4px scale cannot
+# express it. Spelled as whole selectors, not prefixes (RED2_EXEMPT's precedent),
+# so an exemption cannot silently widen to a new rule. Every entry is a 1-3px
+# value: a sub-scale nudge is optical alignment or a hairline, not spacing — the
+# same reasoning Phase 1 used to keep its 1-4px decorative radii literal.
+#
+#   .lp-sr-only           : `margin:-1px` is half of the visually-hidden recipe
+#                           (1x1px box, negative margin, clip). Not spacing at
+#                           all, and it carries the aria-live region.
+#   .lp-cov-grid          : `gap:1px` IS the divider — the grid paints --hair and
+#                           the cells paint --bg, so the gap is the hairline
+#                           between coverage cells. 4px would be a visible gutter.
+#   .lp-bk-head           : the `1px` bottom pad optically seats the uppercase
+#                           column labels on the first book tile. Its horizontal
+#                           pad is tokenized.
+#   .lp-why-steps div span: `margin-top:3px` aligns the step description's cap
+#                           height with the digit in its circle beside it.
+MARKETING_SPACING_LITERAL_OK = {
+    ".lp-sr-only",
+    ".lp-cov-grid",
+}
+
+# Lengths that are legal without a token: zero, auto-centring, and the two
+# derived layout vars the landing page defines on `.lp`.
+#
+# Any clamp() passes: fluid spacing is the intended escape hatch for values that
+# must differ between a phone and a desktop, and the clamp's own endpoints are
+# tokens by convention (--lp-px, .pp-card). The inner pattern is `.*` rather than
+# `[^)]*` precisely so a clamp that interpolates var() tokens still matches —
+# values in this stylesheet carry no spaces, so a `.*` cannot span two lengths of
+# a shorthand.
+_SPACING_OK = re.compile(
+    r"^(0|auto|var\(--s-\d+\)|var\(--lp-(?:gap|px)\)|clamp\(.*\))$"
+)
+_SPACING_PROPS = ("padding", "margin", "gap", "row-gap", "column-gap")
+
+
+def test_marketing_spacing_goes_through_the_scale():
+    violations = []
+    for selector, decls in rules(style_block(INDEX)):
+        sel = selector.strip()
+        if not re.search(r"\.(lp|pp)-", sel):
+            continue
+        if any(frag in sel for frag in MARKETING_SPACING_EXEMPT):
+            continue
+        if sel in MARKETING_SPACING_LITERAL_OK:
+            continue
+        for decl in declarations(decls):
+            prop, _, value = decl.partition(":")
+            prop = prop.strip().lower()
+            if prop not in _SPACING_PROPS and not prop.startswith(("padding-", "margin-")):
+                continue
+            # A shorthand is a list of lengths; every part must be legal.
+            for part in value.split():
+                if not _SPACING_OK.match(part.strip()):
+                    violations.append(f"{sel} -> {prop}:{value.strip()}")
+                    break
+    assert not violations, (
+        f"{len(violations)} off-scale marketing spacing declarations:\n  "
+        + "\n  ".join(sorted(set(violations)))
+    )

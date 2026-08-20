@@ -373,11 +373,20 @@ a{color:inherit;text-decoration:none}
  * both the strongest "generated template" signal on the site and the only
  * things on the page doing continuous compositor work. Section rhythm is one
  * value (--lp-gap) so the page reads as a single column of related blocks. */
-.lp{--lp-gap:clamp(56px,7vw,96px);--lp-max:1120px}
-.lp-h1{font-size:clamp(34px,4.4vw,54px);line-height:1.08;letter-spacing:-.022em;font-weight:700;margin:0 0 20px;text-wrap:balance}
-.lp-h2{font-size:clamp(24px,2.6vw,32px);line-height:1.15;letter-spacing:-.018em;font-weight:700;margin:0 0 10px;text-wrap:balance}
+/* --lp-px is the section gutter, previously a literal 22px repeated in six rules
+ * (.lp-hero, .lp-cov, .lp-how, .lp-method, .lp-cta, .lp-foot). 22px is on no step
+ * (--s-5 is 20, --s-6 is 24), so it becomes a fluid clamp between them — same
+ * pattern as --lp-gap, and it lets narrow viewports keep 20px while wide ones get
+ * 24px. NOTE: `.lp` is re-declared in the >=1400px block below to widen
+ * --lp-max — grep before adding a token here. */
+.lp{--lp-gap:clamp(56px,7vw,96px);--lp-px:clamp(var(--s-5),2.5vw,var(--s-6));--lp-max:1120px}
+/* This rule's font-size, line-height and margin are DEAD: every .lp-h1 in the
+ * markup is inside .lp-hero-hd, so `.lp-hero .lp-h1` (0,2,0) below wins all
+ * three. Editing them here to change the hero is a no-op — edit that rule. */
+.lp-h1{font-size:clamp(34px,4.4vw,54px);line-height:1.08;letter-spacing:-.022em;font-weight:700;margin:0 0 var(--s-5);text-wrap:balance}
+.lp-h2{font-size:clamp(24px,2.6vw,32px);line-height:1.15;letter-spacing:-.018em;font-weight:700;margin:0 0 var(--s-3);text-wrap:balance}
 .lp-h2-sub{color:var(--text-2);font-size:16px;line-height:1.55;margin:0;max-width:56ch}
-.lp-section-hd{margin:0 0 28px}
+.lp-section-hd{margin:0 0 var(--s-8)}
 
 /* HERO — minigame v2.
  *
@@ -395,14 +404,17 @@ a{color:inherit;text-decoration:none}
  * 1280x800 (see the .lp-game block below for the card's half). Raising the h1
  * clamp, the hero padding or .lp-hero-hd's margin is what will push the card
  * back under the fold — check before you change one. */
-.lp-hero{max-width:var(--lp-max);margin:0 auto;padding:clamp(14px,2vw,24px) 22px clamp(34px,4.5vw,60px)}
+.lp-hero{max-width:var(--lp-max);margin:0 auto;padding:clamp(14px,2vw,24px) var(--lp-px) clamp(34px,4.5vw,60px)}
 .lp-hero-hd{max-width:820px;margin:0 auto 14px;text-align:center}
 /* Tagline, not a headline: two lines at 1280, three on a phone. */
 .lp-hero .lp-h1{font-size:clamp(26px,3.1vw,38px);line-height:1.06;margin:0 0 8px}
 .lp-hero-hd .lp-sub{margin:0 auto;font-size:15.5px;max-width:78ch}
 .lp-hero .lp-cta-row{justify-content:center;margin-top:16px}
-.lp-sub{font-size:17px;line-height:1.6;color:var(--text-2);max-width:56ch;margin:0 0 26px}
-.lp-cta-row{display:flex;gap:12px;flex-wrap:wrap}
+/* Half dead: the only .lp-sub in the markup is inside .lp-hero-hd, so
+ * `.lp-hero-hd .lp-sub` (0,2,0) above wins the margin and the font-size. What
+ * still applies here is line-height, colour and max-width. */
+.lp-sub{font-size:17px;line-height:1.6;color:var(--text-2);max-width:56ch;margin:0 0 var(--s-6)}
+.lp-cta-row{display:flex;gap:var(--s-3);flex-wrap:wrap}
 .lp-cta-row.lp-center{justify-content:center}
 
 /* Source order is card -> books -> explainer, which IS the <1024px stacking
@@ -514,50 +526,50 @@ a{color:inherit;text-decoration:none}
 }
 
 /* COVERAGE — a definition list, because that's what it is. */
-.lp-cov{max-width:var(--lp-max);margin:0 auto;padding:0 22px var(--lp-gap)}
+.lp-cov{max-width:var(--lp-max);margin:0 auto;padding:0 var(--lp-px) var(--lp-gap)}
 .lp-cov-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin:0;background:var(--hair);border:1px solid var(--hair);border-radius:var(--radius);overflow:hidden}
 @media (max-width:820px){.lp-cov-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:460px){.lp-cov-grid{grid-template-columns:1fr}}
-.lp-cov-cell{background:var(--bg);padding:20px}
+.lp-cov-cell{background:var(--bg);padding:var(--s-5)}
 .lp-cov-k{font-size:11px;letter-spacing:.04em;color:var(--text-3);font-weight:600}
 /* Fluid, and min-width:0 on the cell above, so a long value can't force the
  * grid wider than the viewport (the old stats strip did exactly that between
  * 881px and 1000px). */
-.lp-cov-v{font-size:clamp(20px,2.2vw,26px);font-weight:600;letter-spacing:-.01em;margin:8px 0 0;line-height:1.15}
-.lp-cov-sub{margin:6px 0 0;font-size:12px;line-height:1.45;color:var(--text-3)}
+.lp-cov-v{font-size:clamp(20px,2.2vw,26px);font-weight:600;letter-spacing:-.01em;margin:var(--s-2) 0 0;line-height:1.15}
+.lp-cov-sub{margin:var(--s-2) 0 0;font-size:12px;line-height:1.45;color:var(--text-3)}
 
 /* HOW */
-.lp-how{max-width:var(--lp-max);margin:0 auto;padding:0 22px var(--lp-gap)}
-.lp-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;counter-reset:none}
+.lp-how{max-width:var(--lp-max);margin:0 auto;padding:0 var(--lp-px) var(--lp-gap)}
+.lp-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s-4);counter-reset:none}
 @media (max-width:820px){.lp-steps{grid-template-columns:1fr}}
-.lp-step{background:var(--card);border:1px solid var(--hair);border-radius:var(--radius);padding:22px}
+.lp-step{background:var(--card);border:1px solid var(--hair);border-radius:var(--radius);padding:var(--s-6)}
 .lp-step-n{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--primary-hi);color:var(--primary-2);font-size:12.5px;font-weight:600}
-.lp-step-t{font-size:17px;font-weight:600;letter-spacing:-.01em;margin:14px 0 8px}
+.lp-step-t{font-size:17px;font-weight:600;letter-spacing:-.01em;margin:var(--s-4) 0 var(--s-2)}
 .lp-step-b{color:var(--text-2);font-size:14px;line-height:1.6;margin:0}
 
 /* WHAT YOU GET */
-.lp-method{max-width:var(--lp-max);margin:0 auto;padding:0 22px var(--lp-gap)}
-.lp-method-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.lp-method{max-width:var(--lp-max);margin:0 auto;padding:0 var(--lp-px) var(--lp-gap)}
+.lp-method-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s-4)}
 @media (max-width:820px){.lp-method-grid{grid-template-columns:1fr}}
-.lp-method-card{background:var(--card);border:1px solid var(--hair);border-radius:var(--radius);padding:22px}
-.lp-method-t{font-size:16.5px;font-weight:600;letter-spacing:-.01em;margin:0 0 8px}
+.lp-method-card{background:var(--card);border:1px solid var(--hair);border-radius:var(--radius);padding:var(--s-6)}
+.lp-method-t{font-size:16.5px;font-weight:600;letter-spacing:-.01em;margin:0 0 var(--s-2)}
 .lp-method-b{color:var(--text-2);font-size:14px;line-height:1.6;margin:0}
 
 /* CTA */
-.lp-cta{max-width:var(--lp-max);margin:0 auto;padding:0 22px var(--lp-gap)}
+.lp-cta{max-width:var(--lp-max);margin:0 auto;padding:0 var(--lp-px) var(--lp-gap)}
 /* --r-lg, not --r-xl. On the page this sits directly under the 16px "In the
  * app" cards and beside .lp-books / .lp-cov-grid / .lp-step / .lp-method-card,
  * all 16px — so as the landing page's own hero it is a peer of those cards, not
  * of the pricing hero. --r-xl's two consumers are .pp-card and .pp-card-glow. */
-.lp-cta-card{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-lg);padding:clamp(36px,4.5vw,56px) 24px;text-align:center}
-.lp-cta-card .lp-h2-sub{margin:0 auto 22px}
+.lp-cta-card{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-lg);padding:clamp(36px,4.5vw,56px) var(--s-6);text-align:center}
+.lp-cta-card .lp-h2-sub{margin:0 auto var(--s-6)}
 
 /* FOOTER */
-.lp-foot{max-width:var(--lp-max);margin:0 auto;padding:32px 22px 40px;border-top:1px solid var(--hair)}
-.lp-foot-top{display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap}
-.lp-foot-brand{display:flex;align-items:center;gap:10px}
+.lp-foot{max-width:var(--lp-max);margin:0 auto;padding:var(--s-8) var(--lp-px) var(--s-10);border-top:1px solid var(--hair)}
+.lp-foot-top{display:flex;justify-content:space-between;align-items:center;gap:var(--s-6);flex-wrap:wrap}
+.lp-foot-brand{display:flex;align-items:center;gap:var(--s-3)}
 .lp-foot-tag{color:var(--text-3);font-size:13px}
-.lp-foot-nav{display:flex;gap:18px;flex-wrap:wrap;font-size:13.5px}
+.lp-foot-nav{display:flex;gap:var(--s-5);flex-wrap:wrap;font-size:13.5px}
 .lp-foot-nav a{color:var(--text-3);border-radius:4px}
 .lp-foot-nav a:hover{color:var(--text);text-decoration:underline}
 /* --text-3, not --text-4. On the page background --text-4 measures 2.27:1,
@@ -565,9 +577,9 @@ a{color:inherit;text-decoration:none}
  * the responsible-gambling notice and the copyright line. --text-3 measures
  * 4.69:1. Do not dim these back down: a legal notice nobody can read is worse
  * than no notice. */
-.lp-foot-base{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:24px;padding-top:16px;border-top:1px solid var(--hair);color:var(--text-3);font-size:12px}
+.lp-foot-base{display:flex;justify-content:space-between;gap:var(--s-4);flex-wrap:wrap;margin-top:var(--s-6);padding-top:var(--s-4);border-top:1px solid var(--hair);color:var(--text-3);font-size:12px}
 .lp-foot-cov{color:var(--text-3)}
-.lp-foot-disc{margin:14px 0 0;color:var(--text-3);font-size:12.5px;line-height:1.55;max-width:80ch}
+.lp-foot-disc{margin:var(--s-4) 0 0;color:var(--text-3);font-size:12.5px;line-height:1.55;max-width:80ch}
 
 /* MINIGAME (.lp-game) — the hero's daily line challenge (landing.jsx).
  * The card is a deliberate near-clone of the PrizePicks large card, so the
