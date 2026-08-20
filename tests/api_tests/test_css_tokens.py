@@ -294,14 +294,23 @@ def test_selected_and_logged_bars_are_both_3px():
 # which WCAG 1.4.11 holds to 3:1, and --text-4 left it at 2.21:1 at rest — only
 # hover cleared it. It uses --text-3 now, so this test also pins that fix.
 #
-# Two caveats on the entries that remain:
-#   .obs-heat-cell.is-empty has no markup anywhere (dead CSS) — the entry is a
-#     permission, not a requirement, and keeps the test stable if the observatory
-#     heat table is ever wired up.
-#   .bd-edge-cell is only decorative because .bd-edge-cell.is-edge overrides the
-#     "+EV" case to --green. If that override is ever removed, real text would
-#     render at 2.10:1 and this test would NOT catch it, because the allowlist
-#     matches by substring.
+# MATCHED EXACTLY, not by substring. It was a substring match, and the entry that
+# paid for the change is `.bd-edge-cell`: it is only decorative because
+# `.bd-edge-cell.is-edge` overrides the readable "+EV" case to --green, and under a
+# substring match the exemption covered `.bd-edge-cell.is-edge` and every other
+# compound built on that class — so a rule that put --text-4 back on the readable
+# state inherited a permission written for the em dash. The old comment said so in
+# as many words; this is that caveat closed. All five entries were exact selectors
+# already, so tightening the comparison changed no result.
+#
+# The other half of `.bd-edge-cell`'s exemption — that the `.is-edge` override
+# still exists at all — is not something an allowlist can express, and is pinned
+# separately in `test_the_text4_exemptions_premises_still_hold`.
+#
+# One caveat remains: `.obs-heat-cell.is-empty` has no markup anywhere (dead CSS).
+# The entry is a permission, not a requirement, and keeps the test stable if the
+# observatory heat table is ever wired up. Being an exact selector key, it is
+# unaffected by the tightening.
 TEXT4_ALLOWED = (
     ".ev-meta-dot",
     ".bd-odds-empty",
@@ -316,11 +325,60 @@ def test_text4_is_only_on_decorative_glyphs():
     for selector, decls in rules(style_block(INDEX)):
         if "var(--text-4)" not in squash(decls):   # squash already strips whitespace
             continue
-        if any(allowed in selector for allowed in TEXT4_ALLOWED):
+        # Exact, per comma group: a rule may legitimately group an exempt selector
+        # with others, and each of them has to earn the exemption on its own.
+        if all(" ".join(p.split()) in TEXT4_ALLOWED for p in selector.split(",")):
             continue
         violations.append(selector.strip())
     assert not violations, (
         "--text-4 (2.3:1) used on readable text: " + ", ".join(violations)
+    )
+
+
+def test_every_text4_exemption_still_matches_a_real_site():
+    """Stale-exemption guard, matching the one test_ios_tokens.py added for its own
+    `TEXT4_ALLOWED`. Under the old substring match a stale entry could still be
+    "used" by a compound selector; under exact matching a dead entry is simply a
+    standing permission for whatever takes the name next.
+    """
+    seen = set()
+    for selector, decls in rules(style_block(INDEX)):
+        if "var(--text-4)" in squash(decls):
+            seen.update(" ".join(p.split()) for p in selector.split(","))
+    stale = sorted(set(TEXT4_ALLOWED) - seen)
+    assert not stale, (
+        "these --text-4 exemptions match no rule — delete them or fix the key:\n  "
+        + "\n  ".join(stale)
+    )
+
+
+def test_the_text4_exemptions_premises_still_hold():
+    """`.bd-edge-cell`'s exemption rests on a rule in a DIFFERENT selector.
+
+    The cell renders `—` when there is no edge and `+EV` when there is, and only
+    the first is a decorative glyph. `.bd-edge-cell.is-edge{color:var(--green)}` is
+    what keeps the readable case off 2.10:1. Delete that override and the exemption
+    silently becomes a licence to render text at 2.10:1 — no allowlist shape can
+    catch that, because the offending declaration is on the exempt selector and
+    looks unchanged.
+    """
+    edge = [
+        v
+        for selector, decls in rules(style_block(INDEX))
+        if selector.strip() == ".bd-edge-cell.is-edge"
+        for d in declarations(decls)
+        for p, _, v in [d.partition(":")]
+        if p.strip().lower() == "color"
+    ]
+    assert edge, (
+        ".bd-edge-cell.is-edge no longer sets a colour. It is the ONLY reason "
+        ".bd-edge-cell may use --text-4: without it the readable '+EV' state "
+        "renders at 2.10:1. Either restore the override or remove .bd-edge-cell "
+        "from TEXT4_ALLOWED and give the base rule an AA-safe colour."
+    )
+    assert all("var(--text-4)" not in squash(v) for v in edge), (
+        f".bd-edge-cell.is-edge is back on --text-4 ({edge}) — that is the "
+        "readable '+EV' state at 2.10:1"
     )
 
 
