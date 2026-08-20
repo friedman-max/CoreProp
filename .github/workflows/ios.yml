@@ -2,12 +2,19 @@ name: ios
 
 on:
   push:
-    # `feat/**` as well as main. This job is the only real compile gate for the
-    # SwiftUI app target — the dev box has no Xcode and no iOS SDK, so the local
-    # `swift run CorePropKitVerify` type-checks CorePropKit against the macOS SDK
-    # and never touches the 15 files under ios/CoreProp/Features. An
-    # iOS-17-only API or an availability error there first appeared on someone
-    # else's push to main.
+    # `feat/**` as well as main. This job is the only real BUILD gate for the
+    # SwiftUI app target: the dev box has no Xcode and no iOS SDK, so nothing
+    # local links, generates code, reads the asset catalogue or checks
+    # entitlements and @objc selector spelling. Before, an iOS-17-only API first
+    # appeared on someone else's push to main.
+    #
+    # It is no longer the only *typecheck* gate. `ios/localcheck/typecheck-all.sh`
+    # shims the iOS-only API and type-checks all 31 app files against the macOS
+    # SDK at `arm64-apple-macos13.0` — the iOS 16 peer, which is what makes
+    # iOS-17-only API fail locally. Run that before pushing; it is seconds, and it
+    # covers the account/auth files that nothing else could reach. What it cannot
+    # do is everything in the paragraph above, plus real iOS availability (the
+    # macOS/iOS pairing is a convention, not a contract). See its README.
     #
     # Scoped twice over, because this one runs on macos-15 and those runner
     # minutes are billed at a multiple of ubuntu's: `feat/**` rather than '**',
