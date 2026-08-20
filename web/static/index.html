@@ -272,8 +272,8 @@ a{color:inherit;text-decoration:none}
 
 /* ─────────── buttons ─────────── */
 .cp-btn{
-  display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  padding:10px var(--s-4);border-radius:var(--r-pill);border:1px solid transparent;
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--s-2);
+  padding:var(--s-3) var(--s-4);border-radius:var(--r-pill);border:1px solid transparent;
   background:transparent;color:var(--text);font-weight:600;font-size:14px;
   cursor:pointer;transition:transform .08s ease, background .15s ease, border-color .15s ease, box-shadow .2s ease;
   letter-spacing:.005em;white-space:nowrap;
@@ -287,19 +287,37 @@ a{color:inherit;text-decoration:none}
 .cp-btn-primary:hover{background:#195F97}
 .cp-btn-ghost{background:transparent;border-color:var(--hair-2);color:var(--text)}
 .cp-btn-ghost:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.18)}
-/* One height scale, measured in Chromium: 34 / 39 / 46px for sm / base / lg.
- * The vertical padding comes off the spacing scale where a step lands on the
- * target — --s-2 (8px) for sm, and 10/13px for base/lg, which no step
- * expresses. sm was 7px/32px; on the scale it becomes 34px, which is also the
- * height of .cp-input-sm, so the one place a .cp-btn-sm sits beside an input
- * (the slip builder's Min Leg % "Reset") now matches natively instead of being
- * stretched to fit by the flex row.
+/* One height scale, now 34 / 43 / 53px for sm / base / lg — measured in Chromium
+ * at 1440 with Inter loaded, against this sheet.
+ *
+ * It USED to be 34 / 39 / 47 (this note said 46), off a vertical padding of
+ * --s-2 / 10px / 13px, and it said 10 and 13 were literal because "no step
+ * expresses" them. That was true, and it is exactly the drift the spacing scale
+ * exists to remove: a three-rung ladder standing on one token and two hand-typed
+ * numbers. The rungs are one step apart on the scale now — --s-2 / --s-3 / --s-4
+ * — and the heights fall out of that.
+ *
+ * The lg rung is the one place plain nearest-step rounding was NOT applied. 13px
+ * rounds to --s-3 (12px), which measures 45px against base's 43px and collapses
+ * the top two rungs into each other; the ladder's job is to read as three sizes,
+ * so lg takes the step ABOVE. Same kind of override the .bt-summary gap takes:
+ * the relationship the value encodes outranks the arithmetic. Cost: base grows
+ * 4px, lg grows 6px.
+ *
+ * .cp-btn-save is NOT a rung here (one-off full-width CTA) and does take
+ * nearest-step, 13px -> --s-3. It lands on 43px, which is exactly .cp-input's
+ * height — those two are the full-width controls that stack in the slip sidebar,
+ * and they used to be 45 against 43.
+ *
+ * sm stays 34px, which is also the height of .cp-input-sm, so the one place a
+ * .cp-btn-sm sits beside an input (the slip builder's Min Leg % "Reset") still
+ * matches natively instead of being stretched to fit by the flex row.
  *
  * Filter-bar buttons (.bd-clear, .ev-clear, .bd-pag*) are deliberately NOT on
  * this scale — they share a 34px baseline with .bd-badge and .bd-f select, and
- * pulling them to 32 or 39 breaks that row's alignment. */
-.cp-btn-sm{padding:var(--s-2) 14px;font-size:13px}
-.cp-btn-lg{padding:13px 22px;font-size:15px}
+ * pulling them to 32 or 43 breaks that row's alignment. */
+.cp-btn-sm{padding:var(--s-2) var(--s-4);font-size:13px}
+.cp-btn-lg{padding:var(--s-4) var(--s-6);font-size:15px}
 
 /* Keyboard focus. Every interactive control on the page previously had NO
  * visible focus state, which makes the landing page unusable by keyboard and
@@ -323,7 +341,7 @@ a{color:inherit;text-decoration:none}
 /* Flat: no white top-edge inset, no green drop-glow. The glow is green rather
  * than accent so the accent-glow guard cannot see it — "flat buttons, no glow"
  * still applies, so it is removed by hand and recorded here. */
-.cp-btn-save{background:var(--save);color:white;border-radius:var(--r-md);padding:13px;font-weight:700;width:100%;font-size:15px;border:0;cursor:pointer}
+.cp-btn-save{background:var(--save);color:white;border-radius:var(--r-md);padding:var(--s-3);font-weight:700;width:100%;font-size:15px;border:0;cursor:pointer}
 .cp-btn-save:hover{background:#15803d}
 /* The one pair in this family that stays literal, and the only tokenizable-looking
  * site that is not tokenizable. Both values are 8-digit hex — --save at 25% alpha
@@ -350,13 +368,13 @@ a{color:inherit;text-decoration:none}
  * reasoning and is the only entry in that set. */
 .cp-btn-save.is-dis{background:#16a34a40;color:#86EFAC80;cursor:not-allowed;box-shadow:none}
 
-.cp-link{background:transparent;border:0;color:var(--primary-2);font-weight:500;cursor:pointer;font-size:13px;padding:6px 8px;border-radius:var(--r-sm)}
+.cp-link{background:transparent;border:0;color:var(--primary-2);font-weight:500;cursor:pointer;font-size:13px;padding:var(--s-2);border-radius:var(--r-sm)}
 .cp-link:hover{background:rgba(30,111,176,.10)}
 .cp-center{text-align:center;align-self:center}
 
 .cp-input{
   background:#0e0e16;border:1px solid var(--hair);color:var(--text);
-  border-radius:var(--r-md);padding:12px 14px;font-size:14px;width:100%;outline:none;
+  border-radius:var(--r-md);padding:var(--s-3) var(--s-4);font-size:14px;width:100%;outline:none;
   transition:border-color .15s ease, box-shadow .15s ease;
   font-family:inherit;
 }
@@ -366,7 +384,11 @@ a{color:inherit;text-decoration:none}
  * already applied to .lp-foot-disc and .pp-respo. */
 .cp-input::placeholder{color:var(--text-3)}
 .cp-input:focus{border-color:var(--primary);box-shadow:var(--ring)}
-.cp-input-sm{padding:8px 10px;font-size:13px}
+/* --s-2 vertical is the measured half of the filter-bar's 34px contract and does
+ * not move; only the horizontal 10px was off the scale (-> --s-3, +2px a side).
+ * `.bd-f input` carries the identical recipe and must move with it — that pairing
+ * is pinned by test_the_padding_derived_filter_inputs_share_one_recipe. */
+.cp-input-sm{padding:var(--s-2) var(--s-3);font-size:13px}
 
 /* ─────────── top nav ─────────── */
 .cp-nav{
@@ -384,7 +406,7 @@ a{color:inherit;text-decoration:none}
 /* Only in the installed app: keep content off the home indicator. */
 @media (display-mode: standalone){ body{ padding-bottom: env(safe-area-inset-bottom); } }
 .cp-logo-btn{background:transparent;border:0;cursor:pointer;padding:0}
-.cp-logo{display:flex;align-items:center;gap:9px}
+.cp-logo{display:flex;align-items:center;gap:var(--s-2)}
 /* logo_full.png is now a transparent-background wordmark, so the artwork
  * sits cleanly on the dark nav with no rectangular edge. We keep it free of
  * any drop-shadow glow per the brand look. The "showHalo" tweak stays a
@@ -408,20 +430,20 @@ a{color:inherit;text-decoration:none}
 }
 .cp-tab:hover{background:rgba(255,255,255,.04);color:var(--text)}
 .cp-tab.is-active{background:#1d1d2a;color:#fff;border:1px solid var(--hair-2)}
-.cp-nav-r{display:flex;gap:10px;align-items:center}
+.cp-nav-r{display:flex;gap:var(--s-3);align-items:center}
 .cp-user{position:relative;display:flex;align-items:center}
 .cp-avatar{width:32px;height:32px;border-radius:50%;background:var(--primary);display:grid;place-items:center;color:white;font-weight:700;font-size:13px}
 /* Profile button — just the avatar; clicking it opens the account dropdown. */
 .cp-avatar-btn{display:flex;align-items:center;background:transparent;border:1px solid transparent;border-radius:50%;padding:0;cursor:pointer;transition:.15s}
 .cp-avatar-btn:hover .cp-avatar{box-shadow:0 0 0 2px var(--hair-2)}
 .cp-avatar-btn:hover{border-color:transparent}
-.cp-menu{position:absolute;top:calc(100% + 8px);right:0;min-width:220px;background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);box-shadow:var(--shadow-pop);padding:8px;z-index:120;animation:popIn .18s cubic-bezier(.2,1.2,.4,1)}
-.cp-menu-hd{display:flex;align-items:center;gap:10px;padding:8px 8px 10px}
+.cp-menu{position:absolute;top:calc(100% + 8px);right:0;min-width:220px;background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);box-shadow:var(--shadow-pop);padding:var(--s-2);z-index:120;animation:popIn .18s cubic-bezier(.2,1.2,.4,1)}
+.cp-menu-hd{display:flex;align-items:center;gap:var(--s-3);padding:var(--s-2) var(--s-2) var(--s-3)}
 .cp-avatar-lg{width:38px;height:38px;font-size:15px}
 .cp-menu-id{min-width:0}
 .cp-menu-name{font-weight:600;font-size:13.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cp-menu-email{font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cp-menu-sep{height:1px;background:var(--hair);margin:2px 0 6px}
+.cp-menu-sep{height:1px;background:var(--hair);margin:var(--s-1) 0 var(--s-2)}
 .cp-menu-item{width:100%;text-align:left;background:transparent;border:0;color:var(--text-2);padding:var(--s-3);border-radius:var(--r-md);font-size:13px;font-weight:500;cursor:pointer;transition:.12s}
 /* The base hover is NEUTRAL. This class is shared with PushToggle (the "Slip
  * alerts" row in the same menu), so a blanket destructive hover painted a
@@ -440,7 +462,12 @@ a{color:inherit;text-decoration:none}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 .cp-modal{
   position:relative;width:min(420px,92vw);background:var(--card);
-  border:1px solid var(--hair);border-radius:var(--r-lg);padding:32px 28px 28px;
+  /* Was `32px 28px 28px`. 28 is a tie between --s-6 and --s-8 and ties round up,
+   * which collapses all three sides onto --s-8 — so the 4px "top heavier than
+   * sides" asymmetry goes, and the modal grows 4px on three edges. That asymmetry
+   * was sub-scale and unexplained; the ✕ it might have been clearing is
+   * absolutely positioned at top/right 14px and does not depend on it. */
+  border:1px solid var(--hair);border-radius:var(--r-lg);padding:var(--s-8);
   box-shadow:var(--shadow-card);
   max-height:90vh;overflow-y:auto;
   animation:popIn .35s cubic-bezier(.2,1.2,.4,1);
@@ -448,19 +475,24 @@ a{color:inherit;text-decoration:none}
 @keyframes popIn{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}
 .cp-modal-x{position:absolute;top:14px;right:14px;background:transparent;border:0;color:var(--text-3);width:30px;height:30px;border-radius:var(--r-sm);cursor:pointer;font-size:14px}
 .cp-modal-x:hover{background:rgba(255,255,255,.06);color:var(--text)}
-.cp-modal-logo{display:flex;justify-content:center;margin-bottom:18px}
-.cp-seg{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:#0c0c14;border:1px solid var(--hair);border-radius:var(--r-md);padding:var(--s-1);margin-bottom:16px}
+.cp-modal-logo{display:flex;justify-content:center;margin-bottom:var(--s-5)}
+.cp-seg{display:grid;grid-template-columns:1fr 1fr;gap:var(--s-2);background:#0c0c14;border:1px solid var(--hair);border-radius:var(--r-md);padding:var(--s-1);margin-bottom:var(--s-4)}
 .cp-seg-btn{background:transparent;border:0;color:var(--text-3);padding:var(--s-3);border-radius:var(--r-sm);font-weight:600;font-size:13px;cursor:pointer;transition:.15s}
 .cp-seg-btn.is-active{background:var(--primary);color:white}
-.cp-form{display:flex;flex-direction:column;gap:10px}
+.cp-form{display:flex;flex-direction:column;gap:var(--s-3)}
 .cp-form .cp-btn{margin-top:var(--s-1)}
 
 /* ─────────── league / odds / true% ─────────── */
 .cp-league{font-weight:600;font-size:12.5px;letter-spacing:.04em}
 .cp-tp{font-weight:600;font-size:14px;font-variant-numeric:tabular-nums;font-family:"JetBrains Mono",ui-monospace,monospace}
-.cp-odd{display:inline-flex;align-items:center;gap:5px;margin-right:6px}
+.cp-odd{display:inline-flex;align-items:center;gap:var(--s-1);margin-right:var(--s-2)}
 .cp-odd-n{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px;color:var(--text-2);font-weight:500}
-.cp-book{font-size:9.5px;font-weight:700;letter-spacing:.06em;padding:2px 5px;border-radius:var(--r-sm)}
+/* --s-1 both ways. 2px/5px are both sub-scale-ish, but 5px is over the scale's
+ * floor so the declaration is not exemptible as a pure optical nudge, and the
+ * micro-pill family (.bt-slip-ev, .bt-slip-compact .bt-slip-badge, .cal-legend)
+ * already reads --s-1 for its vertical pad — these join it rather than inventing
+ * a second answer. The badge gains 2px of height and loses 2px of width. */
+.cp-book{font-size:9.5px;font-weight:700;letter-spacing:.06em;padding:var(--s-1);border-radius:var(--r-sm)}
 
 /* ─────────── loading / error / empty blocks ─────────── */
 /* The six loading / error / empty blocks across Backtest and Analytics were
@@ -685,7 +717,19 @@ a{color:inherit;text-decoration:none}
  * app" cards and beside .lp-books / .lp-cov-grid / .lp-step / .lp-method-card,
  * all 16px — so as the landing page's own hero it is a peer of those cards, not
  * of the pricing hero. --r-xl's two consumers are .pp-card and .pp-card-glow. */
-.lp-cta-card{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-lg);padding:clamp(36px,4.5vw,56px) var(--s-6);text-align:center}
+/* The clamp's endpoints were BOTH literal (`36px … 56px`), which made this the
+ * one declaration in the stylesheet that derived from nothing while still looking
+ * derived — and the reason the marketing and app-screen spacing invariants could
+ * not share one pattern, since the app one requires a var() inside any
+ * calc()/clamp() and the marketing one had to keep waving any clamp() through.
+ *
+ * The minimum moves onto the scale (36 is a tie between --s-8 and --s-10, ties
+ * round up, so 36 -> 40px) and the maximum stays literal because 56px has no step
+ * — --s-12 is 48 and the next would be 64. Token minimum with a literal maximum
+ * is the in-file precedent for exactly this: `.pp`'s gutter clamp and
+ * `.pp-foot-trust`'s margin-top both do it, and the note above `.pp` in the
+ * density-override block spells out the same 56px arithmetic. */
+.lp-cta-card{background:var(--card);border:1px solid var(--hair-2);border-radius:var(--r-lg);padding:clamp(var(--s-10),4.5vw,56px) var(--s-6);text-align:center}
 .lp-cta-card .lp-h2-sub{margin:0 auto var(--s-6)}
 
 /* FOOTER */
@@ -901,7 +945,7 @@ a{color:inherit;text-decoration:none}
  * tile. Both read --s-4 so they cannot drift; changing one alone reopens a gap
  * (or an overlap) between the tile and the drawer. */
 .ev-filters{display:flex;align-items:flex-end;gap:var(--s-5);flex-wrap:wrap;padding:var(--s-5);background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);margin-bottom:var(--s-4)}
-.ev-filter{display:flex;flex-direction:column;gap:7px;min-width:0}
+.ev-filter{display:flex;flex-direction:column;gap:var(--s-2);min-width:0}
 .ev-filter-grow{flex:1;min-width:200px}
 .ev-filter label{font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--text-3)}
 .ev-chips{display:flex;gap:var(--s-1);flex-wrap:wrap}
@@ -917,13 +961,13 @@ a{color:inherit;text-decoration:none}
  * 375px — less consistent than the 8/10/8/8 it replaced. Matching .ev-stepper
  * keeps the bar one family. Pilling the other three instead would drag
  * .cp-input-sm's shape across the whole app. */
-.ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);height:34px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-sm);font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
+.ev-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);height:34px;padding:0 var(--s-3);display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-sm);font-size:12.5px;font-weight:500;cursor:default;transition:.15s}
 .ev-chip:hover{border-color:var(--hair-2);color:var(--text)}
 .ev-chip.is-on{background:var(--primary);border-color:var(--primary);color:white}
 .ev-stepper{display:flex;align-items:center;background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-sm);overflow:hidden}
 .ev-stepper button{background:transparent;border:0;color:var(--text-2);width:30px;height:32px;cursor:default;font-size:14px;font-weight:600}
 .ev-stepper button:hover{background:rgba(255,255,255,.05);color:white}
-.ev-stepper span{padding:0 12px;font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text)}
+.ev-stepper span{padding:0 var(--s-3);font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text)}
 /* The one 9px vertical padding on this page that does NOT go to --s-3. This
  * button sits in an `align-items:flex-end` filter row whose other controls
  * (.ev-chip, .cp-input-sm, .ev-stepper) are all exactly 34px, and the height
@@ -938,7 +982,7 @@ a{color:inherit;text-decoration:none}
 /* Slip Builder toggle — desktop hides it (the sidebar aside is always visible
  * there). On mobile (block at the end of the sheet) it becomes a full-width
  * grey bar at the bottom of the config tile. */
-.ev-slip-toggle{display:none;justify-content:center;align-items:center;gap:8px;background:#1b1b26;border:1px solid var(--hair-2);color:var(--text);font-size:13px;font-weight:600;cursor:pointer}
+.ev-slip-toggle{display:none;justify-content:center;align-items:center;gap:var(--s-2);background:#1b1b26;border:1px solid var(--hair-2);color:var(--text);font-size:13px;font-weight:600;cursor:pointer}
 .ev-slip-toggle:hover{background:#20202c}
 .ev-slip-toggle.is-on{background:#20202c;color:var(--primary-2)}
 .ev-slip-toggle-caret{font-size:10px;transition:transform .15s ease}
@@ -951,7 +995,7 @@ a{color:inherit;text-decoration:none}
 
 /* flex-wrap so the added legend can drop to its own line on a phone instead of
  * squeezing the freshness text; row-gap keeps the two lines from touching. */
-.ev-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;row-gap:6px;padding:0 6px 14px;color:var(--text-3);font-size:13px}
+.ev-meta{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-2);row-gap:var(--s-2);padding:0 var(--s-2) var(--s-4);color:var(--text-3);font-size:13px}
 .ev-meta b{color:var(--text)}
 .ev-meta-dot{color:var(--text-4)}
 .ev-meta-pag{margin-left:auto;font-family:"JetBrains Mono",monospace;color:var(--text-3)}
@@ -961,7 +1005,7 @@ a{color:inherit;text-decoration:none}
  * ever changes again, this changes with it or the key stops matching the thing
  * it explains. border-radius:3px is intentional and exempt from the radius
  * scale (see RADIUS_EXEMPT) — a 12px-tall chip on --r-sm reads as a pill. */
-.ev-legend{display:inline-flex;align-items:center;gap:7px;color:var(--red-2);cursor:help}
+.ev-legend{display:inline-flex;align-items:center;gap:var(--s-2);color:var(--red-2);cursor:help}
 .ev-legend-swatch{
   width:24px;height:12px;border-radius:3px;flex-shrink:0;
   border-left:3px solid var(--red);
@@ -988,15 +1032,15 @@ a{color:inherit;text-decoration:none}
   cursor:default;
   transition:background .12s ease;
 }
-.ev-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.ev-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--s-2)}
 .ev-row-side{display:flex;align-items:center;gap:var(--s-3);flex-shrink:0}
-.ev-row-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:12.5px;color:var(--text-3)}
+.ev-row-meta{display:flex;align-items:center;flex-wrap:wrap;gap:var(--s-2);font-size:12.5px;color:var(--text-3)}
 /* Wrap units inside the meta line. Each keeps a pair that reads as one thing
  * from being split across a wrap: the bet itself (SIDE + line) and the game
  * time with its leading separator. Without these, 375px split UNDER from 1.5 in
  * every row measured and orphaned the separator in two thirds of them. */
-.ev-bet{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.ev-when{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.ev-bet{display:inline-flex;align-items:center;gap:var(--s-2);white-space:nowrap}
+.ev-when{display:inline-flex;align-items:center;gap:var(--s-2);white-space:nowrap}
 /* Each line inside the identity zone must be allowed to shrink below its own
  * content width, or a long value (e.g. a full player name, or the
  * "Hits+Runs+RBIs" prop) pushes .ev-row-main wider than the row and squeezes the
@@ -1081,7 +1125,7 @@ a{color:inherit;text-decoration:none}
  * ("Alexander-Arnold") inside the line — wrapping alone only breaks at spaces,
  * and this rule also sets overflow:visible. title={b.player} stays in the JSX
  * regardless; it is harmless and still useful to screen readers. */
-.ev-player{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.ev-player{display:flex;align-items:flex-start;gap:var(--s-2);min-width:0}
 .ev-player-n{font-weight:600;letter-spacing:-.005em;line-height:1.3;overflow-wrap:anywhere}
 /* There is deliberately no per-row LOGGED badge. It lived inside .ev-player as a
  * flex-shrink:0 chip, and back when the row was a 9-track grid with a 620px
@@ -1097,7 +1141,7 @@ a{color:inherit;text-decoration:none}
  * match the `.10em` spelling, so this and .bt-slip-compact .bt-slip-badge were
  * the two sites it missed. Leaving a dead rule on the pre-pass value is how the
  * next person rediscovers the same too-narrow grep. */
-.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.04em;background:rgba(96,165,250,.14);color:var(--blue-2);padding:2px 6px;border-radius:var(--r-sm);margin-left:7px;border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
+.ev-sharp{font-size:9px;font-weight:800;letter-spacing:.04em;background:rgba(96,165,250,.14);color:var(--blue-2);padding:var(--s-1) var(--s-2);border-radius:var(--r-sm);margin-left:var(--s-2);border:1px solid rgba(96,165,250,.35);vertical-align:1px;cursor:help}
 
 /* Logged-bet row: bet is already in this user's backtest, so it will not
  * be selected for future auto-built slips. Painted red end-to-end so the
@@ -1171,7 +1215,7 @@ a{color:inherit;text-decoration:none}
  * existed only to align the odds numbers down a stacked column, and in a
  * wrapping row it pads every short price out to 44px and gaps the chips
  * raggedly. Do not restore it. */
-.ev-books{display:flex;flex-direction:row;flex-wrap:wrap;gap:6px;align-items:center}
+.ev-books{display:flex;flex-direction:row;flex-wrap:wrap;gap:var(--s-2);align-items:center}
 .ev-books .cp-odd{margin-right:0}
 /* 11px mono, scoped: .cp-book's 9.5px base is shared with the slip builder. */
 .ev-row .cp-book{font-size:11px;font-family:"JetBrains Mono",ui-monospace,monospace}
@@ -1204,7 +1248,7 @@ a{color:inherit;text-decoration:none}
 .ev-slip{position:sticky;top:var(--nav-h);height:calc(100vh - var(--nav-h));background:var(--bg-2);border-left:1px solid var(--hair);padding:var(--s-5);display:flex;flex-direction:column;gap:var(--s-4);overflow-y:auto}
 .ev-slip-hd{display:flex;justify-content:space-between;align-items:center}
 .ev-slip-hd h3{margin:0;font-size:15px;font-weight:700}
-.ev-auto{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3);cursor:pointer;user-select:none}
+.ev-auto{display:flex;align-items:center;gap:var(--s-2);font-size:11.5px;color:var(--text-3);cursor:pointer;user-select:none}
 /* Custom themed checkbox: hide the native box, drive a styled .ev-check off its
  * :checked state. Matches the accent (--primary) with a drawn checkmark; the
  * green-devils variant (.ev-auto-gd) is the same two-token shape in green —
@@ -1232,19 +1276,19 @@ a{color:inherit;text-decoration:none}
  * 4px blue one reads as a rendering bug, and the width was never the semantic
  * part. Changing --ring's width means changing this literal by hand. */
 .ev-auto-gd input:focus-visible ~ .ev-check{box-shadow:0 0 0 4px rgba(34,197,94,.25)}
-.ev-slip-row{display:grid;grid-template-columns:1fr .6fr;gap:8px}
-.ev-slip-field{display:flex;flex-direction:column;gap:5px}
+.ev-slip-row{display:grid;grid-template-columns:1fr .6fr;gap:var(--s-2)}
+.ev-slip-field{display:flex;flex-direction:column;gap:var(--s-1)}
 .ev-slip-field label{font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--text-3)}
-.ev-slip-field select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 5l3 3 3-3' stroke='%237a7a8b' stroke-width='1.5' fill='none'/></svg>");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px}
+.ev-slip-field select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 5l3 3 3-3' stroke='%237a7a8b' stroke-width='1.5' fill='none'/></svg>");background-repeat:no-repeat;background-position:right 10px center;padding-right:var(--s-8)}
 
-.ev-slip-be{display:flex;flex-direction:column;gap:5px}
+.ev-slip-be{display:flex;flex-direction:column;gap:var(--s-1)}
 .ev-slip-be>div:first-child{display:flex;justify-content:space-between;align-items:baseline}
 .ev-slip-be label{font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--text-3)}
 .ev-be-lbl{font-size:11px;color:var(--primary-2);font-family:"JetBrains Mono",monospace}
-.ev-slip-be-row{display:flex;gap:6px}
+.ev-slip-be-row{display:flex;gap:var(--s-2)}
 
-.ev-slip-legs{flex:1;min-height:140px;display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid var(--hair)}
-.ev-slip-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-3);font-size:12.5px;gap:14px;padding:30px 0}
+.ev-slip-legs{flex:1;min-height:140px;display:flex;flex-direction:column;gap:var(--s-2);padding-top:var(--s-2);border-top:1px solid var(--hair)}
+.ev-slip-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-3);font-size:12.5px;gap:var(--s-4);padding:var(--s-8) 0}
 .ev-empty-stack{position:relative;width:80px;height:60px}
 .ev-empty-slip{position:absolute;width:60px;height:36px;background:#0a0a12;border:1px solid var(--hair);border-radius:var(--r-sm)}
 .ev-empty-slip:nth-child(1){top:0;left:0;transform:rotate(-6deg)}
@@ -1277,7 +1321,7 @@ a{color:inherit;text-decoration:none}
 .ev-leg-x{background:transparent;border:0;color:var(--text-3);width:22px;height:22px;border-radius:var(--r-sm);cursor:default;font-size:11px}
 .ev-leg-x:hover{background:rgba(239,68,68,.15);color:var(--red-2)}
 
-.ev-slip-summary{padding-top:8px;border-top:1px solid var(--hair);display:flex;flex-direction:column;gap:6px}
+.ev-slip-summary{padding-top:var(--s-2);border-top:1px solid var(--hair);display:flex;flex-direction:column;gap:var(--s-2)}
 .ev-sum-row{display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-2)}
 .ev-sum-row b{font-family:"JetBrains Mono",monospace}
 .ev-edge{color:var(--green)!important}
@@ -1435,9 +1479,9 @@ a{color:inherit;text-decoration:none}
  * @media 900) — those copies win. */
 .bd-page{padding:var(--s-5) var(--s-6) 60px;max-width:1480px;margin:0 auto}
 .bd-filters{display:flex;align-items:flex-end;gap:var(--s-4);flex-wrap:wrap;padding:var(--s-4);background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);margin-bottom:var(--s-4)}
-.bd-f{display:flex;flex-direction:column;gap:6px;min-width:0}
+.bd-f{display:flex;flex-direction:column;gap:var(--s-2);min-width:0}
 .bd-f>span{font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--text-3)}
-.bd-f input,.bd-f select{background:#0a0a12;border:1px solid var(--hair);color:var(--text);border-radius:var(--r-sm);padding:8px 10px;font-size:13px;outline:none;font-family:inherit;min-width:130px;transition:border-color .15s}
+.bd-f input,.bd-f select{background:#0a0a12;border:1px solid var(--hair);color:var(--text);border-radius:var(--r-sm);padding:var(--s-2) var(--s-3);font-size:13px;outline:none;font-family:inherit;min-width:130px;transition:border-color .15s}
 .bd-f input:focus,.bd-f select:focus{border-color:var(--primary)}
 /* A native select (appearance:auto) computes 2px taller than an <input> at the
  * same font-size/padding, because its intrinsic content box includes room for
@@ -1451,7 +1495,7 @@ a{color:inherit;text-decoration:none}
   line-height:normal;height:34px;
   background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 5l3 3 3-3' stroke='%237a7a8b' stroke-width='1.5' fill='none'/></svg>");
   background-repeat:no-repeat;background-position:right 10px center;
-  padding-right:28px;
+  padding-right:var(--s-8);
 }
 .bd-f-grow{flex:1;min-width:160px}
 .bd-f-grow input{width:100%}
@@ -1471,17 +1515,20 @@ a{color:inherit;text-decoration:none}
  * deliberately off the button height scale). .bd-pag-btn stays 28px INSIDE the
  * 34px .bd-pag. align-self changes where a box sits, not how tall it is — keep
  * it that way. */
-.bd-clear{background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:0 14px;height:34px;border-radius:var(--r-sm);font-size:13px;cursor:default;align-self:flex-end;margin-left:auto;display:inline-flex;align-items:center}
+.bd-clear{background:transparent;border:1px solid var(--hair);color:var(--text-2);padding:0 var(--s-4);height:34px;border-radius:var(--r-sm);font-size:13px;cursor:default;align-self:flex-end;margin-left:auto;display:inline-flex;align-items:center}
 .bd-clear:hover{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:var(--red-2)}
-.bd-badge{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--text-2);background:rgba(30,111,176,.10);border:1px solid rgba(30,111,176,.25);padding:0 12px;height:34px;border-radius:var(--r-pill);align-self:flex-end;display:inline-flex;align-items:center}
+.bd-badge{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--text-2);background:rgba(30,111,176,.10);border:1px solid rgba(30,111,176,.25);padding:0 var(--s-3);height:34px;border-radius:var(--r-pill);align-self:flex-end;display:inline-flex;align-items:center}
 .bd-pag{display:inline-flex;align-items:center;gap:var(--s-1);align-self:flex-end;height:34px}
 .bd-pag-btn{background:#0a0a12;border:1px solid var(--hair);color:var(--text);width:28px;height:28px;border-radius:var(--r-sm);cursor:default;font-size:14px}
 .bd-pag-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary-2)}
 .bd-pag-btn:disabled{opacity:.3}
-.bd-pag-num{font-size:12px;color:var(--text-2);padding:0 6px}
+.bd-pag-num{font-size:12px;color:var(--text-2);padding:0 var(--s-2)}
 
-.bd-chips{display:inline-flex;gap:5px;flex-wrap:wrap}
-.bd-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);padding:6px 12px;border-radius:var(--r-pill);font-size:12px;font-weight:500;cursor:default;transition:.15s}
+/* Dead CSS — no JSX renders .bd-chips / .bd-chip, which is why the 34px
+ * filter-bar contract deliberately excludes them despite their living beside
+ * .bd-clear here. Migrated with the live rules anyway, same call as .ev-sharp. */
+.bd-chips{display:inline-flex;gap:var(--s-1);flex-wrap:wrap}
+.bd-chip{background:#0a0a12;border:1px solid var(--hair);color:var(--text-2);padding:var(--s-2) var(--s-3);border-radius:var(--r-pill);font-size:12px;font-weight:500;cursor:default;transition:.15s}
 .bd-chip:hover{border-color:var(--hair-2);color:var(--text)}
 .bd-chip.is-on{background:var(--primary);border-color:var(--primary);color:white}
 
@@ -1538,7 +1585,7 @@ a{color:inherit;text-decoration:none}
 .bd-true-odds{color:var(--primary-2);font-weight:600}
 .bd-time{color:var(--text-3);font-size:12px;white-space:nowrap}
 .bd-odds{font-family:"JetBrains Mono",monospace;font-weight:500}
-.bd-odds.is-best{color:var(--green);font-weight:700;background:rgba(34,197,94,.10);padding:2px 7px;border-radius:var(--r-sm)}
+.bd-odds.is-best{color:var(--green);font-weight:700;background:rgba(34,197,94,.10);padding:var(--s-1) var(--s-2);border-radius:var(--r-sm)}
 .bd-odds.is-plus{color:var(--green-2)}
 .bd-odds-empty{color:var(--text-4)}
 .bd-edge-cell{font-family:"JetBrains Mono",monospace;font-weight:700;color:var(--text-4)}
@@ -1546,14 +1593,30 @@ a{color:inherit;text-decoration:none}
 
 
 /* ═══════════════════════════════════════════ BACKTEST ═══════════════════════════════════════════ */
-.bt-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px}
-.bt-card{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);padding:14px 16px;display:flex;flex-direction:column}
+/* The stat-tile grid, and the one rule in this pass where the spec overrides
+ * plain nearest-step rounding. It asks for LARGER gaps between the flat tiles —
+ * twice, once for Backtest ("flat tiles with larger gaps") and once for Analytics
+ * ("larger stat-grid gaps") — and both instructions land here, because
+ * page-backtest.jsx and page-analytics.jsx render the same .bt-summary (Analytics
+ * twice, for window stats and CLV). Nearest step from 10px is --s-3 (12px), which
+ * is larger by 2px and reads as a rounding artefact rather than as a decision, so
+ * the gap takes --s-4 (16px) — the next step up, and the same value as
+ * .bt-slips-grid below, so the two card grids on the two screens share one
+ * gutter. margin-bottom takes plain nearest-step (18px is a tie, ties round up)
+ * and happens to move the same direction.
+ *
+ * This rule and .bt-card below are the LAST two declarations Phases 1-2b left
+ * untouched: `gap:10px;margin-bottom:18px` had not changed since before Phase 1,
+ * and `.bt-card{padding:14px 16px}` is the spec's own headline example of the
+ * drift the scale exists to remove. */
+.bt-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--s-4);margin-bottom:var(--s-5)}
+.bt-card{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-md);padding:var(--s-4);display:flex;flex-direction:column}
 /* Reserve two label lines on every card so a wrapping "(sub)" doesn't push
  * one card's value down relative to its neighbors — the values must sit on a
  * common baseline across the row. */
-.bt-card-label{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text-3);display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;min-height:2.4em;line-height:1.25}
+.bt-card-label{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text-3);display:flex;align-items:baseline;gap:var(--s-2);flex-wrap:wrap;min-height:2.4em;line-height:1.25}
 .bt-card-sub{font-size:9.5px;opacity:.7;text-transform:none;letter-spacing:0}
-.bt-card-value{font-size:22px;font-weight:700;margin-top:auto;padding-top:6px;letter-spacing:-.01em;font-family:"JetBrains Mono",monospace}
+.bt-card-value{font-size:22px;font-weight:700;margin-top:auto;padding-top:var(--s-2);letter-spacing:-.01em;font-family:"JetBrains Mono",monospace}
 .bt-card.tone-good .bt-card-value{color:var(--green)}
 .bt-card.tone-bad  .bt-card-value{color:var(--red-2)}
 
@@ -1565,8 +1628,22 @@ a{color:inherit;text-decoration:none}
 .bt-card-value .cp-skel{height:22px;width:64px;vertical-align:middle}
 .bt-card-label .cp-skel{height:11px;width:90px}
 
-.bt-slips-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
-.bt-slip{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
+/* REDUNDANT, and left in place deliberately. `.bt-slips-grid` is re-declared
+ * unconditionally in the "Backtest cards: 3-up grid" block further down with
+ * `gap:16px`, and that copy is the one that renders (same specificity, later
+ * source order) — so this 14px has been dead since that block was written.
+ * Rounding 14 -> --s-4 makes the two copies identical, i.e. this declaration is
+ * now provably a no-op. It is NOT deleted here: removing a rule is a different
+ * decision from tokenizing one, and folding the two together inside a spacing
+ * pass would hide it. The marketing pass reached the same conclusion about
+ * `.lp-books` and handled it exactly this way.
+ *
+ * .bt-slip's own padding/gap are dead for the same kind of reason but a different
+ * mechanism: page-backtest.jsx only ever emits `<article class="bt-slip
+ * bt-slip-compact …">`, and `.bt-slip-compact` (0,2,0) sets both. They are
+ * migrated so a slip rendered outside a compact card still lands on the scale. */
+.bt-slips-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:var(--s-4)}
+.bt-slip{background:var(--card);border:1px solid var(--hair);border-radius:var(--r-lg);padding:var(--s-4);display:flex;flex-direction:column;gap:var(--s-3);position:relative;overflow:hidden}
 .bt-slip::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;opacity:.65}
 .bt-slip.is-win::before{background:linear-gradient(180deg,var(--green),rgba(34,197,94,.2))}
 .bt-slip.is-loss::before{background:linear-gradient(180deg,var(--red),rgba(239,68,68,.2))}
@@ -1582,7 +1659,7 @@ a{color:inherit;text-decoration:none}
  * compact card). Editing the tracking HERE ships a no-op — the .10em that copy
  * carried is exactly how the typography pass came to miss it. The colour rules
  * below are single-class and do render. */
-.bt-slip-badge{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:var(--r-sm)}
+.bt-slip-badge{font-size:10px;font-weight:800;letter-spacing:.08em;padding:var(--s-1) var(--s-2);border-radius:var(--r-sm)}
 .bt-slip-badge.is-win{background:rgba(34,197,94,.14);color:var(--green-2)}
 .bt-slip-badge.is-loss{background:rgba(239,68,68,.14);color:var(--red-2)}
 .bt-slip-badge.is-push{background:rgba(251,191,36,.14);color:var(--amber-2)}
@@ -1595,32 +1672,38 @@ a{color:inherit;text-decoration:none}
 .bt-slip-del:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:var(--red-2)}
 
 /* Delete-slip confirmation modal (reuses .cp-modal-back / .cp-modal shell). */
-.bt-del-modal{width:min(420px,92vw);text-align:center;padding:28px 26px 22px}
-.bt-del-icon{width:52px;height:52px;margin:0 auto 14px;border-radius:50%;display:grid;place-items:center;font-size:24px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4)}
-.bt-del-title{margin:0 0 8px;font-size:18px;font-weight:700;color:var(--text)}
-.bt-del-body{margin:0 0 6px;font-size:13.5px;line-height:1.5;color:var(--text-2)}
-.bt-del-error{margin:10px 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:8px 10px}
-.bt-del-actions{display:flex;gap:10px;justify-content:center;margin-top:20px}
-.bt-del-actions .cp-btn{min-width:118px;padding:10px 16px}
+.bt-del-modal{width:min(420px,92vw);text-align:center;padding:var(--s-8) var(--s-6) var(--s-6)}
+.bt-del-icon{width:52px;height:52px;margin:0 auto var(--s-4);border-radius:50%;display:grid;place-items:center;font-size:24px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4)}
+.bt-del-title{margin:0 0 var(--s-2);font-size:18px;font-weight:700;color:var(--text)}
+.bt-del-body{margin:0 0 var(--s-2);font-size:13.5px;line-height:1.5;color:var(--text-2)}
+.bt-del-error{margin:var(--s-3) 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:var(--s-2) var(--s-3)}
+.bt-del-actions{display:flex;gap:var(--s-3);justify-content:center;margin-top:var(--s-5)}
+/* Also now redundant: `10px 16px` was .cp-btn's own base padding written out by
+ * hand, and both sides move to the same steps, so this override sets what it
+ * would inherit. Kept for the reason .bt-slips-grid's dead gap is kept — the
+ * `min-width` beside it is doing real work, so this is not even a whole-rule
+ * deletion, it is a one-declaration one, and it belongs to whoever next reads
+ * this modal rather than to a spacing pass. */
+.bt-del-actions .cp-btn{min-width:118px;padding:var(--s-3) var(--s-4)}
 .bt-del-confirm{background:var(--red);color:#fff;border:1px solid var(--red)}
 .bt-del-confirm:hover:not(:disabled){background:#dc2626;border-color:#dc2626}
 .bt-del-confirm:disabled{opacity:.6;cursor:default}
 
-.bt-slip-legs{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:5px}
-.bt-slip-leg{display:grid;grid-template-columns:18px 1fr auto auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.bt-slip-legs{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:var(--s-1)}
+.bt-slip-leg{display:grid;grid-template-columns:18px 1fr auto auto;gap:var(--s-2);align-items:center;padding:var(--s-2) 0;border-bottom:1px solid rgba(255,255,255,.04)}
 .bt-slip-leg:last-child{border-bottom:0}
 .bt-leg-i{width:18px;height:18px;background:#0a0a12;border-radius:var(--r-sm);display:grid;place-items:center;font-size:10px;color:var(--text-3);font-weight:700}
 .bt-leg-body{min-width:0}
 .bt-leg-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bt-leg-prop{font-size:11.5px;color:var(--text-3)}
 .bt-leg-pct{font-size:12px;color:var(--text-2);font-family:"JetBrains Mono",monospace}
-.bt-leg-actual{font-size:13px;font-weight:700;font-family:"JetBrains Mono",monospace;padding:2px 8px;border-radius:var(--r-sm)}
+.bt-leg-actual{font-size:13px;font-weight:700;font-family:"JetBrains Mono",monospace;padding:var(--s-1) var(--s-2);border-radius:var(--r-sm)}
 .bt-leg-actual.leg-hit{background:rgba(34,197,94,.14);color:var(--green-2)}
 .bt-leg-actual.leg-miss{background:rgba(239,68,68,.14);color:var(--red-2)}
 .bt-leg-actual.leg-push{background:rgba(251,191,36,.14);color:var(--amber-2)}
 .bt-leg-actual.leg-dnp,.bt-leg-actual.leg-pending{background:rgba(96,165,250,.14);color:var(--blue-2)}
 
-.bt-slip-foot{display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid var(--hair);gap:8px}
+.bt-slip-foot{display:flex;justify-content:space-between;padding-top:var(--s-3);border-top:1px solid var(--hair);gap:var(--s-2)}
 .bt-slip-foot-c{display:flex;flex-direction:column;gap:2px;flex:1}
 .bt-slip-foot-k{font-size:10px;color:var(--text-3);letter-spacing:.04em;font-weight:600}
 .bt-slip-foot-v{font-size:13px;font-weight:700}
@@ -1638,10 +1721,10 @@ a{color:inherit;text-decoration:none}
  * .bt-card and .an-panel to var(--card) by exact selector, so changing either
  * base background fails it — and deleting one trips its `missing` check. */
 .an-panel .bt-card{background:var(--card-2)}
-.an-panel-h{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.an-panel-h{display:flex;justify-content:space-between;align-items:flex-end;gap:var(--s-3);margin-bottom:var(--s-4);flex-wrap:wrap}
 .an-panel-h h3{margin:0;font-size:15px;font-weight:700;letter-spacing:-.005em}
 .an-section-sub{font-size:12px;color:var(--text-3)}
-.an-section-h{margin:var(--s-5) 0 var(--s-3);font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3);display:flex;align-items:center;gap:10px}
+.an-section-h{margin:var(--s-5) 0 var(--s-3);font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3);display:flex;align-items:center;gap:var(--s-3)}
 
 /* Analytics stacks TWO .bt-summary groups in one panel (7 window-stat cards,
  * then 3 CLV cards). The shared rule uses auto-fit, whose empty tracks COLLAPSE
@@ -1655,7 +1738,7 @@ a{color:inherit;text-decoration:none}
 @media (max-width:820px){.an-page .bt-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:520px){.an-page .bt-summary{grid-template-columns:1fr}}
 
-.pnl-header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:12px;gap:12px;flex-wrap:wrap}
+.pnl-header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--s-3);gap:var(--s-3);flex-wrap:wrap}
 .pnl-title{font-size:13px;color:var(--text-3);letter-spacing:.04em;text-transform:uppercase;font-weight:600}
 .pnl-total{font-size:34px;font-weight:800;letter-spacing:-.02em;font-family:"JetBrains Mono",monospace;line-height:1.1;margin-top:var(--s-1)}
 .pnl-hover{color:var(--text-3);font-size:13px;font-family:"JetBrains Mono",monospace}
@@ -1668,7 +1751,7 @@ a{color:inherit;text-decoration:none}
    <circle> marks and would kill the ReliabilityChart's native <title> hover
    tooltips (both charts share the .pnl-chart class). user-select handles the
    selection concern on its own; pointer-events is unnecessary. */
-.pnl-chart{margin:0 -4px;touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.pnl-chart{margin:0 calc(-1 * var(--s-1));touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .pnl-chart svg{display:block;width:100%;-webkit-user-select:none;user-select:none}
 
 /* #0a0a12 and #1f1f2e below stay LITERAL: no :root token matches either value,
@@ -1681,8 +1764,8 @@ a{color:inherit;text-decoration:none}
  * spelled two ways, which is worse than today. #1f1f2e is the active-segment
  * fill, shared with .pp-tg-btn.is-on on the pricing page; same argument at
  * smaller scale. Both need their own cross-screen pass. */
-.pnl-range{display:inline-flex;gap:2px;background:#0a0a12;border:1px solid var(--hair);padding:3px;border-radius:var(--r-sm);margin-top:8px}
-.pnl-range-btn{background:transparent;border:0;color:var(--text-3);padding:6px 12px;border-radius:var(--r-sm);font-weight:600;font-size:11.5px;cursor:default;letter-spacing:.04em;font-family:"JetBrains Mono",monospace}
+.pnl-range{display:inline-flex;gap:2px;background:#0a0a12;border:1px solid var(--hair);padding:3px;border-radius:var(--r-sm);margin-top:var(--s-2)}
+.pnl-range-btn{background:transparent;border:0;color:var(--text-3);padding:var(--s-2) var(--s-3);border-radius:var(--r-sm);font-weight:600;font-size:11.5px;cursor:default;letter-spacing:.04em;font-family:"JetBrains Mono",monospace}
 .pnl-range-btn:hover{color:var(--text)}
 .pnl-range-btn.is-on{background:#1f1f2e;color:white}
 /* The Custom range button gets the app's accent blue when active so it reads
@@ -1693,8 +1776,8 @@ a{color:inherit;text-decoration:none}
 /* Custom date-range picker — matches the segmented range control above it (same
  * inset panel + radius) with two rounded date fields and the accent blue focus
  * ring used everywhere else in the app. */
-.pnl-custom{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;background:#0a0a12;border:1px solid var(--hair);padding:6px 8px;border-radius:var(--r-md)}
-.pnl-custom-field{display:inline-flex;align-items:center;gap:8px}
+.pnl-custom{display:inline-flex;align-items:center;gap:var(--s-2);flex-wrap:wrap;margin-top:var(--s-2);background:#0a0a12;border:1px solid var(--hair);padding:var(--s-2);border-radius:var(--r-md)}
+.pnl-custom-field{display:inline-flex;align-items:center;gap:var(--s-2)}
 .pnl-custom-field>span{font-size:10.5px;font-weight:700;letter-spacing:.04em;color:var(--text-3);font-family:"JetBrains Mono",ui-monospace,monospace}
 /* var(--card), not the literal it used to be. Value-identical, so this renders
  * no differently today — which is exactly the problem it fixes. It was the ONLY
@@ -1704,7 +1787,7 @@ a{color:inherit;text-decoration:none}
  * this value HAD an exact token all along; it was skipped, not deferred. (The
  * hex is deliberately not repeated here — a bare copy of a token's value in a
  * comment is the next thing someone pastes into a rule.) */
-.pnl-custom-input{background:var(--card);border:1px solid var(--hair-2);color:var(--text);border-radius:var(--r-sm);padding:7px 10px;font-size:12.5px;font-family:"JetBrains Mono",ui-monospace,monospace;outline:none;color-scheme:dark;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease}
+.pnl-custom-input{background:var(--card);border:1px solid var(--hair-2);color:var(--text);border-radius:var(--r-sm);padding:var(--s-2) var(--s-3);font-size:12.5px;font-family:"JetBrains Mono",ui-monospace,monospace;outline:none;color-scheme:dark;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease}
 .pnl-custom-input:hover{border-color:var(--primary-2)}
 .pnl-custom-input:focus{border-color:var(--primary);box-shadow:var(--ring)}
 .pnl-custom-arrow{color:var(--text-4);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
@@ -1718,34 +1801,37 @@ a{color:inherit;text-decoration:none}
  * the whole cal-* family is currently unrendered CSS. Flattened rather than
  * deleted so the rule stays consistent with its neighbours if the calibration
  * chart comes back; removing the dead family is its own change. */
-.cal-curves{background:var(--bg);border:1px solid var(--hair);border-radius:var(--r-md);padding:18px 18px 12px;margin-bottom:14px;min-height:380px}
+.cal-curves{background:var(--bg);border:1px solid var(--hair);border-radius:var(--r-md);padding:var(--s-5) var(--s-5) var(--s-3);margin-bottom:var(--s-4);min-height:380px}
 .cal-curves svg{display:block;width:100%}
-.cal-legend{display:flex;flex-wrap:wrap;gap:16px;padding:var(--s-1) 6px 0;font-family:Inter,system-ui,sans-serif}
-.cal-legend-item{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text-2);font-weight:500}
+.cal-legend{display:flex;flex-wrap:wrap;gap:var(--s-4);padding:var(--s-1) var(--s-2) 0;font-family:Inter,system-ui,sans-serif}
+.cal-legend-item{display:inline-flex;align-items:center;gap:var(--s-2);font-size:12.5px;color:var(--text-2);font-weight:500}
 .cal-legend-item i{width:18px;height:3px;border-radius:2px;display:inline-block}
 .cal-legend-dashed{background:repeating-linear-gradient(90deg,rgba(255,255,255,.3) 0 5px,transparent 5px 9px)!important;height:1.5px!important}
 
 /* Per-prop multiplier table */
 .obs-mult-wrap,.obs-heat-wrap{overflow:auto}
 .obs-mult,.obs-heat{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
-.obs-mult thead th,.obs-heat thead th{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3);font-weight:600;text-align:left;padding:10px 14px;border-bottom:1px solid var(--hair);white-space:nowrap}
-.obs-mult tbody td,.obs-heat tbody td{padding:8px 14px;border-bottom:1px solid var(--hair)}
+.obs-mult thead th,.obs-heat thead th{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3);font-weight:600;text-align:left;padding:var(--s-3) var(--s-4);border-bottom:1px solid var(--hair);white-space:nowrap}
+.obs-mult tbody td,.obs-heat tbody td{padding:var(--s-2) var(--s-4);border-bottom:1px solid var(--hair)}
 .obs-th-c{text-align:center!important}
-.obs-mult-cell{display:flex;flex-direction:column;align-items:center;padding:6px 10px;border-radius:var(--r-sm);min-width:90px}
+.obs-mult-cell{display:flex;flex-direction:column;align-items:center;padding:var(--s-2) var(--s-3);border-radius:var(--r-sm);min-width:90px}
 .obs-mult-n{font-size:10px;color:var(--text-3);font-family:"JetBrains Mono",monospace;margin-top:2px}
 
 /* Heatmap */
-.obs-heat-prop{display:flex;align-items:center;gap:10px;white-space:nowrap;font-size:13px;font-weight:500;color:var(--text-2)}
+.obs-heat-prop{display:flex;align-items:center;gap:var(--s-3);white-space:nowrap;font-size:13px;font-weight:500;color:var(--text-2)}
 .obs-heat-prop .bt-leg-side{margin-left:auto}
 .obs-heat-cell{text-align:center;font-family:"JetBrains Mono",monospace;font-weight:600;border-right:1px solid rgba(255,255,255,.04)}
 .obs-heat-cell.is-empty{color:var(--text-4);font-weight:400}
 .obs-heat-v{display:block;padding:2px 0;border-radius:4px;font-weight:700}
 .obs-heat-n{display:block;font-size:9.5px;font-weight:500;color:var(--text-3);margin-top:1px;letter-spacing:.02em}
-.obs-heat-cell{padding:8px 12px;text-align:center}
+/* Second `.obs-heat-cell` rule, four lines after the first. The one above sets
+ * the alignment/font/border; this one is where the padding lives, so this is the
+ * copy a spacing change has to touch. (`text-align:center` is stated in both.) */
+.obs-heat-cell{padding:var(--s-2) var(--s-3);text-align:center}
 
-.obs-feed-filters{display:flex;gap:24px;margin-bottom:14px;flex-wrap:wrap}
-.an-feed-count{font-weight:400;color:var(--text-3);font-size:13px;margin-left:6px}
-.obs-pill{font-size:10px;font-weight:800;letter-spacing:.08em;padding:3px 8px;border-radius:var(--r-sm);display:inline-block}
+.obs-feed-filters{display:flex;gap:var(--s-6);margin-bottom:var(--s-4);flex-wrap:wrap}
+.an-feed-count{font-weight:400;color:var(--text-3);font-size:13px;margin-left:var(--s-2)}
+.obs-pill{font-size:10px;font-weight:800;letter-spacing:.08em;padding:var(--s-1) var(--s-2);border-radius:var(--r-sm);display:inline-block}
 
 /* ─────────── density overrides: tighten dead space, fill standard screens ─────────── */
 /* Strategy: scale containers with viewport. Landing sections use fluid widths
@@ -1786,7 +1872,12 @@ a{color:inherit;text-decoration:none}
  * The gutter clamp is the shared page gutter: keep it identical to .ev-main and
  * .bd-page below or the nav's edge stops lining up with the page content. */
 .cp-nav{padding:var(--s-3) clamp(var(--s-6),2.5vw,var(--s-10));grid-template-columns:auto 1fr auto;gap:var(--s-6)}
-.cp-nav-c{gap:6px}
+/* THIS copy of .cp-nav-c's gap is the one that renders on desktop — it is
+ * unconditional and later in source order than the base rule's `gap:var(--s-1)`,
+ * which has therefore been dead since this block was written. Both are on the
+ * scale now but they still disagree (4px vs 8px); reconciling them is a
+ * delete-a-rule decision, not a tokenization, so it is left visible here. */
+.cp-nav-c{gap:var(--s-2)}
 .cp-tab{padding:var(--s-3) var(--s-5)}
 
 /* Filter bars in app pages: keep them visually grouped at any width. These two
@@ -1808,13 +1899,13 @@ a{color:inherit;text-decoration:none}
 
 /* +EV: Save-preferences button below Min Leg % */
 .ev-prefs-save{
-  margin-top:8px;width:100%;
+  margin-top:var(--s-2);width:100%;
   background:var(--primary);
   /* --r-md to match .cp-btn-save, the other full-width primary CTA in this
    * sidebar. The two stack directly adjacent, so 8px against 12px read as a
    * mistake once the glows that used to distract from it were removed. */
   color:white;border:0;border-radius:var(--r-md);
-  padding:10px;font-size:13px;font-weight:700;letter-spacing:.02em;
+  padding:var(--s-3);font-size:13px;font-weight:700;letter-spacing:.02em;
   cursor:pointer;white-space:nowrap;
   transition:transform .08s ease, background .2s ease;
 }
@@ -1879,7 +1970,7 @@ a{color:inherit;text-decoration:none}
   margin-top:auto;width:100%;
   background:var(--primary);
   color:white;border:0;border-radius:var(--r-sm);
-  padding:9px 12px;font-size:12.5px;font-weight:700;letter-spacing:.02em;
+  padding:var(--s-2) var(--s-3);font-size:12.5px;font-weight:700;letter-spacing:.02em;
   cursor:pointer;white-space:nowrap;
   transition:transform .08s ease, background .2s ease;
 }
@@ -1958,15 +2049,17 @@ a{color:inherit;text-decoration:none}
 /* Placement messages get their own classes — these used to borrow
    .bt-del-error from the delete-slip modal, so restyling deletion silently
    restyled betting errors. */
-.bt-place-note{margin:8px 0 0;font-size:11.5px;color:#94a3b8;line-height:1.5}
-.bt-place-error{margin:8px 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);
-  border:1px solid rgba(239,68,68,.25);border-radius:var(--r-sm);padding:7px 9px;line-height:1.5}
+.bt-place-note{margin:var(--s-2) 0 0;font-size:11.5px;color:#94a3b8;line-height:1.5}
+.bt-place-error{margin:var(--s-2) 0 0;font-size:12.5px;color:var(--red-2);background:rgba(239,68,68,.1);
+  border:1px solid rgba(239,68,68,.25);border-radius:var(--r-sm);padding:var(--s-2);line-height:1.5}
 
 /* ─────────── Backtest cards: 3-up grid, bigger, more legible ─────────── */
+/* THIS is the copy that renders — see the note on the base rule above, which is
+ * now an exact duplicate of this gap and is left in place on purpose. */
 .bt-slips-grid{
   display:grid;
   grid-template-columns:repeat(3,minmax(0,1fr));
-  gap:16px;
+  gap:var(--s-4);
 }
 @media (max-width:1080px){.bt-slips-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:680px){.bt-slips-grid{grid-template-columns:1fr}}
@@ -2016,9 +2109,9 @@ a{color:inherit;text-decoration:none}
 }
 
 /* Header strip */
-.bt-slip-compact .bt-slip-hd{align-items:center;margin-bottom:var(--s-1);gap:10px}
+.bt-slip-compact .bt-slip-hd{align-items:center;margin-bottom:var(--s-1);gap:var(--s-3)}
 .bt-slip-compact .bt-slip-hd-l{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
-.bt-slip-compact .bt-slip-hd-r{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.bt-slip-compact .bt-slip-hd-r{display:flex;align-items:center;gap:var(--s-2);flex-shrink:0}
 .bt-slip-compact .bt-slip-type{font-size:14px;font-weight:800;letter-spacing:.02em;color:var(--text)}
 .bt-slip-compact .bt-slip-ts{font-size:12px;color:var(--text-3)}
 /* THIS is the copy that renders. page-backtest.jsx emits the WIN/LOSS/PUSH/
@@ -2030,13 +2123,13 @@ a{color:inherit;text-decoration:none}
  * typography pass missed it: that pass grepped `letter-spacing:\.1em` and this
  * file spells the value `.10em`. So the one dated-caps micro-label the pass
  * existed to fix was the one it did not reach. --s-1 is the vertical pad. */
-.bt-slip-compact .bt-slip-badge{font-size:10.5px;padding:var(--s-1) 10px;letter-spacing:.04em;font-weight:800}
+.bt-slip-compact .bt-slip-badge{font-size:10.5px;padding:var(--s-1) var(--s-3);letter-spacing:.04em;font-weight:800}
 
 /* Slip-level +EV % badge */
 .bt-slip-ev{
   font-family:"JetBrains Mono",monospace;
   font-size:11.5px;font-weight:800;letter-spacing:.04em;
-  padding:var(--s-1) 9px;border-radius:var(--r-sm);
+  padding:var(--s-1) var(--s-2);border-radius:var(--r-sm);
   white-space:nowrap;
 }
 .bt-slip-ev.is-pos{color:var(--green-2);background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.40)}
@@ -2047,9 +2140,9 @@ a{color:inherit;text-decoration:none}
 .bt-slip-compact .bt-slip-leg{
   display:grid;
   grid-template-columns:1fr auto auto;
-  gap:10px;
+  gap:var(--s-3);
   align-items:center;
-  padding:8px 4px;
+  padding:var(--s-2) var(--s-1);
   border-bottom:1px solid rgba(255,255,255,.06);
 }
 .bt-slip-compact .bt-leg-pct{
@@ -2057,7 +2150,7 @@ a{color:inherit;text-decoration:none}
   font-weight:700;
   color:var(--primary-2);
   font-family:"JetBrains Mono",monospace;
-  padding:2px 7px;
+  padding:var(--s-1) var(--s-2);
   border-radius:var(--r-sm);
   /* These two are --primary-lo and --primary-hi by value. --primary-hi is safe
    * on the border; and the background is --primary-lo with an explicit
@@ -2074,7 +2167,7 @@ a{color:inherit;text-decoration:none}
 .bt-leg-name{
   display:flex;
   align-items:baseline;
-  gap:8px;
+  gap:var(--s-2);
   font-size:15.5px;
   font-weight:800;
   letter-spacing:-.005em;
@@ -2100,7 +2193,7 @@ a{color:inherit;text-decoration:none}
 
 /* Prop type + league + side+line — clearly readable, not muted into invisibility */
 .bt-leg-prop{
-  display:flex;align-items:center;gap:8px;
+  display:flex;align-items:center;gap:var(--s-2);
   font-size:12.5px;
   color:var(--text-2);
   margin-top:3px;
@@ -2111,7 +2204,7 @@ a{color:inherit;text-decoration:none}
   color:var(--text);
   font-size:11px;
   background:rgba(255,255,255,.06);
-  padding:2px 7px;border-radius:var(--r-sm);
+  padding:var(--s-1) var(--s-2);border-radius:var(--r-sm);
   flex-shrink:0;   /* the league pill is short and fixed — only the prop name shrinks */
 }
 /* The prop NAME is the only part of this row that may be shortened. Without
@@ -2121,7 +2214,7 @@ a{color:inherit;text-decoration:none}
  * entirely on narrow cards while a long prop name ("Pts+Rebs+Asts") stayed
  * fully rendered. Now the name ellipsises and the line is always visible. */
 .bt-leg-prop-name{color:var(--text);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:13px;padding:3px 8px;border-radius:var(--r-sm);margin-left:auto;flex-shrink:0}
+.bt-leg-side{font-family:"JetBrains Mono",monospace;font-weight:800;letter-spacing:.02em;font-size:13px;padding:var(--s-1) var(--s-2);border-radius:var(--r-sm);margin-left:auto;flex-shrink:0}
 .bt-leg-side-over{color:var(--green-2);background:rgba(34,197,94,.16)}
 .bt-leg-side-under{color:var(--blue-2);background:rgba(96,165,250,.16)}
 
@@ -2134,7 +2227,7 @@ a{color:inherit;text-decoration:none}
    * and BOTH badge columns in that leg shift right relative to its siblings —
    * within the same card. Measured ragged by 9-18px before this. */
   min-width:71px;
-  padding:6px 12px;
+  padding:var(--s-2) var(--s-3);
   border-radius:var(--r-sm);
   font-size:15px;
   font-weight:800;
@@ -2183,13 +2276,19 @@ a{color:inherit;text-decoration:none}
   .cp-nav-r{order:2}
   .cp-nav-c{
     order:3;flex:1 1 100%;flex-wrap:nowrap;justify-content:flex-start;
-    gap:6px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+    gap:var(--s-2);overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
     /* The negative side margin must equal .cp-nav's clamp MINIMUM above, or the
      * scrollable tab strip stops bleeding flush to the nav edge on the narrow
      * phones where 3vw is below that minimum. Both sides read --s-4 so they
      * cannot drift; the matching positive padding keeps the first/last tab off
-     * the bezel while the strip is scrolled to either end. */
-    scrollbar-width:none;margin:2px calc(-1 * var(--s-4)) 0;padding:2px var(--s-4) 4px;
+     * the bezel while the strip is scrolled to either end.
+     * The padding was `2px var(--s-4) 4px` — two literals either side of the
+     * bezel token. Both are now --s-1: the 4px bottom was already on the scale
+     * and the 2px top was not exemptible beside it (this test judges a
+     * declaration whole), so the strip gains 2px of top pad. The `margin`'s own
+     * 2px top nudge stays literal and IS exempt — its other two parts are 0 and
+     * a derived calc(), so nothing >= 4px sits in it. */
+    scrollbar-width:none;margin:2px calc(-1 * var(--s-4)) 0;padding:var(--s-1) var(--s-4);
   }
   .cp-nav-c::-webkit-scrollbar{display:none}
   .cp-tab{flex:0 0 auto}
@@ -2222,16 +2321,19 @@ a{color:inherit;text-decoration:none}
    * reads as part of the tile. Squared bottom corners when open so the panel
    * below looks continuous. */
   /* Fixed --s-4 (16px) side padding so the toggle's negative margin below can
-   * span exactly to the tile edges. .ev-slip-toggle's `-16px` / `100% + 32px`
-   * are that same 16px doubled — keep them in step by hand. */
+   * span exactly to the tile edges. The toggle's negative margin now READS
+   * --s-4 (`calc(-1 * var(--s-4))`) so that half can no longer drift; its
+   * `100% + 32px` basis is still that same 16px doubled by hand, because `flex`
+   * and `width` are outside the spacing invariant and this pass did not touch
+   * them. If --s-4 ever moves, the 32px moves with it. */
   .ev-filters{padding:var(--s-4) var(--s-4) 0}
   .ev-slip-toggle{
     display:flex;order:1;box-sizing:border-box;
     /* basis = full content width + the tile's 16px padding on each side, so
      * the negative margins bleed it flush to the tile edges (own row). */
     flex:0 0 calc(100% + 32px);width:calc(100% + 32px);
-    margin:var(--s-1) -16px 0;
-    padding:13px 16px;border-radius:0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+    margin:var(--s-1) calc(-1 * var(--s-4)) 0;
+    padding:var(--s-3) var(--s-4);border-radius:0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
     border-left:0;border-right:0;border-bottom:0;
     border-top:1px solid var(--hair);
   }

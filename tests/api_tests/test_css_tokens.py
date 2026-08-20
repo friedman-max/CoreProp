@@ -895,27 +895,37 @@ MARKETING_SPACING_LITERAL_OK = {
     ".pp-save",
 }
 
-# Lengths that are legal without a token: zero, auto-centring, and the two
-# derived layout vars the landing page defines on `.lp`.
+# ── The derived-value rule, shared by both spacing invariants ──────────────────
+# Fluid spacing is the intended escape hatch for a value that must differ between
+# a phone and a desktop, but the escape hatch has to still derive from the scale:
+# a function must name at least one `var(--…)`, or it is not a derived value, it
+# is a literal in a wrapper.
 #
-# Any clamp() passes: fluid spacing is the intended escape hatch for values that
-# must differ between a phone and a desktop, and the clamp's own endpoints are
-# tokens by convention (--lp-px, .pp-card). The inner pattern is `.*` rather than
-# `[^)]*` precisely so a clamp that interpolates var() tokens still matches —
-# values in this stylesheet carry no spaces, so a `.*` cannot span two lengths of
-# a shorthand.
+# This used to be true of the app-screen pattern only. The marketing one waved
+# ANY `clamp()` through, and that hole was real rather than theoretical:
+# `.lp-cta-card{padding:clamp(36px,4.5vw,56px) var(--s-6)}` derived from nothing —
+# both endpoints were literal — and it was the single declaration standing between
+# the two invariants being the same rule. Its minimum is a token now
+# (`clamp(var(--s-10),4.5vw,56px)`, the token-min/literal-max shape `.pp` and
+# `.pp-foot-trust` already use), so the tightening applies here with nothing left
+# to except.
 #
-# "Any clamp() passes" is the known hole, and it is real rather than theoretical:
-# `.lp-cta-card{padding:clamp(36px,4.5vw,56px) var(--s-6)}` derives from nothing —
-# both endpoints are literal — and this pattern waves it through. The app-screen
-# sibling below (`_APP_SPACING_OK`) closes it by requiring a `var(--` inside the
-# function, and the two patterns differ for exactly that one declaration: applying
-# the tightening here fails `.lp-cta-card` and nothing else. That is left as a
-# reported worklist item rather than fixed by exempting the rule, because 36px/56px
-# are not the 1-3px optical values MARKETING_SPACING_LITERAL_OK is for. Migrate
-# `.lp-cta-card` to token endpoints and the two patterns can merge.
+# Spelled ONCE and interpolated into both patterns below, so the two are identical
+# by construction rather than by eyeball — the same reason `_spacing_declarations`
+# is shared. They now differ in exactly one way: each surface names its own
+# derived layout var (`--lp-gap`/`--lp-px` for marketing, `--row-px` for the app
+# screens) and not the other's, which is scope, not a different standard.
+#
+# The inner `.*` is deliberate, not lazy: `[^)]*` would fail on a clamp that
+# interpolates var() tokens, and values in this stylesheet carry no spaces, so a
+# `.*` cannot span two lengths of a shorthand.
+_DERIVED_OK = r"(?:calc|clamp|min|max)\(.*var\(--.*\)"
+
+# Lengths that are legal without a token on the MARKETING surface: zero,
+# auto-centring, the spacing scale, and the two derived layout vars the landing
+# page defines on `.lp`.
 _SPACING_OK = re.compile(
-    r"^(0|auto|var\(--s-\d+\)|var\(--lp-(?:gap|px)\)|clamp\(.*\))$"
+    rf"^(0|auto|var\(--s-\d+\)|var\(--lp-(?:gap|px)\)|{_DERIVED_OK})$"
 )
 _SPACING_PROPS = ("padding", "margin", "gap", "row-gap", "column-gap")
 
@@ -995,14 +1005,10 @@ def test_marketing_spacing_goes_through_the_scale():
 #
 # Legal values are the marketing set minus the landing-only `--lp-*` layout vars,
 # plus `--row-px` (the +EV row's derived horizontal padding, which three rules must
-# share), and with the derived-function hole closed: a `calc()` / `clamp()` /
-# `min()` / `max()` must contain at least one `var(--`, so a "derived" value
-# actually derives from a token instead of being two literals in a clamp. See the
-# note on `_SPACING_OK` for the single marketing declaration that blocks merging
-# the two patterns.
+# share). The derived-function rule is `_DERIVED_OK`, shared with the marketing
+# pattern above — see the note there for why the two are now one rule.
 _APP_SPACING_OK = re.compile(
-    r"^(0|auto|var\(--s-\d+\)|var\(--row-px\)"
-    r"|(?:calc|clamp|min|max)\(.*var\(--.*\))$"
+    rf"^(0|auto|var\(--s-\d+\)|var\(--row-px\)|{_DERIVED_OK})$"
 )
 
 # ── Exemption group 1: sub-scale optical values ───────────────────────────────
@@ -1011,10 +1017,19 @@ _APP_SPACING_OK = re.compile(
 # on: the scale's floor is --s-1 (4px), so below that a value is seating a glyph on
 # a baseline, drawing a hairline, or constructing a control — snapping it to 4px
 # changes the drawing, not the rhythm. A declaration with any literal part >= 4px
-# is off the scale and does NOT qualify, however small the rest of it is; that is
-# why `.cp-nav-c{padding:2px var(--s-4) 4px}` is absent while its `margin:` sibling
-# is present, and why the 5/6/7/8px insets on the badges are all still in the
-# worklist.
+# is off the scale and does NOT qualify, however small the rest of it is.
+#
+# That last clause did the most work of anything in this set, and the record of it
+# is worth keeping: `.cp-nav-c` was the illustration, because its `margin` (2px
+# plus a 0 and a derived calc()) is exempt below while its `padding:2px var(--s-4)
+# 4px` was not — the 4px bottom was already on the scale, so the 2px top had a
+# >= 4px literal beside it and had to move too. Everything the clause caught has
+# since been migrated: the 2-3px vertical insets on the micro-pills (.cp-book,
+# .bd-odds.is-best, .bt-leg-league, .bt-leg-side, .bt-slip-badge, .obs-pill,
+# .ev-sharp, .bt-leg-actual, .bt-slip-compact .bt-leg-pct) all took --s-1, joining
+# the two pills Phase 1 had already put there (.bt-slip-ev, .bt-slip-compact
+# .bt-slip-badge). So the set below is only what it claims to be, and a NEW 2px
+# beside a 6px is still not exemptible.
 #
 # Keys are the whole `"<selector> -> <prop>:<value>"` string, matched entire —
 # never a prefix, never a bare selector. A selector-level key would exempt every
@@ -1105,8 +1120,10 @@ APP_SPACING_OUTSIDE_RHYTHM_OK = {
     ".pp -> padding:var(--s-12) clamp(var(--s-6),3vw,56px) 80px":
         "the wide-viewport copy of the same page container. NOTE: its gutter "
         "clamp tops out at a literal 56px, which passes only because the clamp "
-        "also names var(--s-6) — that endpoint is worth migrating, but it is a "
-        "gutter, not the trailing value this entry is about",
+        "also names var(--s-6). That is now the stylesheet's settled shape for a "
+        "fluid value whose ceiling has no step — token minimum, literal maximum "
+        "— shared with .pp-foot-trust and (since the pattern merge above) "
+        ".lp-cta-card. It is a gutter, not the trailing value this entry is about",
 }
 
 APP_SPACING_EXEMPT = {**APP_SPACING_OPTICAL_OK, **APP_SPACING_OUTSIDE_RHYTHM_OK}
@@ -1131,10 +1148,16 @@ def test_app_screen_spacing_goes_through_the_scale():
     """Every padding/margin/gap length on a non-marketing rule resolves through
     the spacing scale.
 
-    FAILS TODAY, on purpose. The assertion message is the migration worklist and
-    another agent works from it, so it is grouped and complete rather than short.
+    This test was written failing, with 133 declarations in the message, and the
+    message is a grouped worklist rather than a one-liner because that is what it
+    was for. All 133 are migrated and it holds — so the message's shape is now
+    insurance rather than a to-do list, and it is kept that way on the assumption
+    that the next thing to break it will also be a batch.
+
     Do not add an exemption to shrink it: the two admissible categories are spelled
-    out above, and anything outside them is real drift.
+    out above, and anything outside them is real drift. In particular, nothing with
+    a literal >= 4px in it qualifies — that is a visual decision to make, not a gap
+    in the scale to paper over.
     """
     violations = sorted(set(_app_spacing_violations()))
     by_prefix: dict[str, list[str]] = {}
@@ -1240,7 +1263,13 @@ def test_the_spacing_parser_sees_what_it_claims_to_see():
     # The scale itself must still be reachable, or "goes through the scale" is
     # vacuous in the other direction: a sheet with no var(--s-*) at all would
     # fail loudly, but one where the pattern no longer matches them would not.
-    assert sum(1 for _s, _p, v in app if "var(--s-" in v) >= 60
+    #
+    # Recalibrated from 60 to 150. 60 was set while 133 of the 234 app declarations
+    # were still literal; now that they are not, a floor of 60 could be met by a
+    # sheet that had regressed nearly two thirds of the way back and this guard
+    # would not notice. 150 is the same proportional slack against today's 199 that
+    # the two counts above keep.
+    assert sum(1 for _s, _p, v in app if "var(--s-" in v) >= 150
     assert split_lengths("calc(var(--row-px) - 3px)") == ["calc(var(--row-px) - 3px)"], (
         "split_lengths stopped respecting parens; every calc() in the sheet would "
         "now be reported as several off-scale literals"
@@ -1305,15 +1334,23 @@ FILTER_BAR_EXPLICIT_34 = {
 # are the two, and they are UNGUARDED on the 34px outcome. What IS assertable is
 # the recipe that was measured to produce it, and the fact that the two must agree
 # with each other: they sit in different bars beside controls pinned to 34px, so if
-# one drifts, that bar's labels go out of line. So this test pins
-# `padding:8px 10px` + `font-size:13px` + a 1px border on both, and a change to any
-# of those fails here and asks for a re-measure in a browser rather than silently
-# shipping a 2px offset. Nothing in this suite renders anything, so 34px itself
-# cannot be verified for these two by any test in the repo.
+# one drifts, that bar's labels go out of line. So this test pins the padding +
+# `font-size:13px` + a 1px border on both, and a change to any of those fails here
+# and asks for a re-measure in a browser rather than silently shipping a 2px
+# offset. Nothing in this suite renders anything, so 34px itself cannot be verified
+# for these two by any test in the repo.
+#
+# The recipe was `8px 10px` and is now `var(--s-2) var(--s-3)`. Only the HORIZONTAL
+# component moved (10px -> 12px): the 34px is a function of the vertical pad, the
+# font metrics and the border, none of which changed, so the measured outcome this
+# whole contract is about is untouched. Spelled as the token text rather than the
+# resolved pixels because that is what the stylesheet says — a future `--s-2`
+# change would move both inputs together and SHOULD fail here, asking for the
+# re-measure.
 FILTER_BAR_PADDING_DERIVED = {
     ".cp-input-sm": ".bd-f input",
 }
-_INPUT_RECIPE = {"padding": "8px 10px", "font-size": "13px"}
+_INPUT_RECIPE = {"padding": "var(--s-2) var(--s-3)", "font-size": "13px"}
 
 
 def _decls_for(selector: str) -> list[tuple[str, str]]:
