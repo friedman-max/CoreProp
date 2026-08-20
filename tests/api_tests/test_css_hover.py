@@ -43,7 +43,14 @@ from __future__ import annotations
 
 import re
 
-from tests.api_tests.css_helpers import INDEX, declarations, rules, squash, style_block
+from tests.api_tests.css_helpers import (
+    INDEX,
+    declarations,
+    has_accent,
+    rules,
+    squash,
+    style_block,
+)
 
 # ── Colour parsing ────────────────────────────────────────────────────────────
 # Deliberately small: hex (3, 6 and 8 digit), comma-form rgb()/rgba(), the two
@@ -234,6 +241,42 @@ def hover_backgrounds(css: str) -> list[tuple[str, str]]:
     return out
 
 
+# The rule is two-part, and only half of it was ever written down.
+#
+# "Hover darkens" is about COLOURED fills — an accent or semantic surface with a
+# label on top, where lightening costs contrast on the label while the user is
+# actively pointing at it. That is the reason given at `.cp-btn-primary:hover`,
+# and it is why the accent family is held to it strictly.
+#
+# NEUTRAL surfaces do the opposite, deliberately: on a `#0a0a0d` page there is
+# almost nothing below `#1b1b26` to darken *into*, so the affordance has to go
+# up. The sheet ships at least eight of these — `.cp-btn-ghost`, `.cp-tab`,
+# `.cp-menu-item`, `.cp-modal-x`, `.ev-stepper button`, `.lp-game-mute`,
+# `.lp-game-ctap-x`, and Phase 2b's `.ev-row-data` row hover, which replaced a
+# blue tint precisely so that hovering a row would not read as selecting it. All
+# eight are spelled `rgba(255,255,255,.025-.06)`, so they land in this module's
+# translucent skip bucket and the guard never had to have an opinion about them.
+#
+# `.ev-slip-toggle:hover` is the same convention spelled as an opaque hex, which
+# is the only reason it is visible here at all: `#1b1b26` lightened by ~2.5% is
+# `#20202c`, i.e. numerically what `rgba(255,255,255,.025)` would have produced.
+# Exempting it is therefore consistency, not a carve-out — the alternative is a
+# guard that enforces "neutral hovers must lighten via alpha", which is a spelling
+# rule masquerading as a contrast rule.
+#
+# Keys are whole selectors. Each entry must state why the surface is neutral, and
+# a coloured fill must never appear here.
+#
+#   .ev-slip-toggle:hover : the mobile slip drawer's open/close control. Base
+#                           `#1b1b26` is a neutral chrome surface on `--bg-2`
+#                           with `--text` on it, no accent involved, and the
+#                           label's contrast IMPROVES as the fill lightens — the
+#                           inverse of the failure mode the rule exists to stop.
+NEUTRAL_LIGHTENING_OK = {
+    ".ev-slip-toggle:hover",
+}
+
+
 def _analyse() -> tuple[list[str], dict[str, list[str]]]:
     """`(violations, skips_by_reason)`."""
     css = style_block(INDEX)
@@ -243,6 +286,8 @@ def _analyse() -> tuple[list[str], dict[str, list[str]]]:
     skips: dict[str, list[str]] = {"no resolvable base rule": [], "translucent or unreadable": []}
 
     for sel, hover_value in hover_backgrounds(css):
+        if sel.strip() in NEUTRAL_LIGHTENING_OK:
+            continue
         base_value = None
         for candidate in base_of(sel):
             if candidate in bgs:
@@ -288,6 +333,45 @@ def test_hover_backgrounds_never_lighten():
         f"{len(violations)} :hover background(s) LIGHTER than their base "
         f"(CLAUDE.md: hover darkens):\n    " + "\n    ".join(sorted(violations)) + coverage
     )
+
+
+def test_every_neutral_lightening_exemption_still_matches_a_real_site():
+    """A dead exemption is how an allowlist quietly becomes policy.
+
+    Same guard `test_css_tokens` and `test_ios_tokens` carry: if the selector is
+    renamed or the rule deleted, the entry fails here instead of sitting in the
+    file looking like a decision somebody made about the current code.
+    """
+    live = {sel.strip() for sel, _ in hover_backgrounds(style_block(INDEX))}
+    dead = sorted(NEUTRAL_LIGHTENING_OK - live)
+    assert not dead, (
+        "these NEUTRAL_LIGHTENING_OK entries match no :hover rule that sets a "
+        "background — delete them or fix the key:\n    " + "\n    ".join(dead)
+    )
+
+
+def test_the_neutral_lightening_premise_holds():
+    """The exemption is only defensible while the surface stays neutral.
+
+    Exact-matching the selector is not enough: if someone repaints
+    `.ev-slip-toggle` with the accent, the entry would go on excusing a lightening
+    hover on a coloured fill — which is the one thing the rule is actually for.
+    So assert the premise, not just the key. `has_accent` is the same helper the
+    gradient ban uses, so "accent" means the same thing in both places.
+    """
+    css = style_block(INDEX)
+    bgs = background_map(css)
+    for sel in sorted(NEUTRAL_LIGHTENING_OK):
+        for candidate in base_of(sel):
+            if candidate in bgs:
+                base = bgs[candidate]
+                assert not has_accent(f"background:{base}"), (
+                    f"{sel} is exempt from hover-darkens on the grounds that its "
+                    f"surface is neutral, but its base is now {base!r}, which is "
+                    "in the accent family. Either revert the fill or remove the "
+                    "exemption — a coloured fill must darken on hover."
+                )
+                break
 
 
 def test_the_hover_parser_sees_what_it_claims_to_see():
