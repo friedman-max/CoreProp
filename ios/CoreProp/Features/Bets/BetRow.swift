@@ -29,11 +29,18 @@ struct BetRow: View {
                         Text("GOBLIN")
                             .font(Theme.ui(9, .bold))
                             .foregroundColor(Theme.green)
-                            // Intra-badge padding on a 9pt pill, like LeaguePill's
-                            // 3/8 and BookBadgeView's 2/6 in Components.swift:
-                            // these size the badge itself, so they stay literal
-                            // rather than rounding 2 up to s1 and doubling it.
-                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            // The 2pt vertical stays literal — it sizes the badge
+                            // itself on a 9pt label, below the scale's 4pt floor,
+                            // and rounding it up to s1 would double it. The
+                            // horizontal 5 is not that: 5 is on the scale's own
+                            // territory, so it takes the nearest step, s1 (4), 1pt
+                            // tighter. GOBLIN stays the tightest badge in the app
+                            // (4 against LeaguePill's and BookBadgeView's 8), which
+                            // is the hierarchy it already had at 5 against 8.
+                            // BetDetailView carries the identical pair — the two
+                            // copies must stay in step until the badge is extracted
+                            // into one component.
+                            .padding(.horizontal, Theme.s1).padding(.vertical, 2)
                             .background(Theme.greenHi)
                             .clipShape(Capsule())
                     }

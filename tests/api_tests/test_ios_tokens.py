@@ -660,29 +660,24 @@ SPACING_LITERAL_OK = {
     # one label; 4pt reads as two separate labels.
     "ios/CoreProp/Theme/Components.swift | VStack(… spacing: 2)":
         "title/subtitle leading inside one label, not a gap between elements",
-    # BetRow / LinesView: 3pt between a book badge and its price inside a single
-    # inline chip. The pair is one token visually; the gap between *chips* is the
-    # spacing value and is on the scale.
-    "ios/CoreProp/Features/Bets/BetRow.swift | HStack(… spacing: 3)":
-        "intra-chip badge/price gap — the chip is one visual token",
-    "ios/CoreProp/Features/Lines/LinesView.swift | HStack(… spacing: 3)":
-        "intra-chip badge/price gap — the chip is one visual token",
-    # SlipCard: 1pt between a leg's player name and its prop line, and 2pt in the
-    # footer's label/value pair. Both are leading within one text block.
-    "ios/CoreProp/Features/Backtest/SlipCard.swift | VStack(… spacing: 1)":
-        "leading between two lines of one leg label, not a gap",
+    # SlipCard's footer: 2pt in the label/value pair, leading within one text
+    # block. This is web's own `.bt-slip-foot-c{gap:2px}`.
     "ios/CoreProp/Features/Backtest/SlipCard.swift | VStack(… spacing: 2)":
         "label-above-value leading inside one footer cell, not a gap",
-    # SlipView: 2pt, same label-above-value pairing as SlipCard's footer.
-    "ios/CoreProp/Features/Slip/SlipView.swift | VStack(… spacing: 2)":
-        "label-above-value leading inside one stat block, not a gap",
-    # AccountView: 3pt between the account name and the email beneath it.
-    "ios/CoreProp/Features/Account/AccountView.swift | VStack(… spacing: 3)":
-        "name/email leading inside one identity block, not a gap",
-    # SlipCard's WIN/LOSS/PUSH/PENDING status badge: 3pt above/below a 9pt bold
-    # label in a Capsule. Same role as LeaguePill's, one type size down.
-    "ios/CoreProp/Features/Backtest/SlipCard.swift | .padding(.vertical, 3)":
-        "capsule optical inset on a 9pt status label, not a gap",
+    # SlipCard's per-leg true-% chip: 2pt above/below a 12pt number in a
+    # rounded rect. Web states this one explicitly as `padding:2px 7px`, and the
+    # 2pt is what keeps the chip visibly smaller than the result pill beside it
+    # (which web pads at 6px) — rounding it to s1 would erase that hierarchy.
+    #
+    # Note for the next reader: this key and SlipCard's `VStack(… spacing: 2)`
+    # above are different sites that happen to share a file. The exemption keys
+    # are per-(file, display-text), so they do not collide — but a *second*
+    # `.padding(.vertical, 2)` anywhere in SlipCard would silently inherit this
+    # entry, which is the residual risk named below.
+    "ios/CoreProp/Features/Backtest/SlipCard.swift | .padding(.vertical, 2)":
+        "sub-step inset on the true-% chip, matching web's explicit "
+        "`padding:2px 7px`; s1 would erase its size hierarchy against the "
+        "result pill",
     # The GOBLIN badge, duplicated in BetRow and BetDetailView: 2pt on a 9pt bold
     # label in a Capsule. (Both copies are listed because the exemption key is
     # per-file — a shared component would need only one, and extracting one is a
@@ -693,21 +688,68 @@ SPACING_LITERAL_OK = {
         "capsule optical inset on the 9pt GOBLIN badge, not a gap",
 }
 # An asymmetry a reader will notice, so: the *horizontal* insets on those same
-# badges (5pt and 7pt) are NOT exempt and stay in the worklist. That is the
-# stated standard applied honestly rather than per-component — 5 and 7 sit
-# between s1(4) and s2(8), so snapping them is a real decision somebody should
-# make and record, while 2 and 3 have no scale neighbour below 4 at all.
+# badges were never exempt, and they have now been resolved on the scale rather
+# than granted a pass — LeaguePill 8 -> s2 (no move), BookBadgeView 6 -> s2
+# (+2, a tie rounded up), the GOBLIN badge 5 -> s1 (-1), SlipCard's status badge
+# 7 -> s2 (+1). That is the stated standard applied honestly rather than
+# per-component: 5, 6 and 7 sit in the scale's own territory and snapping them
+# was a real decision somebody had to make and record, while 2 and 3 have no
+# scale neighbour below 4 at all and stay literal.
+#
+# Seven entries were deleted from this dict when those migrations landed
+# (BetRow/LinesView `HStack(… spacing: 3)`, SlipCard `VStack(… spacing: 1)` /
+# `.padding(.vertical, 3)` / `cornerRadius: 2`, SlipView `VStack(… spacing: 2)`,
+# AccountView `VStack(… spacing: 3)`). Every one of them went away because the
+# site was *tokenized*, not because it moved — the 3pt gaps became `Theme.s1`,
+# the status badge became `Theme.s2`/`Theme.s1`, and the outcome bar stopped
+# carrying its own radius at all. They are recorded here rather than silently
+# dropped so that nobody re-adds them on the theory that the sites still exist.
 
-RADIUS_LITERAL_OK = {
-    # SlipCard's 3pt-wide outcome bar. A 2pt radius on a 3pt-wide rectangle is a
-    # rounded *end*, not a corner — `Theme.rSm` (8) is wider than the bar and
-    # would collapse it to a lozenge. Web's equivalent left bar is a
-    # square-ended 3px border with no radius at all, so there is no token to
-    # inherit; this is iOS softening a hairline.
-    "ios/CoreProp/Features/Backtest/SlipCard.swift | cornerRadius: 2":
-        "rounded end of a 3pt-wide bar; the smallest radius token (8) exceeds "
-        "the bar's own width",
-}
+# Empty on purpose. Its one entry — SlipCard's 3pt-wide outcome bar, which
+# needed a 2pt radius because `Theme.rSm` (8) exceeded the bar's own width — is
+# gone: the bar is now clipped by the card's own corner instead of being
+# overlaid with a radius of its own, so there is no longer a radius literal
+# anywhere in the app. Kept as an empty dict rather than deleted because the
+# *mechanism* (a whole-key radius exemption, reason written inline) is the one
+# that should be used if another hairline ever needs softening.
+RADIUS_LITERAL_OK: dict[str, str] = {}
+
+
+# A value may legitimately be *computed* from the scale instead of naming one
+# step of it. `AuthView`'s focus ring is the case that forced this: the ring sits
+# `ringWidth` outside a `radiusSm` field, so its outer radius has to be
+# `Theme.radiusSm + Theme.ringWidth` or the two corners stop being concentric.
+# There is no magic number in that expression — it is the scale, added up — and a
+# rule that demanded a bare `Theme.r*` would push the author toward hardcoding
+# `12`, which is strictly worse than what it rejected.
+#
+# The predicate is deliberately narrow, because the thing this test exists to
+# catch is a magic number:
+#
+#   * `+` and `-` only. No `*`, no `/`, no parentheses, no function calls — a
+#     styling value has never needed them here, and admitting them would make
+#     "is this on the scale?" undecidable by inspection.
+#   * EVERY operand must be a token. A bare numeric operand is exactly the magic
+#     number under ban, so `Theme.rSm + 6` fails here just as `18` does. (This is
+#     the one place the rule is stricter than "tokens and integer literals": an
+#     integer literal *operand* is not admitted, only whole tokens.)
+#   * `Theme.ringWidth` is admitted as an operand on both scales. It is the
+#     concentric-ring offset and is already a member of `_SPACING_TOKENS`; a
+#     radius built from a radius token plus the ring width is the whole reason
+#     this function exists.
+#
+# A single token is NOT handled here — it falls through to the plain membership
+# check below, which stays strict about position, so `cornerRadius: Theme.s4`
+# (crossing the two scales) is still a violation.
+_EXPR_SPLIT = re.compile(r"\s*[+-]\s*")
+
+
+def _is_token_expression(value: str, allowed_tokens: frozenset[str]) -> bool:
+    operands = _EXPR_SPLIT.split(value.strip())
+    if len(operands) < 2:
+        return False
+    permitted = allowed_tokens | {"Theme.ringWidth"}
+    return all(op in permitted for op in operands)
 
 
 def _scale_violations(
@@ -721,6 +763,8 @@ def _scale_violations(
             if _NUMERIC.match(value):
                 if float(value) == 0:
                     continue          # `spacing: 0` / `cornerRadius: 0` is a reset
+            elif _is_token_expression(value, allowed_tokens):
+                continue              # computed from the scale — see above
             elif not value.startswith("Theme."):
                 continue              # a pass-through identifier or expression
             elif value in allowed_tokens:
@@ -749,6 +793,51 @@ def test_ios_radii_go_through_the_scale():
         "Theme.radius/radiusSm/radiusXs which resolve into them. `Capsule()` is "
         "the idiom for a pill — there is no rPill token.",
     )
+
+
+def test_a_computed_radius_is_on_the_scale_but_a_magic_number_is_not():
+    """Pin the exact width of `_is_token_expression`.
+
+    Widening a rule to admit one legitimate site is how invariants die: the
+    natural next step is `Theme.rSm + 6`, which is a magic number wearing a
+    token's coat. `Theme.radiusSm + Theme.ringWidth` must pass and every one of
+    these must not — and the reason it is a value-level test rather than a
+    line-number or filename exemption is that an exemption keyed on
+    `AuthView.swift` would stop checking every *future* radius in that file.
+    """
+    assert _is_token_expression("Theme.radiusSm + Theme.ringWidth", _RADIUS_TOKENS)
+    assert _is_token_expression("Theme.rLg - Theme.ringWidth", _RADIUS_TOKENS)
+    assert _is_token_expression("Theme.s4 + Theme.s2", _SPACING_TOKENS)
+
+    for bad in (
+        "18",                      # the plain magic number
+        "Theme.rSm + 6",           # a magic number as an operand
+        "6 + Theme.rSm",           # ...on either side
+        "someVar",                 # an opaque identifier
+        "someVar + Theme.rSm",     # ...as an operand
+        "Theme.rSm",               # a single token: the plain check's job, not this one
+        "Theme.rSm * 2",           # multiplication is not admitted
+        "-4",                      # a negative literal is not two token operands
+        "Theme.s4 + Theme.s2",     # right shape, WRONG SCALE for a radius
+    ):
+        assert not _is_token_expression(bad, _RADIUS_TOKENS), bad
+
+    # And end-to-end: the three the brief names must still be reported as
+    # violations by the real checker, not merely rejected by the predicate.
+    src = (
+        "RoundedRectangle(cornerRadius: 18)\n"
+        "RoundedRectangle(cornerRadius: Theme.rSm + 6)\n"
+        "RoundedRectangle(cornerRadius: Theme.radiusSm + Theme.ringWidth)\n"
+    )
+    found = {
+        text
+        for _pos, value, text in _radius_sites(src, _mask(src))
+        if not (_NUMERIC.match(value) and float(value) == 0)
+        and not _is_token_expression(value, _RADIUS_TOKENS)
+        and (_NUMERIC.match(value) or value.startswith("Theme."))
+        and value not in _RADIUS_TOKENS
+    }
+    assert found == {"cornerRadius: 18", "cornerRadius: Theme.rSm + 6"}, found
 
 
 def test_every_spacing_exemption_still_matches_a_real_site():

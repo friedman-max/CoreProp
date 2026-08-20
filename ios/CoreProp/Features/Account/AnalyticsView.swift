@@ -15,7 +15,12 @@ struct AnalyticsView: View {
             VStack(spacing: Theme.s4) {
                 switch state {
                 case .idle, .loading:
-                    ProgressView().tint(Theme.primary2).padding(.top, 60)
+                    // 60 -> s12 (48), the top of the scale. This is a crude
+                    // vertical offset that pushes the spinner off the nav bar, not
+                    // a rhythm value, so losing 12pt is not perceptible — and
+                    // inventing an exemption for a 60pt value would wreck a
+                    // standard that only ever admits 1-3pt optical nudges.
+                    ProgressView().tint(Theme.primary2).padding(.top, Theme.s12)
                 case .failed(let m):
                     ErrorStateView(message: m) { Task { await load() } }
                 case .empty:
@@ -187,7 +192,8 @@ struct AnalyticsView: View {
     }
 
     private func clvStat(_ label: String, _ value: String) -> some View {
-        VStack(spacing: 4) {
+        // 4 was already s1's value; only the spelling changed.
+        VStack(spacing: Theme.s1) {
             // .04em at 9pt is 0.36; `.tracking()` for the same reason as above.
             Text(label).font(Theme.ui(9, .semibold)).tracking(0.36).foregroundColor(Theme.text3)
             Text(value).font(Theme.mono(16, .bold)).foregroundColor(Theme.text)
