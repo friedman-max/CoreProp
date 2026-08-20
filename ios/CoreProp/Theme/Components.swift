@@ -3,25 +3,32 @@ import CorePropKit
 
 // MARK: - Card surface
 
-/// The neutral card surface: a subtle two-stop vertical grey gradient (allowed
-/// on non-accent surfaces), a 1px hairline border, `--radius` corners, and the
-/// single card shadow.
+/// The neutral card surface: **flat** `Theme.card`, a 1px `--hair` border,
+/// `--r-lg` corners, and the single card shadow.
+///
+/// This used to paint a two-stop vertical grey gradient, on the reading that
+/// gradients were only banned on *accent* surfaces. Cards are flat now — every
+/// web card is flat `--card` — so do not reintroduce it. The stroke also moved
+/// from `hair2` (.10) to `hair` (.06) to match web, where every card border is
+/// `--hair`; iOS's heavier hairline was the main reason its cards read as
+/// boxier than web's.
+///
+/// `radius` resolves through the `Theme.radius` alias, so it became 16 (from
+/// 14) when the radius scale landed — that moves all 13 bare `.cpCard()` call
+/// sites at once, which is intended.
 struct CardModifier: ViewModifier {
     var radius: CGFloat = Theme.radius
     var padding: CGFloat = 14
     func body(content: Content) -> some View {
         content
             .padding(padding)
-            .background(
-                LinearGradient(colors: [Theme.cardGradTop, Theme.cardGradBot],
-                               startPoint: .top, endPoint: .bottom)
-            )
+            .background(Theme.card)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(Theme.hair2, lineWidth: 1)
+                    .stroke(Theme.hair, lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 16)
+            .shadow(color: Theme.shadowColor, radius: Theme.shadowRadius, x: 0, y: Theme.shadowY)
     }
 }
 
@@ -84,8 +91,13 @@ struct FilterChip: View {
             Text(title)
                 .font(Theme.ui(13, .semibold))
                 .foregroundColor(selected ? .white : Theme.text2)
-                .padding(.vertical, 7)
                 .padding(.horizontal, 13)
+                // An explicit 34pt height replaces the old 7pt vertical padding
+                // (which produced ~28pt). 34 is the filter-control contract: the
+                // filter-menu button beside these chips in BetsView is 34x34, and
+                // a 28pt chip next to a 34pt button has no shared baseline. Web
+                // fixes its chip height to 34px for exactly this reason.
+                .frame(height: 34)
                 .background(selected ? accent : Theme.controlBg)
                 .clipShape(Capsule())
                 .overlay(Capsule().stroke(selected ? Color.clear : Theme.hair, lineWidth: 1))
@@ -117,6 +129,10 @@ struct BookBadgeView: View {
         let c = Theme.bookColors(book)
         Text(book.label)
             .font(Theme.ui(10, .bold))
+            // Web tracks this badge at .06em; at 10pt that is 0.6pt. iOS had no
+            // tracking here at all, which made the 10pt all-caps label read
+            // tighter and muddier than its web twin.
+            .tracking(0.6)
             .foregroundColor(c.fg)
             .padding(.vertical, 2)
             .padding(.horizontal, 6)
@@ -131,6 +147,8 @@ struct SideBadge: View {
         let over = side.uppercased() == "OVER"
         Text(side.uppercased())
             .font(Theme.ui(12, .bold))
+            // Web tracks this at .05em; at 12pt that is 0.6pt.
+            .tracking(0.6)
             .foregroundColor(over ? Theme.sideOver : Theme.sideUnder)
     }
 }
@@ -154,12 +172,18 @@ struct StatTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label.uppercased())
+            // Not `.uppercased()`: web's .bt-card-label was de-capsed in the
+            // typography pass, because an all-caps tile label competes with the
+            // 22pt number it is labelling. And `.tracking()`, not `.kerning()` —
+            // tracking is the true letter-spacing analogue (kerning adjusts
+            // pairs). Web's micro-label tracking is .04em, which at 10.5pt is
+            // 0.42pt, not the 0.6 that was here.
+            Text(label)
                 .font(Theme.ui(10.5, .semibold))
-                .kerning(0.6)
+                .tracking(0.42)
                 .foregroundColor(Theme.text3)
             if loading {
-                RoundedRectangle(cornerRadius: 4).fill(Theme.hair).frame(width: 54, height: 20)
+                RoundedRectangle(cornerRadius: Theme.rSm).fill(Theme.hair).frame(width: 54, height: 20)
             } else {
                 Text(value)
                     .font(Theme.mono(22, .bold))
@@ -167,7 +191,7 @@ struct StatTile: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cpCard(radius: 12, padding: 14)
+        .cpCard(radius: Theme.rMd, padding: 14)
     }
 }
 
@@ -199,9 +223,16 @@ struct ErrorStateView: View {
     var retry: (() -> Void)? = nil
     var body: some View {
         VStack(spacing: 12) {
+            // The glyph is legitimately `amber` — this is the one place amber is
+            // doing its real job as the warning colour (the push outcome, which
+            // used to share it, now has `Theme.push`).
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 30))
                 .foregroundColor(Theme.amber)
+            // The message stays neutral `text2` rather than web's --red-2: this
+            // is a full-panel empty/error state, not an inline field error, and
+            // a wall of red body copy over a failed fetch overstates it. The
+            // amber glyph already carries the signal.
             Text(message)
                 .font(Theme.ui(14))
                 .foregroundColor(Theme.text2)
@@ -221,10 +252,12 @@ struct ErrorStateView: View {
 /// misleading zeros).
 struct SkeletonRow: View {
     var body: some View {
+        // `Theme.rSm`, not a bare 4: web's .cp-skel is --r-sm, and 4 is off the
+        // radius scale entirely.
         HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 4).fill(Theme.hair).frame(width: 120, height: 14)
+            RoundedRectangle(cornerRadius: Theme.rSm).fill(Theme.hair).frame(width: 120, height: 14)
             Spacer()
-            RoundedRectangle(cornerRadius: 4).fill(Theme.hair).frame(width: 44, height: 14)
+            RoundedRectangle(cornerRadius: Theme.rSm).fill(Theme.hair).frame(width: 44, height: 14)
         }
         .padding(.vertical, 10)
     }
