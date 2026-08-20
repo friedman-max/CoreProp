@@ -135,7 +135,59 @@
   --row-px: clamp(var(--s-5), 2vw, var(--s-6));
 
   /* Elevation. The `0 2px 0 rgba(255,255,255,.03) inset` highlight that used to
-   * lead --shadow-card is gone: that inset is the skeuomorphic tell. */
+   * lead --shadow-card is gone: that inset is the skeuomorphic tell.
+   *
+   * --shadow-card has exactly TWO consumers — .cp-modal and .pp-card, both of
+   * which predate the modernization — and that is now a DECISION, not the
+   * omission it looked like. The spec's card recipe reads "flat var(--card) +
+   * hairline + --shadow-card at --r-lg", and the flattening pass that removed
+   * every card's top-edge falloff named this shadow as the replacement lift. No
+   * task ever applied it, so it got MEASURED instead of pasted.
+   *
+   * Measured in Chromium at 1440px — this stylesheet against the real class
+   * names, one render with the shadow off and one with it added to all nine
+   * candidates; max diff over the whole 1440x2469 frame was 5/255. Directly
+   * under a card's bottom edge the shadow moves the pixel from rgb(10,10,13)
+   * (--bg) to rgb(7,7,10), decaying to 1/255 by 16px out. As contrast ratios
+   * against the ground the card sits on:
+   *     --shadow-card peak on --bg ....... 1.018:1
+   *     --shadow-card peak on --card ..... 1.044:1
+   *     the --hair border pixel .......... 1.240:1   (on either ground)
+   *     --card-2 against --card .......... 1.061:1
+   * The 1px hairline every one of these surfaces ALREADY carries is ~13x the
+   * shadow's step on the page ground (.240 vs .018 above unity). A drop shadow
+   * is a light-mode mechanism: on a #0a0a0d ground a black shadow has nothing
+   * to darken. That is also why nobody ever reported the token's absence as a
+   * symptom — .pp-card's shipped shadow measures the identical 3/255.
+   *
+   * Considered and deliberately left flat, all nine of which have a hairline and
+   * no shadow: .ev-filters, .ev-table, .bd-tbl-wrap, .bd-filters, .an-panel,
+   * .bt-slip (which only ever renders as .bt-slip.bt-slip-compact), .bt-card,
+   * .pp-faq details. Five are full-bleed regions, where the shadow's footprint —
+   * ~10px below the bottom edge, tapering to nothing at the sides, because the
+   * -18px spread pulls the shadow rect 18px INSIDE the border box before the
+   * +12px offset pushes it back out — is a 1052px-wide band, not a lift. The
+   * rest are grid tiles with siblings on two or three sides.
+   * .bt-slip-compact additionally carries a 2px saturated outcome border over a
+   * coloured tint, the strongest separation on any surface in the app.
+   *
+   * What the two live consumers share and the nine do not: each is
+   * width-constrained, centred, and the only focal object on its surface, with
+   * ground visible on all four sides. .cp-modal is min(420px,92vw) in a
+   * place-items:center fixed overlay, over a blurred rgba(4,4,8,.7) scrim — the
+   * one place in the app where the shadow separates a card from something other
+   * than the flat page ground. .pp-card is the pricing hero inside
+   * .pp-card-wrap's max-width:620px/margin:0 auto. Neither tiles against a
+   * sibling; neither is full-bleed.
+   *
+   * The one flatness symptom anyone actually noticed in four phases of review —
+   * .bt-card nested in .an-panel, same-tone-on-same-tone — was fixed with a tone
+   * step (--card-2; see the note at .an-panel .bt-card), which measures 1.061:1
+   * against 1.044:1 for a shadow on that same ground, and needs no scoping. On
+   * this palette the elevation LADDER is the separation mechanism and the shadow
+   * token is not. If --bg is ever lightened the trade flips, and the cheaper
+   * change then is to strengthen this token — which reaches both consumers at
+   * once — not to add nine declarations that measure 1.02:1. */
   --shadow-card: 0 12px 32px -18px rgba(0,0,0,.7);
   --shadow-pop:  0 16px 40px -12px rgba(0,0,0,.6);
   --ring:        0 0 0 4px var(--primary-hi);
