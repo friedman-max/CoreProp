@@ -71,7 +71,15 @@ _state: dict = {
     "is_scraping_dk": False,
     "is_scraping_pin": False,
     "scrape_errors": {},        # league -> error str | None
-    "interval_min":  5,
+    # Honours REFRESH_INTERVAL_MINUTES. This was hardcoded to 5, and because
+    # nothing read the env var, every restart silently reset the cadence to 5
+    # minutes no matter what .env said — which is what kept PrizePicks
+    # rate-limiting this host (4h of "PrizePicks returned 0 lines" while a
+    # cycle took 20+ min to finish, so the scrapers effectively never stopped
+    # hammering). POST /api/config still overrides it at runtime; that override
+    # is still not persisted, so a restart returns to this configured value
+    # rather than to a magic number.
+    "interval_min":  cfg.REFRESH_INTERVAL_MINUTES,
     "min_ev_pct":    -10.0,         # fallback default
     "active_leagues": dict(cfg.ACTIVE_LEAGUES),
 }
